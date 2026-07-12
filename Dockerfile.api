@@ -7,7 +7,7 @@ COPY src ./src
 COPY apps/__init__.py ./apps/__init__.py
 COPY apps/api ./apps/api
 RUN pip install --no-cache-dir --no-deps .
-RUN addgroup --system yuwang && adduser --system --ingroup yuwang yuwang && mkdir -p /data/artifacts && chown -R yuwang:yuwang /data
+RUN addgroup --system --gid 10001 yuwang && adduser --system --uid 10001 --ingroup yuwang yuwang && mkdir -p /data/artifacts && chown -R yuwang:yuwang /data
 USER yuwang
 ENV YUWANG_DATABASE_PATH=/data/yuwang.db YUWANG_ARTIFACT_ROOT=/data/artifacts
 EXPOSE 8000
