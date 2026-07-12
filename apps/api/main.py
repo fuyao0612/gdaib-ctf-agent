@@ -352,6 +352,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
 
+    def deployment_checks() -> dict[str, bool]:
+        database_ok = False
+        try:
+            repository.list_threads()
+            database_ok = True
+        except Exception:  # pragma: no cover - defensive boundary for readiness
+            database_ok = False
+        master_key_ok = False
+        if config.master_key:
+            try:
+                SecretCipher(config.master_key)
+                master_key_ok = True
+            except ValueError:
+                master_key_ok = False
+        provider_ok = any(value.enabled for value in repository.list_provider_configs())
+        return {
+            "database": database_ok,
+            "master_key": master_key_ok,
+            "admin": bool(config.admin_token),
+            "provider": provider_ok,
+        }
+
+    @application.get("/api/v1/setup/status")
+    async def setup_status() -> dict[str, Any]:
+        checks = deployment_checks()
+        return {"configured": all(checks.values()), "checks": checks, "version": __version__}
+
+    @application.get("/api/v1/readiness")
+    async def readiness() -> JSONResponse:
+        checks = deployment_checks()
+        ready = all(checks.values())
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={"status": "ready" if ready else "not_ready", "checks": checks},
+        )
+
     @application.post("/api/v1/admin/session")
     async def create_admin_session(body: AdminLogin, response: Response) -> dict[str, Any]:
         if not config.admin_token:

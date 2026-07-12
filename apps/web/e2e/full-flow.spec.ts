@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test'
 
 async function configureProtocolProvider(page: import('@playwright/test').Page) {
-  await page.locator('.settings-button').click()
+  if (await page.locator('.settings-backdrop').count() === 0) await page.locator('.settings-button').click()
+  await expect(page.getByText('首次配置向导')).toBeVisible()
   await page.locator('.admin-login input').fill(process.env.YUWANG_E2E_ADMIN_TOKEN!)
   await page.locator('.admin-login button').click()
   await expect(page.locator('.settings-content')).toBeVisible()

@@ -37,6 +37,7 @@ export default function App() {
   const [newTitle, setNewTitle] = useState('新的安全任务')
   const [newMode, setNewMode] = useState<Mode>('normal')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [initialSetup, setInitialSetup] = useState(false)
   const [audit, setAudit] = useState<RunAudit | null>(null)
   const [supplementalInput, setSupplementalInput] = useState('')
   const sourceRef = useRef<EventSource | null>(null)
@@ -59,7 +60,12 @@ export default function App() {
     else { setEvents([]); setAudit(null) }
   }, [])
 
-  useEffect(() => { void Promise.all([loadThreads(), loadProviders(), loadProfiles()]) }, [loadThreads, loadProviders, loadProfiles])
+  useEffect(() => {
+    void Promise.all([loadThreads(), loadProviders(), loadProfiles()])
+    void api.setupStatus().then(status => {
+      if (!status.configured) { setInitialSetup(true); setSettingsOpen(true) }
+    }).catch(() => undefined)
+  }, [loadThreads, loadProviders, loadProfiles])
 
   const connect = useCallback((run: Run) => {
     sourceRef.current?.close()
@@ -146,6 +152,6 @@ export default function App() {
     </aside>
 
     {createOpen && <div className="modal-backdrop"><form className="modal" onSubmit={event => { event.preventDefault(); void createThread() }}><h2>创建 Agent 对话</h2><label>任务名称<input aria-label="任务名称" value={newTitle} onChange={event => setNewTitle(event.target.value)} /></label><label>Agent 配置<select aria-label="Agent 配置" value={selectedProfileId} onChange={event => { const value = agentProfiles.find(item => item.profile_id === event.target.value); setSelectedProfileId(event.target.value); if (value) setNewMode(value.run_mode) }}><option value="">请选择</option>{agentProfiles.map(value => <option key={value.profile_id} value={value.profile_id}>{value.name} · v{value.version} · {value.completion_mode}</option>)}</select></label><label>运行模式<select aria-label="运行模式" value={newMode} onChange={event => setNewMode(event.target.value as Mode)}><option value="normal">normal · 可继续交流</option><option value="competition">competition · 运行中锁定输入</option></select></label><p>Thread 将绑定当前 Agent 配置版本；后续编辑不会改变历史运行。</p><div><button type="button" onClick={() => setCreateOpen(false)}>取消</button><button className="primary" type="submit" disabled={busy || !selectedProfileId}>创建</button></div></form></div>}
-    {settingsOpen && <SettingsCenter onClose={() => setSettingsOpen(false)} onChanged={refreshSettings} />}
+    {settingsOpen && <SettingsCenter initialSetup={initialSetup} onClose={() => setSettingsOpen(false)} onChanged={async () => { await refreshSettings(); const status = await api.setupStatus(); setInitialSetup(!status.configured) }} />}
   </div>
 }

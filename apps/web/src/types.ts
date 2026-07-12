@@ -31,6 +31,7 @@ export interface AgentDefaults {
 }
 export type CompletionMode = 'advisory' | 'structured' | 'evidence'
 export interface AgentProfileSummary { profile_id: string; version: number; name: string; description: string; run_mode: Mode; completion_mode: CompletionMode; is_default: boolean }
+export interface SetupStatus { configured: boolean; checks: { database: boolean; master_key: boolean; admin: boolean; provider: boolean }; version: string }
 export interface AgentProfileInput {
   name: string; description: string; run_mode: Mode; default_provider_id: string | null; fallback_provider_ids: string[]
   user_prompt_template: string; planning_strategy: 'dynamic' | 'direct' | 'hybrid'; budget: AgentDefaults['budget']

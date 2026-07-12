@@ -4,7 +4,7 @@ import AgentProfileCenter from './components/AgentProfileCenter'
 import { useAdminSession } from './hooks/useAdminSession'
 import type { AgentDefaults, FallbackCategory, ProviderConfig, ProviderConfigInput, ProviderPreset, StructuredMode } from './types'
 
-interface Props { onClose: () => void; onChanged: () => Promise<void> }
+interface Props { onClose: () => void; onChanged: () => Promise<void>; initialSetup?: boolean }
 
 const emptyProvider: ProviderConfigInput = {
   name: '', preset: 'deepseek', base_url: 'https://api.deepseek.com', model: 'deepseek-v4-flash',
@@ -14,7 +14,7 @@ const emptyProvider: ProviderConfigInput = {
   fallback_on: ['rate_limit', 'timeout', 'service'],
 }
 
-export default function SettingsCenter({ onClose, onChanged }: Props) {
+export default function SettingsCenter({ onClose, onChanged, initialSetup = false }: Props) {
   const [adminToken, setAdminToken] = useState('')
   const session = useAdminSession()
   const [providers, setProviders] = useState<ProviderConfig[]>([])
@@ -97,6 +97,7 @@ export default function SettingsCenter({ onClose, onChanged }: Props) {
   return <div className="settings-backdrop" role="dialog" aria-label="设置中心">
     <section className="settings-panel">
       <header><div><span className="eyebrow">ADMIN SETTINGS</span><h2>设置中心</h2></div><button onClick={() => { void session.logout().finally(onClose) }}>关闭</button></header>
+      {initialSetup && <div className="setup-progress"><strong>首次配置向导</strong><span>1 管理员登录 → 2 配置 Provider → 3 连接测试 → 4 确认默认 Agent → 5 开始对话</span><small>管理员令牌只用于建立服务端会话，不会保存到浏览器。</small></div>}
       {!session.authenticated ? <form className="admin-login" onSubmit={authenticate}>
         <h3>管理员验证</h3><p>令牌仅保存在当前页面内存中，关闭或刷新后即清除。</p>
         <label>管理员令牌<input type="password" aria-label="管理员令牌" autoComplete="off" value={adminToken} onChange={event => setAdminToken(event.target.value)} /></label>

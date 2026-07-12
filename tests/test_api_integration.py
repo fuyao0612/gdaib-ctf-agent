@@ -252,6 +252,25 @@ def test_admin_cookie_session_requires_csrf_for_mutations(tmp_path):
         assert client.get("/api/v1/admin/settings/providers").status_code == 401
 
 
+def test_health_readiness_and_setup_status_are_distinct(tmp_path, provider_server):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        assert client.get("/api/v1/health").status_code == 200
+        status = client.get("/api/v1/setup/status")
+        assert status.status_code == 200
+        assert status.json()["checks"] == {
+            "database": True,
+            "master_key": True,
+            "admin": True,
+            "provider": False,
+        }
+        assert client.get("/api/v1/readiness").status_code == 503
+
+        create_provider(client, provider_server)
+        assert client.get("/api/v1/setup/status").json()["configured"] is True
+        assert client.get("/api/v1/readiness").json()["status"] == "ready"
+
+
 def test_agent_profile_api_versions_preview_export_and_thread_snapshot(tmp_path):
     app = configured_app(tmp_path)
     headers = {"Authorization": "Bearer test-admin-token"}

@@ -1,4 +1,4 @@
-import type { AgentDefaults, AgentProfile, AgentProfileInput, AgentProfileSummary, Artifact, Event, MemoryRecord, ProviderConfig, ProviderConfigInput, Report, Run, RunAudit, Thread, ThreadDetail } from './types'
+import type { AgentDefaults, AgentProfile, AgentProfileInput, AgentProfileSummary, Artifact, Event, MemoryRecord, ProviderConfig, ProviderConfigInput, Report, Run, RunAudit, SetupStatus, Thread, ThreadDetail } from './types'
 
 const API = '/api/v1'
 const adminHeaders = (csrf: string) => ({ 'X-CSRF-Token': csrf })
@@ -18,6 +18,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  setupStatus: () => request<SetupStatus>('/setup/status'),
   listThreads: () => request<Thread[]>('/threads'),
   listAgentProfiles: () => request<AgentProfileSummary[]>('/agent-profiles'),
   createThread: (title: string, mode: string, agentProfileId: string) => request<Thread>('/threads', { method: 'POST', body: JSON.stringify({ title, mode, agent_profile_id: agentProfileId }) }),
