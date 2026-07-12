@@ -149,7 +149,7 @@ async def test_provider_invalid_output_and_refusal_are_classified():
 @pytest.mark.asyncio
 async def test_provider_chain_falls_back_without_agent_changes():
     chain = ProviderChain([FakeModelProvider("refusal"), FakeModelProvider("success")])
-    action = await chain.generate_structured("tool_failures=1", AgentAction, timeout=1)
+    action = await chain.generate_structured('{"observations":[]}', AgentAction, timeout=1)
     assert action.tool_name == "test_echo"
 
 

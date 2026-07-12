@@ -27,6 +27,7 @@ export default function App() {
   const [message, setMessage] = useState('')
   const [providers, setProviders] = useState<ProviderConfig[]>([])
   const [selectedProviderId, setSelectedProviderId] = useState('')
+  const [successPattern, setSuccessPattern] = useState('')
   const [pendingArtifacts, setPendingArtifacts] = useState<Artifact[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -76,11 +77,11 @@ export default function App() {
     setBusy(true); try { const artifact = await api.upload(detail.id, file); setPendingArtifacts(items => [...items, artifact]) } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
   }
   async function sendAndRun() {
-    if (!detail || !message.trim() || !selectedProviderId) return
+    if (!detail || !message.trim() || !selectedProviderId || !successPattern.trim()) return
     setBusy(true); setError(''); setEvents([]); setReport(null)
     try {
       await api.message(detail.id, message, pendingArtifacts.map(item => item.id))
-      const run = await api.start(detail.id, selectedProviderId); setActiveRun(run); setPendingArtifacts([]); connect(run)
+      const run = await api.start(detail.id, selectedProviderId, successPattern); setActiveRun(run); setPendingArtifacts([]); connect(run)
       const updated = await api.detail(detail.id); setDetail(updated)
     } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
   }
@@ -109,7 +110,7 @@ export default function App() {
           {events.length > 0 && <div className="agent-progress"><div className="progress-title"><span className="pulse" />Agent 执行记录 <span>{events.length} 项</span></div>{events.filter(item => !item.type.startsWith('tool_')).map(event => <EventCard key={event.event_id} event={event} />)}</div>}
           {report && <section className="report" data-testid="final-report"><div className="report-header"><h3>最终报告</h3><div><a href={api.reportUrl(activeRun!.id, 'md')}>Markdown</a><a href={api.reportUrl(activeRun!.id, 'json')}>JSON</a></div></div><ReactMarkdown>{report.markdown}</ReactMarkdown></section>}
         </section>
-        <footer className="composer"><div className="attachments">{pendingArtifacts.map(file => <span key={file.id}>📎 {file.filename} · {file.size} B</span>)}</div>{inputLocked && <div className="lock-note">竞赛模式运行中：已锁定补充提示，仅可观察或停止。</div>}{providers.length === 0 && <div className="model-required">需要配置模型：请先进入设置中心添加、测试并启用 Provider。</div>}<textarea aria-label="任务消息" value={message} onChange={event => setMessage(event.target.value)} disabled={inputLocked || busy} placeholder="描述已授权的安全任务、目标范围与成功条件…" /><div className="composer-actions"><label className="file-button">＋ 附件<input aria-label="上传附件" type="file" accept=".txt,.json,.md,.log,.bin" onChange={event => void upload(event.target.files?.[0])} /></label><label className="provider-select">模型<select aria-label="运行模型" value={selectedProviderId} onChange={event => setSelectedProviderId(event.target.value)} disabled={running || providers.length === 0}><option value="">未配置</option>{providers.map(value => <option key={value.id} value={value.id}>{value.name} · {value.model}</option>)}</select></label><span className="authorization">盾 已授权范围内执行</span><div className="run-actions">{running ? <button className="danger" onClick={() => void stop()}>停止</button> : activeRun && ['failed', 'stopped'].includes(activeRun.status) ? <button onClick={() => void retry()}>重试</button> : null}<button className="primary" disabled={busy || inputLocked || running || !message.trim() || !selectedProviderId} onClick={() => void sendAndRun()}>{busy ? '处理中…' : '启动运行 ↗'}</button></div></div></footer>
+        <footer className="composer"><div className="attachments">{pendingArtifacts.map(file => <span key={file.id}>📎 {file.filename} · {file.size} B</span>)}</div>{inputLocked && <div className="lock-note">竞赛模式运行中：已锁定补充提示，仅可观察或停止。</div>}{providers.length === 0 && <div className="model-required">需要配置模型：请先进入设置中心添加、测试并启用 Provider。</div>}<textarea aria-label="任务消息" value={message} onChange={event => setMessage(event.target.value)} disabled={inputLocked || busy} placeholder="描述已授权的安全任务、目标范围与成功条件…" /><div className="verification-row"><label>成功答案正则<input aria-label="成功答案正则" value={successPattern} onChange={event => setSuccessPattern(event.target.value)} placeholder="例如 FLAG\{[A-Za-z0-9_-]+\}" disabled={running} /></label><small>模型只能提出候选；系统会核对工具证据后按此规则验证。</small></div><div className="composer-actions"><label className="file-button">＋ 附件<input aria-label="上传附件" type="file" accept=".txt,.json,.md,.log,.bin" onChange={event => void upload(event.target.files?.[0])} /></label><label className="provider-select">模型<select aria-label="运行模型" value={selectedProviderId} onChange={event => setSelectedProviderId(event.target.value)} disabled={running || providers.length === 0}><option value="">未配置</option>{providers.map(value => <option key={value.id} value={value.id}>{value.name} · {value.model}</option>)}</select></label><span className="authorization">盾 已授权范围内执行</span><div className="run-actions">{running ? <button className="danger" onClick={() => void stop()}>停止</button> : activeRun && ['failed', 'stopped'].includes(activeRun.status) ? <button onClick={() => void retry()}>重试</button> : null}<button className="primary" disabled={busy || inputLocked || running || !message.trim() || !selectedProviderId || !successPattern.trim()} onClick={() => void sendAndRun()}>{busy ? '处理中…' : '启动运行 ↗'}</button></div></div></footer>
       </>}
       {error && <div role="alert" className="toast">{error}</div>}
     </main>

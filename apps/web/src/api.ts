@@ -18,7 +18,7 @@ export const api = {
   detail: (id: string) => request<ThreadDetail>(`/threads/${id}`),
   message: (id: string, content: string, artifactIds: string[]) => request(`/threads/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, artifact_ids: artifactIds }) }),
   upload: async (id: string, file: File) => { const form = new FormData(); form.append('upload', file); return request<Artifact>(`/threads/${id}/artifacts`, { method: 'POST', body: form }) },
-  start: (id: string, providerConfigId: string) => request<Run>(`/threads/${id}/runs`, { method: 'POST', body: JSON.stringify({ provider_config_id: providerConfigId }) }),
+  start: (id: string, providerConfigId: string, successPattern: string) => request<Run>(`/threads/${id}/runs`, { method: 'POST', body: JSON.stringify({ provider_config_id: providerConfigId, verification_rules: [{ kind: 'regex', value: successPattern }] }) }),
   stop: (id: string) => request<Run>(`/runs/${id}/stop`, { method: 'POST' }),
   retry: (id: string) => request<Run>(`/runs/${id}/retry`, { method: 'POST' }),
   events: (id: string) => request<Event[]>(`/runs/${id}/events`),

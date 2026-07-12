@@ -28,6 +28,7 @@ from yuwang.domain.models import (
     TaskSpec,
     Thread,
     ThreadMode,
+    VerificationRule,
     utcnow,
 )
 from yuwang.model_providers import OpenAICompatibleProvider, ProviderChain, ProviderError
@@ -70,6 +71,7 @@ class RunCreate(BaseModel):
     provider_config_id: UUID | None = None
     authorized_targets: list[str] = Field(default_factory=list)
     success_conditions: list[str] = Field(default_factory=lambda: ["reference_tool_succeeded"])
+    verification_rules: list[VerificationRule] = Field(default_factory=list)
 
 
 class ErrorBody(BaseModel):
@@ -181,7 +183,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not user_messages:
             raise HTTPException(409, "请先发送任务消息")
         latest = user_messages[-1]
-        return TaskSpec(body=latest.content, mode=thread.mode, artifact_ids=latest.artifact_ids, authorized_targets=create.authorized_targets, success_conditions=create.success_conditions)
+        defaults = get_settings_service().get_agent_defaults()
+        return TaskSpec(body=latest.content, mode=thread.mode, artifact_ids=latest.artifact_ids, authorized_targets=create.authorized_targets, success_conditions=create.success_conditions, verification_rules=create.verification_rules, budget=defaults.budget)
 
     async def execute(run: Run, task: TaskSpec, provider: ProviderChain) -> None:
         engine = AgentEngine(repository, provider, registry, policy)
@@ -271,6 +274,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         try:
             repository.save_run(run)
+            repository.save_run_task(run.id, task)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         task_handle = asyncio.create_task(execute(run, task, provider))
@@ -295,7 +299,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if previous.status not in {RunStatus.FAILED, RunStatus.STOPPED}:
             raise HTTPException(409, "仅失败或停止的运行可重试")
         thread = require_thread(previous.thread_id)
-        task = build_task(thread, RunCreate(provider_config_id=previous.provider_config_id))
+        task = repository.get_run_task(previous.id)
+        if not task:
+            raise HTTPException(409, "原运行缺少 TaskSpec 快照，无法安全重试")
         try:
             provider = build_provider_chain(previous.provider_config_id)
         except (ValueError, KeyError) as exc:
@@ -307,6 +313,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             attempt=previous.attempt + 1,
         )
         repository.save_run(retried)
+        repository.save_run_task(retried.id, task)
         task_handle = asyncio.create_task(execute(retried, task, provider))
         tasks[retried.id] = task_handle
         task_handle.add_done_callback(lambda _: tasks.pop(retried.id, None))

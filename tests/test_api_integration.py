@@ -31,14 +31,31 @@ def provider_server():
             if '"status":"ok"' in prompt:
                 response_content = '{"status":"ok"}'
             else:
-                fail = "tool_failures=0" in prompt
-                action = {
-                    "kind": "call_tool",
-                    "summary": "协议服务选择测试工具",
-                    "tool_name": "test_echo",
-                    "tool_input": {"text": "verified", "fail": fail},
-                }
-                response_content = json.dumps(action)
+                context = json.loads(prompt)
+                if "生成动态计划" in context["purpose"] or "重新规划" in context["purpose"]:
+                    response_content = json.dumps({
+                        "summary": "协议服务生成的计划",
+                        "steps": ["调用测试工具", "验证候选"],
+                        "success_approach": "使用确定性规则验证工具证据",
+                    })
+                else:
+                    observations = context["observations"]
+                    if observations and observations[-1]["success"]:
+                        latest = observations[-1]
+                        action = {
+                            "kind": "finish",
+                            "summary": "提交带来源候选",
+                            "candidate": {"value": latest["output"]["echoed"], "source_call_id": latest["call_id"], "location": "/echoed"},
+                            "tool_input": {},
+                        }
+                    else:
+                        action = {
+                            "kind": "call_tool",
+                            "summary": "协议服务选择测试工具",
+                            "tool_name": "test_echo",
+                            "tool_input": {"text": "verified", "fail": not observations},
+                        }
+                    response_content = json.dumps(action)
             encoded = json.dumps(
                 {"choices": [{"message": {"content": response_content}}]}
             ).encode()
@@ -122,7 +139,10 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         assert message.status_code == 201
         started = client.post(
             f"/api/v1/threads/{thread['id']}/runs",
-            json={"provider_config_id": provider["id"]},
+            json={
+                "provider_config_id": provider["id"],
+                "verification_rules": [{"kind": "regex", "value": "verified"}],
+            },
         )
         assert started.status_code == 202, started.text
         run_id = started.json()["id"]
@@ -134,7 +154,8 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         ).json()
         assert resumed[0]["sequence"] == 3
         report = client.get(f"/api/v1/runs/{run_id}/report")
-        assert report.status_code == 200 and "首次工具调用失败" in report.json()["markdown"]
+        assert report.status_code == 200
+        assert "调整：协议服务生成的计划" in report.json()["markdown"]
         assert client.get(f"/api/v1/artifacts/{artifact['id']}/download").content == b"evidence"
         assert len(client.get("/api/v1/providers").json()) == 1
         assert len(client.get("/api/v1/tools").json()) == 3

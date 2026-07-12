@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
 
-from yuwang.domain.models import AgentAction
+from yuwang.domain.models import AgentAction, AgentPlan
 from yuwang.model_providers import ProviderError
 from yuwang.model_providers.providers import ProviderErrorCategory
 from yuwang.tooling.sdk import ToolPlugin, ToolSpec
@@ -44,7 +45,29 @@ class FakeModelProvider:
                 raise ProviderError(
                     ProviderErrorCategory.INVALID_OUTPUT, "invalid structured output", True
                 ) from exc
-        fail = "tool_failures=0" in prompt
+        if output_type is AgentPlan:
+            return output_type.model_validate(
+                AgentPlan(
+                    summary="基于测试工具生成计划",
+                    steps=["执行测试工具", "核对候选证据", "提交验证"],
+                    success_approach="从工具输出提取候选并交由确定性验证器",
+                ).model_dump()
+            )
+        context = json.loads(prompt)
+        observations = context.get("observations", [])
+        if observations and observations[-1]["success"]:
+            latest = observations[-1]
+            value = AgentAction(
+                kind="finish",
+                summary="提出有工具来源的候选答案",
+                candidate={
+                    "value": latest["output"]["echoed"],
+                    "source_call_id": latest["call_id"],
+                    "location": "/echoed",
+                },
+            )
+            return output_type.model_validate(value.model_dump())
+        fail = not observations
         value = AgentAction(
             kind="call_tool",
             summary="调用测试工具",

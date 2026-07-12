@@ -23,7 +23,13 @@ async def test_complete_failure_replan_success_report(tmp_path):
     repository, engine = build_engine(tmp_path)
     thread = repository.save_thread(Thread(title="agent"))
     run = repository.save_run(Run(thread_id=thread.id))
-    await engine.run(run.id, TaskSpec(body="执行安全确定性演示"))
+    await engine.run(
+        run.id,
+        TaskSpec(
+            body="执行安全测试任务",
+            verification_rules=[{"kind": "regex", "value": "verified"}],
+        ),
+    )
     finished = repository.get_run(run.id)
     assert finished.status == RunStatus.COMPLETED
     events = repository.list_events(run.id)

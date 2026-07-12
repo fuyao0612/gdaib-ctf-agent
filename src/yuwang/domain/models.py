@@ -145,6 +145,7 @@ class Artifact(DomainModel):
 
 
 class TaskSpec(DomainModel):
+    model_config = ConfigDict(extra="forbid", use_enum_values=True, frozen=True)
     body: str = Field(min_length=1, max_length=100_000)
     scenario: str = "safe_demo"
     mode: ThreadMode = ThreadMode.NORMAL
@@ -153,6 +154,7 @@ class TaskSpec(DomainModel):
     constraints: list[str] = Field(default_factory=list)
     budget: Budget = Field(default_factory=Budget)
     success_conditions: list[str] = Field(default_factory=lambda: ["reference_tool_succeeded"])
+    verification_rules: list[VerificationRule] = Field(default_factory=list)
 
 
 class CallStatus(StrEnum):
@@ -188,7 +190,39 @@ class ToolCall(DomainModel):
 
 class AgentAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["call_tool", "replan", "finish", "fail"]
+    kind: Literal["call_tool", "replan", "finish", "fail", "request_input"]
     summary: str
     tool_name: str | None = None
     tool_input: dict[str, Any] = Field(default_factory=dict)
+    candidate: EvidenceCandidate | None = None
+    updated_plan: list[str] = Field(default_factory=list)
+
+
+class VerificationRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["regex", "sha256"]
+    value: str = Field(min_length=1, max_length=2000)
+
+
+class EvidenceCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    value: str = Field(min_length=1, max_length=10000)
+    source_call_id: UUID
+    location: str = Field(min_length=1, max_length=500, pattern=r"^/")
+
+
+class AgentPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: str = Field(min_length=1, max_length=500)
+    steps: list[str] = Field(min_length=1, max_length=30)
+    success_approach: str = Field(min_length=1, max_length=500)
+
+
+class Observation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    call_id: UUID
+    tool_name: str
+    success: bool
+    output: dict[str, Any] = Field(default_factory=dict)
+    summary: str
+    error: str | None = None

@@ -9,7 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from yuwang.domain.models import Artifact, Event, Message, Run, RunStatus, Thread
+from yuwang.domain.models import Artifact, Event, Message, Run, RunStatus, TaskSpec, Thread
 from yuwang.settings.models import AgentDefaults, ProviderConfig
 
 T = TypeVar("T", bound=BaseModel)
@@ -48,6 +48,7 @@ class SQLiteRepository:
                 CREATE TABLE IF NOT EXISTS checkpoints(run_id TEXT NOT NULL, node TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(run_id,node));
                 CREATE TABLE IF NOT EXISTS provider_configs(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS run_tasks(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 """
             )
 
@@ -207,3 +208,23 @@ class SQLiteRepository:
                 "INSERT OR REPLACE INTO app_settings(key,data) VALUES('agent_defaults',?)",
                 (value.model_dump_json(),),
             )
+
+    def save_run_task(self, run_id: UUID, value: TaskSpec) -> None:
+        with self.connect() as db:
+            existing = db.execute(
+                "SELECT data FROM run_tasks WHERE run_id=?", (str(run_id),)
+            ).fetchone()
+            serialized = value.model_dump_json()
+            if existing and existing["data"] != serialized:
+                raise ValueError("Run 的 TaskSpec 快照不可变")
+            db.execute(
+                "INSERT OR IGNORE INTO run_tasks(run_id,data) VALUES(?,?)",
+                (str(run_id), serialized),
+            )
+
+    def get_run_task(self, run_id: UUID | str) -> TaskSpec | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT data FROM run_tasks WHERE run_id=?", (str(run_id),)
+            ).fetchone()
+        return TaskSpec.model_validate_json(row["data"]) if row else None
