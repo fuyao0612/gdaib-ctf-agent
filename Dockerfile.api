@@ -4,7 +4,8 @@ WORKDIR /app
 COPY pyproject.toml requirements.runtime.lock ./
 RUN pip install --no-cache-dir -r requirements.runtime.lock
 COPY src ./src
-COPY apps ./apps
+COPY apps/__init__.py ./apps/__init__.py
+COPY apps/api ./apps/api
 RUN pip install --no-cache-dir --no-deps .
 RUN addgroup --system yuwang && adduser --system --ingroup yuwang yuwang && mkdir -p /data/artifacts && chown -R yuwang:yuwang /data
 USER yuwang

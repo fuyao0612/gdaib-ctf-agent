@@ -90,6 +90,28 @@ def test_budget_guards_and_stop(tmp_path):
         engine._checkpoint("two", state)
 
 
+@pytest.mark.parametrize(
+    ("budget", "state_update"),
+    [
+        (Budget(max_model_calls=1), {"model_calls": 2}),
+        (Budget(max_tool_calls=1), {"tool_calls": 2}),
+        (Budget(max_tokens=10), {"tokens": 11}),
+        (Budget(max_duration_seconds=1), {"elapsed_seconds": 2}),
+    ],
+)
+def test_each_budget_dimension_is_enforced(tmp_path, budget, state_update):
+    repository, engine = build_engine(tmp_path)
+    thread = repository.save_thread(Thread(title="budget dimensions"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(
+        run_id=run.id,
+        task=TaskSpec(body="x", budget=budget),
+        **state_update,
+    )
+    with pytest.raises(BudgetExceeded):
+        engine._checkpoint("budget", state)
+
+
 @pytest.mark.asyncio
 async def test_resume_from_last_safe_checkpoint_without_replaying_completed_tool(tmp_path):
     repository, engine = build_engine(tmp_path)

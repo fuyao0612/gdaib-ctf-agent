@@ -15,6 +15,8 @@ jobs:
       - run: ruff check .
       - run: mypy
       - run: pytest
+      - run: pytest -q -o addopts='' --cov=yuwang.agent --cov-report=term-missing --cov-fail-under=90 tests
+      - run: python scripts/check_production_surface.py
 
   frontend:
     runs-on: ubuntu-latest
@@ -44,5 +46,24 @@ jobs:
         working-directory: apps/web
       - run: npm run e2e
         working-directory: apps/web
+      - name: Generate ephemeral deployment secrets
+        shell: bash
+        run: |
+          echo "YUWANG_MASTER_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
+          echo "YUWANG_ADMIN_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')" >> "$GITHUB_ENV"
       - run: docker compose config --quiet
       - run: docker compose build
+      - run: docker run --rm yuwang-api sh -c "test ! -d /app/tests && test ! -d /app/apps/web"
+      - run: docker run --rm yuwang-api python -c "import pathlib,re; roots=[pathlib.Path('/app/src'),pathlib.Path('/app/apps/api')]; assert not any(re.search(r'\\bmo' r'ck\\b', p.read_text(errors='ignore'), re.I) for root in roots for p in root.rglob('*.py'))"
+      - run: docker run --rm yuwang-web sh -c "! grep -Ril -E '\\b[mM][oO][cC][kK]\\b' /usr/share/nginx/html"
+      - name: Compose health and restart recovery
+        shell: bash
+        run: |
+          docker compose up -d --wait
+          curl --fail --silent http://localhost:8080/api/v1/health | python -c "import json,sys; assert json.load(sys.stdin)['version'] == '0.2.0'"
+          THREAD_ID=$(curl --fail --silent -X POST -H 'Content-Type: application/json' -d '{"title":"ci-recovery","mode":"normal"}' http://localhost:8080/api/v1/threads | python -c "import json,sys; print(json.load(sys.stdin)['id'])")
+          docker compose restart
+          for attempt in {1..60}; do curl --fail --silent http://localhost:8080/api/v1/health >/dev/null && break; sleep 1; done
+          curl --fail --silent "http://localhost:8080/api/v1/threads/$THREAD_ID" | python -c "import json,sys; assert json.load(sys.stdin)['title'] == 'ci-recovery'"
+      - if: always()
+        run: docker compose down

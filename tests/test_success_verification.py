@@ -87,6 +87,38 @@ def test_sha256_verification():
     assert result.verified
 
 
+def test_verification_rejects_missing_rule_invalid_pointer_and_rule_mismatch():
+    observation = successful_observation()
+    candidate = EvidenceCandidate(
+        value="FLAG{ABC123}",
+        source_call_id=observation.call_id,
+        location="/result/candidate",
+    )
+    verifier = SuccessVerifier()
+    assert not verifier.verify(TaskSpec(body="no rule"), candidate, [observation]).verified
+
+    invalid_pointer = candidate.model_copy(update={"location": "/missing/value"})
+    assert not verifier.verify(task_with_rule(), invalid_pointer, [observation]).verified
+    assert not verifier.verify(task_with_rule(r"FLAG\{ZZZ\}"), candidate, [observation]).verified
+
+
+def test_json_pointer_resolves_lists_and_escaped_keys():
+    call_id = uuid4()
+    observation = Observation(
+        call_id=call_id,
+        tool_name="test_tool",
+        success=True,
+        output={"items/key": [{"~value": "FLAG{LIST}"}]},
+        summary="tool completed",
+    )
+    candidate = EvidenceCandidate(
+        value="FLAG{LIST}", source_call_id=call_id, location="/items~1key/0/~0value"
+    )
+    assert SuccessVerifier().verify(task_with_rule(), candidate, [observation]).verified
+    with pytest.raises(TypeError, match="scalar"):
+        SuccessVerifier._resolve_pointer({"value": "scalar"}, "/value/child")
+
+
 def test_run_task_snapshot_is_immutable(tmp_path):
     repository = SQLiteRepository(tmp_path / "snapshots.db")
     run_id = uuid4()

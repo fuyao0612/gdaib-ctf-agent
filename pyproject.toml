@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yuwang-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "御网智元：可审计的对话式网络安全 Agent 工作台"
 requires-python = ">=3.11"
 dependencies = [
@@ -33,7 +33,8 @@ packages = ["src/yuwang", "apps"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-q --cov=src/yuwang/agent --cov-report=term-missing --cov-fail-under=80"
+addopts = "-q --cov=src/yuwang --cov-report=term-missing --cov-fail-under=80"
+markers = ["real_provider: explicit opt-in test against a configured real provider"]
 
 [tool.ruff]
 line-length = 100
