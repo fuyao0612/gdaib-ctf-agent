@@ -170,6 +170,9 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         assert started.status_code == 202, started.text
         run_id = started.json()["id"]
         assert wait_for_terminal(client, run_id)["status"] == "completed"
+        profile_snapshot = app.state.repository.get_run_agent_profile(__import__("uuid").UUID(run_id))
+        assert profile_snapshot
+        assert profile_snapshot.version == thread["agent_profile_version"]
         events = client.get(f"/api/v1/runs/{run_id}/events").json()
         assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
         resumed = client.get(f"/api/v1/runs/{run_id}/events", params={"after": 2}).json()
@@ -212,6 +215,58 @@ def test_unconfigured_provider_and_admin_auth_are_explicit(tmp_path):
         )
         assert validation.status_code == 422
         assert "leak123" not in validation.text
+
+
+def test_agent_profile_api_versions_preview_export_and_thread_snapshot(tmp_path):
+    app = configured_app(tmp_path)
+    headers = {"Authorization": "Bearer test-admin-token"}
+    with TestClient(app) as client:
+        defaults = client.get("/api/v1/admin/settings/agent-profiles", headers=headers)
+        assert defaults.status_code == 200 and defaults.json()[0]["is_default"]
+        created = client.post(
+            "/api/v1/admin/settings/agent-profiles",
+            headers=headers,
+            json={
+                "name": "API 配置",
+                "description": "第一版",
+                "user_prompt_template": "任务：{task}",
+                "completion_mode": "advisory",
+            },
+        )
+        assert created.status_code == 201, created.text
+        profile = created.json()
+        thread = client.post(
+            "/api/v1/threads",
+            json={"title": "profile thread", "agent_profile_id": profile["profile_id"]},
+        ).json()
+        assert thread["agent_profile_version"] == 1
+
+        edited = {key: value for key, value in profile.items() if key not in {"profile_id", "version", "schema_version", "created_at"}}
+        edited["description"] = "第二版"
+        updated = client.put(
+            f"/api/v1/admin/settings/agent-profiles/{profile['profile_id']}",
+            headers=headers,
+            json=edited,
+        )
+        assert updated.status_code == 200 and updated.json()["version"] == 2
+        assert client.get(f"/api/v1/threads/{thread['id']}").json()["agent_profile_version"] == 1
+
+        preview = client.post(
+            "/api/v1/admin/settings/agent-profiles/template-preview",
+            headers=headers,
+            json={"template": "{task}", "values": {"task": "预览"}},
+        )
+        assert preview.json() == {"rendered": "预览"}
+        exported = client.get(
+            "/api/v1/admin/settings/agent-profiles/export",
+            headers=headers,
+            params={"profile_id": profile["profile_id"]},
+        )
+        assert exported.status_code == 200
+        exported_profile = exported.json()["profiles"][0]
+        assert exported_profile["default_provider_id"] is None
+        assert exported_profile["fallback_provider_ids"] == []
+        assert "api_key" not in exported.text
 
 
 def test_competition_lock_stop_openapi_and_upload_policy(tmp_path):

@@ -35,9 +35,14 @@ from yuwang.model_providers import OpenAICompatibleProvider, ProviderChain, Prov
 from yuwang.policy import PolicyEngine, SecurityConfig
 from yuwang.settings import (
     AgentDefaults,
+    AgentProfileExport,
+    AgentProfileInput,
+    AgentProfileService,
+    AgentProfileVersion,
     ProviderConfig,
     ProviderConfigInput,
     ProviderConfigView,
+    SafeTemplateRenderer,
     SecretCipher,
     SettingsService,
 )
@@ -65,6 +70,7 @@ class Settings(BaseModel):
 class ThreadCreate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     mode: ThreadMode = ThreadMode.NORMAL
+    agent_profile_id: UUID | None = None
 
 
 class MessageCreate(BaseModel):
@@ -84,10 +90,21 @@ class ErrorBody(BaseModel):
     message: str
 
 
+class ProfileCopy(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class TemplatePreview(BaseModel):
+    template: str = Field(min_length=1, max_length=20_000)
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or Settings()
     config.artifact_root.mkdir(parents=True, exist_ok=True)
     repository = SQLiteRepository(config.database_path)
+    profile_service = AgentProfileService(repository)
+    profile_service.ensure_default(repository.get_agent_defaults().budget)
     policy = PolicyEngine(SecurityConfig())
     registry = create_reference_registry(config.artifact_root)
     tasks: dict[UUID, asyncio.Task[None]] = {}
@@ -145,9 +162,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def resolve_provider_chain(
         provider_config_id: UUID | None,
+        fallback_ids: list[UUID] | None = None,
     ) -> tuple[list[ProviderConfig], ProviderChain]:
-        provider_configs = get_settings_service().resolve_chain(provider_config_id)
+        provider_configs = get_settings_service().resolve_chain(provider_config_id, fallback_ids)
         return provider_configs, build_provider_chain_from_configs(provider_configs)
+
+    def resolve_thread_profile(thread: Thread) -> AgentProfileVersion:
+        if thread.agent_profile_id and thread.agent_profile_version:
+            return profile_service.require(thread.agent_profile_id, thread.agent_profile_version)
+        profile = profile_service.resolve(None)
+        thread.agent_profile_id = profile.profile_id
+        thread.agent_profile_version = profile.version
+        repository.save_thread(thread)
+        return profile
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -231,13 +258,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404, "运行不存在")
         return run
 
-    def build_task(thread: Thread, create: RunCreate) -> TaskSpec:
+    def build_task(
+        thread: Thread, create: RunCreate, profile: AgentProfileVersion
+    ) -> TaskSpec:
         messages = repository.list_messages(thread.id)
         user_messages = [message for message in messages if message.role == MessageRole.USER]
         if not user_messages:
             raise HTTPException(409, "请先发送任务消息")
         latest = user_messages[-1]
-        defaults = get_settings_service().get_agent_defaults()
         return TaskSpec(
             body=latest.content,
             mode=thread.mode,
@@ -245,7 +273,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             authorized_targets=create.authorized_targets,
             success_conditions=create.success_conditions,
             verification_rules=create.verification_rules,
-            budget=defaults.budget,
+            budget=profile.budget,
         )
 
     async def execute(run: Run, task: TaskSpec, provider: ProviderChain) -> None:
@@ -258,7 +286,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/api/v1/threads", response_model=Thread, status_code=201)
     async def create_thread(body: ThreadCreate) -> Thread:
-        return repository.save_thread(Thread(title=body.title, mode=body.mode))
+        profile = profile_service.resolve(body.agent_profile_id)
+        return repository.save_thread(
+            Thread(
+                title=body.title,
+                mode=body.mode,
+                agent_profile_id=profile.profile_id,
+                agent_profile_version=profile.version,
+            )
+        )
 
     @application.get("/api/v1/threads", response_model=list[Thread])
     async def list_threads() -> list[Thread]:
@@ -360,21 +396,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.post("/api/v1/threads/{thread_id}/runs", response_model=Run, status_code=202)
     async def start_run(thread_id: UUID, body: RunCreate = Body(default_factory=RunCreate)) -> Run:
         thread = require_thread(thread_id)
+        profile = resolve_thread_profile(thread)
         try:
-            provider_configs, provider = resolve_provider_chain(body.provider_config_id)
+            selected_id = body.provider_config_id or profile.default_provider_id
+            fallback_ids = profile.fallback_provider_ids if profile.default_provider_id else None
+            provider_configs, provider = resolve_provider_chain(selected_id, fallback_ids)
             selected = provider_configs[0]
         except (ValueError, KeyError) as exc:
             raise HTTPException(409, str(exc)) from exc
-        task = build_task(thread, body)
+        task = build_task(thread, body, profile)
         run = Run(
             thread_id=thread.id,
             provider=selected.name,
             provider_config_id=selected.id,
+            agent_profile_id=profile.profile_id,
+            agent_profile_version=profile.version,
         )
         try:
             repository.save_run(run)
             repository.save_run_task(run.id, task)
             repository.save_provider_snapshot(run.id, provider_configs)
+            repository.save_run_agent_profile(run.id, profile)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         task_handle = asyncio.create_task(execute(run, task, provider))
@@ -409,15 +451,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             provider = build_provider_chain_from_configs(provider_configs)
         except (ValueError, KeyError) as exc:
             raise HTTPException(409, str(exc)) from exc
+        profile = repository.get_run_agent_profile(previous.id) or profile_service.resolve(None)
         retried = Run(
             thread_id=thread.id,
             provider=previous.provider,
             provider_config_id=previous.provider_config_id,
+            agent_profile_id=profile.profile_id,
+            agent_profile_version=profile.version,
             attempt=previous.attempt + 1,
         )
         repository.save_run(retried)
         repository.save_run_task(retried.id, task)
         repository.save_provider_snapshot(retried.id, provider_configs)
+        repository.save_run_agent_profile(retried.id, profile)
         task_handle = asyncio.create_task(execute(retried, task, provider))
         tasks[retried.id] = task_handle
         task_handle.add_done_callback(cleanup_callback(retried.id))
@@ -531,6 +577,151 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not config.master_key:
             return []
         return get_settings_service().list_providers(enabled_only=True)
+
+    @application.get(
+        "/api/v1/admin/settings/agent-profiles",
+        response_model=list[AgentProfileVersion],
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_list_agent_profiles() -> list[AgentProfileVersion]:
+        return repository.list_agent_profiles()
+
+    @application.post(
+        "/api/v1/admin/settings/agent-profiles",
+        response_model=AgentProfileVersion,
+        status_code=201,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_create_agent_profile(body: AgentProfileInput) -> AgentProfileVersion:
+        try:
+            return profile_service.create(body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @application.get(
+        "/api/v1/admin/settings/agent-profiles/export",
+        response_model=AgentProfileExport,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_export_agent_profiles(
+        profile_id: UUID | None = None,
+    ) -> AgentProfileExport:
+        try:
+            return profile_service.export(profile_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @application.post(
+        "/api/v1/admin/settings/agent-profiles/import",
+        response_model=list[AgentProfileVersion],
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_import_agent_profiles(
+        body: AgentProfileExport,
+    ) -> list[AgentProfileVersion]:
+        try:
+            return profile_service.import_profiles(body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @application.post(
+        "/api/v1/admin/settings/agent-profiles/template-preview",
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_preview_agent_template(body: TemplatePreview) -> dict[str, str]:
+        try:
+            return {"rendered": SafeTemplateRenderer.render(body.template, body.values)}
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @application.get(
+        "/api/v1/admin/settings/agent-profiles/{profile_id}",
+        response_model=AgentProfileVersion,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_get_agent_profile(
+        profile_id: UUID, version: int | None = None
+    ) -> AgentProfileVersion:
+        try:
+            return profile_service.require(profile_id, version)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @application.get(
+        "/api/v1/admin/settings/agent-profiles/{profile_id}/versions",
+        response_model=list[AgentProfileVersion],
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_list_agent_profile_versions(
+        profile_id: UUID,
+    ) -> list[AgentProfileVersion]:
+        profile_service.require(profile_id)
+        return repository.list_agent_profile_versions(profile_id)
+
+    @application.put(
+        "/api/v1/admin/settings/agent-profiles/{profile_id}",
+        response_model=AgentProfileVersion,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_update_agent_profile(
+        profile_id: UUID, body: AgentProfileInput
+    ) -> AgentProfileVersion:
+        try:
+            return profile_service.update(profile_id, body)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @application.post(
+        "/api/v1/admin/settings/agent-profiles/{profile_id}/copy",
+        response_model=AgentProfileVersion,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_copy_agent_profile(
+        profile_id: UUID, body: ProfileCopy
+    ) -> AgentProfileVersion:
+        try:
+            return profile_service.copy(profile_id, body.name)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @application.post(
+        "/api/v1/admin/settings/agent-profiles/{profile_id}/default",
+        response_model=AgentProfileVersion,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_default_agent_profile(profile_id: UUID) -> AgentProfileVersion:
+        try:
+            return profile_service.set_default(profile_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @application.post(
+        "/api/v1/admin/settings/agent-profiles/{profile_id}/rollback/{version}",
+        response_model=AgentProfileVersion,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_rollback_agent_profile(
+        profile_id: UUID, version: int
+    ) -> AgentProfileVersion:
+        try:
+            return profile_service.rollback(profile_id, version)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @application.delete(
+        "/api/v1/admin/settings/agent-profiles/{profile_id}",
+        status_code=204,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_delete_agent_profile(profile_id: UUID) -> None:
+        try:
+            profile_service.delete(profile_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @application.get("/api/v1/provider-presets")
     async def provider_presets() -> dict[str, dict[str, Any]]:

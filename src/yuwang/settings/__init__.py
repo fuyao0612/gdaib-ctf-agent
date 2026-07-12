@@ -5,15 +5,27 @@ from .models import (
     ProviderConfigView,
     ProviderPreset,
 )
+from .profiles import (
+    AgentProfileExport,
+    AgentProfileInput,
+    AgentProfileService,
+    AgentProfileVersion,
+    SafeTemplateRenderer,
+)
 from .security import SecretCipher
 from .service import SettingsService
 
 __all__ = [
     "AgentDefaults",
+    "AgentProfileExport",
+    "AgentProfileInput",
+    "AgentProfileService",
+    "AgentProfileVersion",
     "ProviderConfig",
     "ProviderConfigInput",
     "ProviderConfigView",
     "ProviderPreset",
+    "SafeTemplateRenderer",
     "SecretCipher",
     "SettingsService",
 ]

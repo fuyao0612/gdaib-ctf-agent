@@ -69,6 +69,8 @@ class Thread(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     title: str = Field(min_length=1, max_length=160)
     mode: ThreadMode = ThreadMode.NORMAL
+    agent_profile_id: UUID | None = None
+    agent_profile_version: int | None = Field(default=None, ge=1)
     archived: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -89,6 +91,8 @@ class Run(DomainModel):
     status: RunStatus = RunStatus.QUEUED
     provider: str = "unconfigured"
     provider_config_id: UUID | None = None
+    agent_profile_id: UUID | None = None
+    agent_profile_version: int | None = Field(default=None, ge=1)
     attempt: int = Field(1, ge=1)
     stop_requested: bool = False
     error: str | None = None

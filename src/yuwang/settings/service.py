@@ -108,13 +108,20 @@ class SettingsService:
     def decrypt_api_key(self, provider_id: UUID) -> str:
         return self.cipher.decrypt(self.get_provider(provider_id).encrypted_api_key)
 
-    def resolve_chain(self, selected_id: UUID | None = None) -> list[ProviderConfig]:
+    def resolve_chain(
+        self, selected_id: UUID | None = None, fallback_ids: list[UUID] | None = None
+    ) -> list[ProviderConfig]:
         providers = [value for value in self.repository.list_provider_configs() if value.enabled]
         if selected_id:
             selected = next((value for value in providers if value.id == selected_id), None)
             if not selected:
                 raise ValueError("所选 Provider 不存在或未启用")
             rest = [value for value in providers if value.id != selected_id]
+            if fallback_ids is not None:
+                positions = {value: index for index, value in enumerate(fallback_ids)}
+                rest = [value for value in rest if value.id in positions]
+                rest.sort(key=lambda value: positions[value.id])
+                return [selected, *rest]
             return [selected, *sorted(rest, key=self._fallback_key)]
         default = next((value for value in providers if value.is_default), None)
         if not default:

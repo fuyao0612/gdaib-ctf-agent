@@ -61,6 +61,7 @@ npm run e2e
 - `src/yuwang/storage`：SQLite 持久化、检查点与审计
 - [架构与恢复](docs/architecture.md)
 - [模型 Provider](docs/model-provider.md)
+- [Agent 配置与版本](docs/agent-profiles.md)
 - [安全边界](docs/security.md)
 - [测试分层](docs/testing.md)
 - [生产部署与备份](docs/deployment.md)

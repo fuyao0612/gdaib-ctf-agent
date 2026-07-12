@@ -24,6 +24,7 @@ from yuwang.domain.models import (
     ToolCall,
 )
 from yuwang.settings.models import AgentDefaults, ProviderConfig
+from yuwang.settings.profiles import AgentProfileVersion
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -66,6 +67,9 @@ class SQLiteRepository:
                 CREATE TABLE IF NOT EXISTS tool_calls(id TEXT PRIMARY KEY, run_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS evidence(id TEXT PRIMARY KEY, run_id TEXT NOT NULL, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS provider_snapshots(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE IF NOT EXISTS agent_profile_versions(profile_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(profile_id,version));
+                CREATE TABLE IF NOT EXISTS run_agent_profiles(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
                 """
             )
 
@@ -447,3 +451,84 @@ class SQLiteRepository:
         if not row:
             return []
         return [ProviderConfig.model_validate(value) for value in json.loads(row["data"])]
+
+    def save_agent_profile_version(self, value: AgentProfileVersion) -> None:
+        with self.connect() as db:
+            existing = db.execute(
+                "SELECT data FROM agent_profile_versions WHERE profile_id=? AND version=?",
+                (str(value.profile_id), value.version),
+            ).fetchone()
+            serialized = value.model_dump_json()
+            if existing and existing["data"] != serialized:
+                raise ValueError("AgentProfile 历史版本不可变")
+            db.execute(
+                "INSERT OR IGNORE INTO agent_profile_versions VALUES(?,?,?,?)",
+                (str(value.profile_id), value.version, serialized, value.created_at),
+            )
+
+    def get_agent_profile(
+        self, profile_id: UUID, version: int | None = None
+    ) -> AgentProfileVersion | None:
+        with self.connect() as db:
+            if version is None:
+                row = db.execute(
+                    "SELECT data FROM agent_profile_versions WHERE profile_id=? ORDER BY version DESC LIMIT 1",
+                    (str(profile_id),),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    "SELECT data FROM agent_profile_versions WHERE profile_id=? AND version=?",
+                    (str(profile_id), version),
+                ).fetchone()
+        return AgentProfileVersion.model_validate_json(row["data"]) if row else None
+
+    def list_agent_profile_versions(self, profile_id: UUID) -> list[AgentProfileVersion]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM agent_profile_versions WHERE profile_id=? ORDER BY version",
+                (str(profile_id),),
+            ).fetchall()
+        return [AgentProfileVersion.model_validate_json(row["data"]) for row in rows]
+
+    def list_agent_profiles(self) -> list[AgentProfileVersion]:
+        with self.connect() as db:
+            rows = db.execute(
+                """
+                SELECT versions.data FROM agent_profile_versions AS versions
+                JOIN (
+                    SELECT profile_id, MAX(version) AS latest
+                    FROM agent_profile_versions GROUP BY profile_id
+                ) AS current
+                ON versions.profile_id=current.profile_id AND versions.version=current.latest
+                ORDER BY versions.created_at
+                """
+            ).fetchall()
+        return [AgentProfileVersion.model_validate_json(row["data"]) for row in rows]
+
+    def delete_agent_profile(self, profile_id: UUID) -> None:
+        with self.connect() as db:
+            cursor = db.execute(
+                "DELETE FROM agent_profile_versions WHERE profile_id=?", (str(profile_id),)
+            )
+            if cursor.rowcount == 0:
+                raise KeyError("Agent 配置不存在")
+
+    def save_run_agent_profile(self, run_id: UUID, value: AgentProfileVersion) -> None:
+        serialized = value.model_dump_json()
+        with self.connect() as db:
+            existing = db.execute(
+                "SELECT data FROM run_agent_profiles WHERE run_id=?", (str(run_id),)
+            ).fetchone()
+            if existing and existing["data"] != serialized:
+                raise ValueError("Run 的 AgentProfile 快照不可变")
+            db.execute(
+                "INSERT OR IGNORE INTO run_agent_profiles(run_id,data) VALUES(?,?)",
+                (str(run_id), serialized),
+            )
+
+    def get_run_agent_profile(self, run_id: UUID) -> AgentProfileVersion | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT data FROM run_agent_profiles WHERE run_id=?", (str(run_id),)
+            ).fetchone()
+        return AgentProfileVersion.model_validate_json(row["data"]) if row else None
