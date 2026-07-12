@@ -7,6 +7,8 @@ class FakeEventSource { static CLOSED = 2; readyState = 1; onmessage: ((event: M
 describe('App', () => {
   beforeEach(() => { vi.stubGlobal('EventSource', FakeEventSource); vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
     if (input.endsWith('/threads') && !init?.method) return Response.json([])
+    if (input.endsWith('/providers') && !init?.method) return Response.json([])
+    if (input.endsWith('/provider-presets')) return Response.json({})
     if (input.endsWith('/threads') && init?.method === 'POST') return Response.json({ id: 't1', title: '测试任务', mode: 'competition', archived: false, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     if (input.endsWith('/threads/t1')) return Response.json({ id: 't1', title: '测试任务', mode: 'competition', archived: false, messages: [], runs: [], artifacts: [], created_at: '', updated_at: '' })
     return Response.json({})
