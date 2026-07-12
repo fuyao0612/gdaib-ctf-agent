@@ -86,7 +86,8 @@ class Run(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     thread_id: UUID
     status: RunStatus = RunStatus.QUEUED
-    provider: str = "mock"
+    provider: str = "unconfigured"
+    provider_config_id: UUID | None = None
     attempt: int = Field(1, ge=1)
     stop_requested: bool = False
     error: str | None = None

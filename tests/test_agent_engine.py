@@ -1,18 +1,21 @@
 
 import pytest
 
+from tests.fakes import FakeEchoTool, FakeModelProvider
 from yuwang.agent import AgentEngine, AgentStateModel, BudgetExceeded
 from yuwang.domain.models import Budget, EventType, Run, RunStatus, TaskSpec, Thread
-from yuwang.model_providers import MockModelProvider
 from yuwang.policy import PolicyEngine
 from yuwang.storage import SQLiteRepository
-from yuwang.tooling import create_reference_registry
+from yuwang.tooling import ToolRegistry
 
 
 def build_engine(tmp_path, scenario="success"):
     repository = SQLiteRepository(tmp_path / "agent.db")
-    registry = create_reference_registry(tmp_path / "artifacts")
-    return repository, AgentEngine(repository, MockModelProvider(scenario), registry, PolicyEngine())
+    registry = ToolRegistry()
+    registry.register(FakeEchoTool())
+    return repository, AgentEngine(
+        repository, FakeModelProvider(scenario), registry, PolicyEngine()
+    )
 
 
 @pytest.mark.asyncio

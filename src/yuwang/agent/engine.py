@@ -136,7 +136,7 @@ class AgentEngine:
         if state.action is None:
             raise last_error or RuntimeError("模型未返回动作")
         if state.action.kind != "call_tool" or not state.action.tool_name:
-            raise RuntimeError("演示闭环要求模型返回 CallTool")
+            raise RuntimeError("当前执行阶段需要结构化工具动作")
         decision = self.policy.check_tool(state.task, state.action.tool_name, state.action.tool_input, self.registry.names())
         self.events.emit(state.run_id, EventType.POLICY_CHECKED, decision.reason, {"allowed": decision.allowed, "tool": state.action.tool_name})
         if not decision.allowed:

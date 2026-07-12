@@ -28,7 +28,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
-  const [newTitle, setNewTitle] = useState('安全演示任务')
+  const [newTitle, setNewTitle] = useState('新的安全任务')
   const [newMode, setNewMode] = useState<Mode>('normal')
   const sourceRef = useRef<EventSource | null>(null)
 

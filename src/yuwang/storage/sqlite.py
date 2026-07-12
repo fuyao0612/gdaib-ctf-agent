@@ -10,6 +10,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from yuwang.domain.models import Artifact, Event, Message, Run, RunStatus, Thread
+from yuwang.settings.models import AgentDefaults, ProviderConfig
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -45,6 +46,8 @@ class SQLiteRepository:
                 CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS reports(run_id TEXT PRIMARY KEY, markdown TEXT NOT NULL, json_data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS checkpoints(run_id TEXT NOT NULL, node TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(run_id,node));
+                CREATE TABLE IF NOT EXISTS provider_configs(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, data TEXT NOT NULL);
                 """
             )
 
@@ -151,3 +154,56 @@ class SQLiteRepository:
         with self.connect() as db:
             row = db.execute("SELECT markdown,json_data FROM reports WHERE run_id=?", (str(run_id),)).fetchone()
         return (row["markdown"], json.loads(row["json_data"])) if row else None
+
+    def save_provider_config(self, value: ProviderConfig) -> ProviderConfig:
+        with self._lock, self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO provider_configs VALUES(?,?,?)",
+                (str(value.id), value.model_dump_json(), value.created_at),
+            )
+        return value
+
+    def get_provider_config(self, provider_id: UUID | str) -> ProviderConfig | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT data FROM provider_configs WHERE id=?", (str(provider_id),)
+            ).fetchone()
+        return ProviderConfig.model_validate_json(row["data"]) if row else None
+
+    def list_provider_configs(self) -> list[ProviderConfig]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM provider_configs ORDER BY created_at"
+            ).fetchall()
+        return [ProviderConfig.model_validate_json(row["data"]) for row in rows]
+
+    def set_default_provider(self, provider_id: UUID) -> None:
+        with self._lock:
+            values = self.list_provider_configs()
+            if not any(value.id == provider_id for value in values):
+                raise KeyError("Provider 配置不存在")
+            for value in values:
+                desired = value.id == provider_id
+                if value.is_default != desired:
+                    value.is_default = desired
+                    self.save_provider_config(value)
+
+    def delete_provider_config(self, provider_id: UUID) -> None:
+        with self.connect() as db:
+            cursor = db.execute("DELETE FROM provider_configs WHERE id=?", (str(provider_id),))
+            if cursor.rowcount == 0:
+                raise KeyError("Provider 配置不存在")
+
+    def get_agent_defaults(self) -> AgentDefaults:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT data FROM app_settings WHERE key='agent_defaults'"
+            ).fetchone()
+        return AgentDefaults.model_validate_json(row["data"]) if row else AgentDefaults()
+
+    def save_agent_defaults(self, value: AgentDefaults) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO app_settings(key,data) VALUES('agent_defaults',?)",
+                (value.model_dump_json(),),
+            )
