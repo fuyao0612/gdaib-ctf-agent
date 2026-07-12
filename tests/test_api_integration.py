@@ -229,6 +229,29 @@ def test_unconfigured_provider_and_admin_auth_are_explicit(tmp_path):
         assert "leak123" not in validation.text
 
 
+def test_admin_cookie_session_requires_csrf_for_mutations(tmp_path):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        assert client.post("/api/v1/admin/session", json={"token": "wrong"}).status_code == 401
+
+        login = client.post(
+            "/api/v1/admin/session", json={"token": "test-admin-token"}
+        )
+        assert login.status_code == 200
+        assert "HttpOnly" in login.headers["set-cookie"]
+        assert "SameSite=strict" in login.headers["set-cookie"]
+        csrf = login.json()["csrf_token"]
+
+        assert client.get("/api/v1/admin/settings/providers").status_code == 200
+        assert client.delete("/api/v1/admin/session").status_code == 403
+
+        logout = client.delete(
+            "/api/v1/admin/session", headers={"X-CSRF-Token": csrf}
+        )
+        assert logout.status_code == 204
+        assert client.get("/api/v1/admin/settings/providers").status_code == 401
+
+
 def test_agent_profile_api_versions_preview_export_and_thread_snapshot(tmp_path):
     app = configured_app(tmp_path)
     headers = {"Authorization": "Bearer test-admin-token"}

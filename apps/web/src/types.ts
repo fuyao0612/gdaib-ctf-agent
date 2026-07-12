@@ -1,8 +1,8 @@
 export type Mode = 'normal' | 'competition'
-export type RunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'stopped'
-export interface Thread { id: string; title: string; mode: Mode; archived: boolean; created_at: string; updated_at: string }
+export type RunStatus = 'queued' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'stopped'
+export interface Thread { id: string; title: string; mode: Mode; agent_profile_id: string | null; agent_profile_version: number | null; archived: boolean; created_at: string; updated_at: string }
 export interface Message { id: string; role: 'user' | 'agent' | 'system'; content: string; artifact_ids: string[]; created_at: string }
-export interface Run { id: string; thread_id: string; status: RunStatus; provider: string; attempt: number; stop_requested: boolean; error?: string }
+export interface Run { id: string; thread_id: string; status: RunStatus; provider: string; agent_profile_id: string | null; agent_profile_version: number | null; completion_mode: CompletionMode; validation_status: 'pending' | 'unverified' | 'validated' | 'failed'; evidence_level: 'none' | 'model' | 'structured' | 'external'; attempt: number; stop_requested: boolean; error?: string }
 export interface Artifact { id: string; filename: string; size: number; mime_type: string; sha256: string; kind: string }
 export interface Event { event_id: string; run_id: string; sequence: number; type: string; timestamp: string; summary: string; payload: Record<string, unknown> }
 export interface ThreadDetail extends Thread { messages: Message[]; runs: Run[]; artifacts: Artifact[] }
@@ -29,3 +29,17 @@ export interface AgentDefaults {
   budget: { max_steps: number; max_model_calls: number; max_tool_calls: number; max_tokens: number; max_model_cost: number; max_duration_seconds: number; step_timeout_seconds: number }
   provider_retry_budget: number; context_token_budget: number; observation_char_budget: number
 }
+export type CompletionMode = 'advisory' | 'structured' | 'evidence'
+export interface AgentProfileSummary { profile_id: string; version: number; name: string; description: string; run_mode: Mode; completion_mode: CompletionMode; is_default: boolean }
+export interface AgentProfileInput {
+  name: string; description: string; run_mode: Mode; default_provider_id: string | null; fallback_provider_ids: string[]
+  user_prompt_template: string; planning_strategy: 'dynamic' | 'direct' | 'hybrid'; budget: AgentDefaults['budget']
+  context_policy: { recent_message_limit: number; include_thread_summary: boolean; include_run_summaries: boolean; include_memories: boolean; text_attachment_char_limit: number }
+  memory_policy: { enabled: boolean; persist_important_facts: boolean; max_facts: number }
+  completion_mode: CompletionMode; validation_policy: { require_external_evidence: boolean; json_schema: Record<string, unknown> | null }
+  intervention_policy: { normal_mode: 'wait' | 'fail'; competition_mode: 'replan' | 'fail'; max_requests: number }
+  workflow: { nodes: string[] }; report_template: string; enabled: boolean; is_default: boolean
+}
+export interface AgentProfile extends AgentProfileInput { profile_id: string; version: number; schema_version: string; created_at: string }
+export interface MemoryRecord { id: string; thread_id: string; kind: string; content: string; enabled: boolean; source_run_id: string | null; created_at: string }
+export interface RunAudit { run: { provider: string; agent_profile_id: string | null; agent_profile_version: number | null; validation_status: string; evidence_level: string }; usage: Record<string, number>; limits: Record<string, number>; profile: { name: string; version: number; completion_mode: CompletionMode } | null }

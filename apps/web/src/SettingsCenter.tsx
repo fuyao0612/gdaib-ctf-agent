@@ -1,5 +1,7 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { api } from './api'
+import AgentProfileCenter from './components/AgentProfileCenter'
+import { useAdminSession } from './hooks/useAdminSession'
 import type { AgentDefaults, FallbackCategory, ProviderConfig, ProviderConfigInput, ProviderPreset, StructuredMode } from './types'
 
 interface Props { onClose: () => void; onChanged: () => Promise<void> }
@@ -14,7 +16,7 @@ const emptyProvider: ProviderConfigInput = {
 
 export default function SettingsCenter({ onClose, onChanged }: Props) {
   const [adminToken, setAdminToken] = useState('')
-  const [authenticated, setAuthenticated] = useState(false)
+  const session = useAdminSession()
   const [providers, setProviders] = useState<ProviderConfig[]>([])
   const [presets, setPresets] = useState<Record<string, { base_url: string; model: string }>>({})
   const [agent, setAgent] = useState<AgentDefaults | null>(null)
@@ -26,14 +28,14 @@ export default function SettingsCenter({ onClose, onChanged }: Props) {
 
   useEffect(() => { void api.providerPresets().then(setPresets).catch(() => setPresets({})) }, [])
 
-  async function load(token = adminToken) {
-    const [items, defaults] = await Promise.all([api.adminProviders(token), api.agentDefaults(token)])
-    setProviders(items); setAgent(defaults); setAuthenticated(true)
+  async function load(csrf = session.csrf) {
+    const [items, defaults] = await Promise.all([api.adminProviders(csrf), api.agentDefaults(csrf)])
+    setProviders(items); setAgent(defaults)
   }
 
   async function authenticate(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('')
-    try { await load(); setNotice('管理员身份验证成功') } catch (cause) { setError(String(cause)); setAuthenticated(false) } finally { setBusy(false) }
+    try { const csrf = await session.login(adminToken); setAdminToken(''); await load(csrf); setNotice('已建立安全管理员会话') } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
   }
 
   function selectPreset(preset: ProviderPreset) {
@@ -65,8 +67,8 @@ export default function SettingsCenter({ onClose, onChanged }: Props) {
     event.preventDefault(); setBusy(true); setError(''); setNotice('')
     try {
       const payload = { ...form, api_key: form.api_key?.trim() || null }
-      if (editingId) await api.updateProvider(adminToken, editingId, payload)
-      else await api.createProvider(adminToken, payload)
+      if (editingId) await api.updateProvider(session.csrf, editingId, payload)
+      else await api.createProvider(session.csrf, payload)
       setForm(emptyProvider); setEditingId(null); await load(); await onChanged()
       setNotice(editingId ? 'Provider 已更新' : 'Provider 已创建')
     } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
@@ -74,23 +76,28 @@ export default function SettingsCenter({ onClose, onChanged }: Props) {
 
   async function removeProvider(id: string) {
     setBusy(true); setError('')
-    try { await api.deleteProvider(adminToken, id); await load(); await onChanged(); setNotice('Provider 已删除') } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
+    try { await api.deleteProvider(session.csrf, id); await load(); await onChanged(); setNotice('Provider 已删除') } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
   }
 
   async function testProvider(id: string) {
     setBusy(true); setError(''); setNotice('正在调用模型进行真实连接测试…')
-    try { await api.testProvider(adminToken, id); setNotice('连接测试成功') } catch (cause) { setError(String(cause)); setNotice('') } finally { setBusy(false) }
+    try { const result = await api.testProvider(session.csrf, id); setNotice(`连接测试成功：${result.model} · ${result.structured_mode} · ${result.latency_ms} ms`) } catch (cause) { setError(String(cause)); setNotice('') } finally { setBusy(false) }
+  }
+
+  async function discoverModels(id: string) {
+    setBusy(true); setError('')
+    try { const result = await api.discoverProviderModels(session.csrf, id); setNotice(result.models.length ? `发现模型：${result.models.join('、')}` : '端点未返回模型列表，可继续手动填写模型名称') } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
   }
 
   async function saveAgent(event: FormEvent) {
     event.preventDefault(); if (!agent) return; setBusy(true); setError('')
-    try { setAgent(await api.saveAgentDefaults(adminToken, agent)); setNotice('Agent 默认预算已保存') } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
+    try { setAgent(await api.saveAgentDefaults(session.csrf, agent)); setNotice('Agent 默认预算已保存') } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
   }
 
   return <div className="settings-backdrop" role="dialog" aria-label="设置中心">
     <section className="settings-panel">
-      <header><div><span className="eyebrow">ADMIN SETTINGS</span><h2>设置中心</h2></div><button onClick={onClose}>关闭</button></header>
-      {!authenticated ? <form className="admin-login" onSubmit={authenticate}>
+      <header><div><span className="eyebrow">ADMIN SETTINGS</span><h2>设置中心</h2></div><button onClick={() => { void session.logout().finally(onClose) }}>关闭</button></header>
+      {!session.authenticated ? <form className="admin-login" onSubmit={authenticate}>
         <h3>管理员验证</h3><p>令牌仅保存在当前页面内存中，关闭或刷新后即清除。</p>
         <label>管理员令牌<input type="password" aria-label="管理员令牌" autoComplete="off" value={adminToken} onChange={event => setAdminToken(event.target.value)} /></label>
         <button className="primary" disabled={busy || !adminToken}>进入设置</button>
@@ -99,7 +106,7 @@ export default function SettingsCenter({ onClose, onChanged }: Props) {
           <div className="provider-table">{providers.map(value => <article key={value.id} className={value.is_default ? 'provider-row default' : 'provider-row'}>
             <div><strong>{value.name}</strong><small>{value.preset} · {value.model}</small><small>{value.base_url}</small></div>
             <div className="provider-flags"><span>{value.has_api_key ? '密钥已保存' : '缺少密钥'}</span>{value.is_default && <span>默认</span>}{!value.enabled && <span>已停用</span>}</div>
-            <div><button onClick={() => void testProvider(value.id)}>连接测试</button><button onClick={() => edit(value)}>编辑</button><button className="danger" disabled={value.is_default} onClick={() => void removeProvider(value.id)}>删除</button></div>
+            <div><button onClick={() => void testProvider(value.id)}>连接测试</button><button onClick={() => void discoverModels(value.id)}>发现模型</button><button onClick={() => edit(value)}>编辑</button><button className="danger" disabled={value.is_default} onClick={() => void removeProvider(value.id)}>删除</button></div>
           </article>)}</div>
           <form className="settings-form" onSubmit={saveProvider}>
             <h4>{editingId ? '编辑 Provider' : '新增 Provider'}</h4>
@@ -119,7 +126,8 @@ export default function SettingsCenter({ onClose, onChanged }: Props) {
             <button className="primary" disabled={busy}>{editingId ? '保存修改' : '创建 Provider'}</button>
           </form>
         </section>
-        {agent && <section><div className="settings-title"><h3>Agent 默认预算</h3></div><form className="settings-form" onSubmit={saveAgent}><div className="form-grid">
+        <AgentProfileCenter csrf={session.csrf} providers={providers} onChanged={onChanged} />
+        {agent && <section><div className="settings-title"><h3>平台默认预算</h3></div><form className="settings-form" onSubmit={saveAgent}><div className="form-grid">
           {([['最大步骤','max_steps'],['模型调用','max_model_calls'],['工具调用','max_tool_calls'],['最大 Token','max_tokens'],['最大模型费用','max_model_cost'],['总时长（秒）','max_duration_seconds'],['单步超时（秒）','step_timeout_seconds']] as const).map(([label,key]) => <label key={key}>{label}<input type="number" value={agent.budget[key]} onChange={event => setAgent({ ...agent, budget: { ...agent.budget, [key]: Number(event.target.value) } })} /></label>)}
           <label>Provider 重试预算<input type="number" value={agent.provider_retry_budget} onChange={event => setAgent({ ...agent, provider_retry_budget: Number(event.target.value) })} /></label>
           <label>上下文 Token 预算<input type="number" value={agent.context_token_budget} onChange={event => setAgent({ ...agent, context_token_budget: Number(event.target.value) })} /></label>

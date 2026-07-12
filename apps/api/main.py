@@ -5,6 +5,7 @@ import hashlib
 import mimetypes
 import os
 import secrets
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,7 +15,13 @@ from uuid import UUID, uuid4
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 from pydantic import BaseModel, Field
 
 from yuwang import __version__
@@ -67,6 +74,8 @@ class Settings(BaseModel):
     allow_insecure_local_provider: bool = (
         os.getenv("YUWANG_ALLOW_INSECURE_LOCAL_PROVIDER", "false").lower() == "true"
     )
+    admin_session_ttl_seconds: int = 8 * 60 * 60
+    cookie_secure: bool = os.getenv("YUWANG_COOKIE_SECURE", "false").lower() == "true"
 
 
 class ThreadCreate(BaseModel):
@@ -109,6 +118,20 @@ class MemoryToggle(BaseModel):
     enabled: bool
 
 
+class AdminLogin(BaseModel):
+    token: str = Field(min_length=1, max_length=4096)
+
+
+class AgentProfileSummary(BaseModel):
+    profile_id: UUID
+    version: int
+    name: str
+    description: str
+    run_mode: ThreadMode
+    completion_mode: str
+    is_default: bool
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings or Settings()
     config.artifact_root.mkdir(parents=True, exist_ok=True)
@@ -118,6 +141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     policy = PolicyEngine(SecurityConfig())
     registry = create_reference_registry(config.artifact_root)
     tasks: dict[UUID, asyncio.Task[None]] = {}
+    admin_sessions: dict[str, tuple[float, str]] = {}
 
     def cleanup_callback(run_id: UUID) -> Callable[[asyncio.Task[None]], None]:
         def cleanup(_: asyncio.Task[None]) -> None:
@@ -138,12 +162,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_insecure_local=config.allow_insecure_local_provider,
         )
 
-    def require_admin(authorization: Annotated[str | None, Header()] = None) -> None:
+    def require_admin(
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+        csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+    ) -> None:
         if not config.admin_token:
             raise HTTPException(503, "管理员鉴权未配置")
         scheme, _, token = (authorization or "").partition(" ")
-        if scheme.lower() != "bearer" or not secrets.compare_digest(token, config.admin_token):
-            raise HTTPException(401, "管理员鉴权失败")
+        if scheme.lower() == "bearer" and secrets.compare_digest(token, config.admin_token):
+            return
+        session_id = request.cookies.get("yuwang_admin_session", "")
+        session = admin_sessions.get(session_id)
+        if not session or session[0] <= time.time():
+            admin_sessions.pop(session_id, None)
+            raise HTTPException(401, "管理员会话无效或已过期")
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and not secrets.compare_digest(
+            csrf_token or "", session[1]
+        ):
+            raise HTTPException(403, "管理员会话 CSRF 校验失败")
 
     def build_provider_chain_from_configs(provider_configs: list[ProviderConfig]) -> ProviderChain:
         service = get_settings_service()
@@ -235,8 +272,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=config.cors_origins,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
-        allow_credentials=False,
+        allow_headers=["Authorization", "Content-Type", "Last-Event-ID", "X-CSRF-Token"],
+        allow_credentials=True,
     )
 
     @application.middleware("http")
@@ -314,6 +351,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/v1/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
+
+    @application.post("/api/v1/admin/session")
+    async def create_admin_session(body: AdminLogin, response: Response) -> dict[str, Any]:
+        if not config.admin_token:
+            raise HTTPException(503, "管理员鉴权未配置")
+        if not secrets.compare_digest(body.token, config.admin_token):
+            raise HTTPException(401, "管理员鉴权失败")
+        session_id = secrets.token_urlsafe(32)
+        csrf = secrets.token_urlsafe(32)
+        expires_at = time.time() + config.admin_session_ttl_seconds
+        admin_sessions[session_id] = (expires_at, csrf)
+        response.set_cookie(
+            "yuwang_admin_session",
+            session_id,
+            max_age=config.admin_session_ttl_seconds,
+            httponly=True,
+            secure=config.cookie_secure,
+            samesite="strict",
+            path="/api/v1/admin",
+        )
+        return {"status": "ok", "csrf_token": csrf, "expires_at": expires_at}
+
+    @application.delete(
+        "/api/v1/admin/session",
+        status_code=204,
+        dependencies=[Depends(require_admin)],
+    )
+    async def delete_admin_session(request: Request, response: Response) -> None:
+        session_id = request.cookies.get("yuwang_admin_session", "")
+        admin_sessions.pop(session_id, None)
+        response.delete_cookie("yuwang_admin_session", path="/api/v1/admin")
 
     @application.post("/api/v1/threads", response_model=Thread, status_code=201)
     async def create_thread(body: ThreadCreate) -> Thread:
@@ -585,8 +653,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.get("/api/v1/runs/{run_id}/audit")
     async def run_audit(run_id: UUID) -> dict[str, Any]:
-        require_run(run_id)
+        run = require_run(run_id)
+        checkpoint = repository.latest_checkpoint(run_id)
+        profile = repository.get_run_agent_profile(run_id)
+        state = checkpoint.state if checkpoint else {}
+        task_spec = repository.get_run_task(run_id)
+        budget = task_spec.budget if task_spec else None
         return {
+            "run": {
+                "provider": run.provider,
+                "agent_profile_id": str(run.agent_profile_id) if run.agent_profile_id else None,
+                "agent_profile_version": run.agent_profile_version,
+                "validation_status": run.validation_status,
+                "evidence_level": run.evidence_level,
+            },
+            "usage": {
+                "steps": state.get("step", 0),
+                "model_calls": state.get("model_calls", 0),
+                "tool_calls": state.get("tool_calls", 0),
+                "tokens": state.get("tokens", 0),
+                "model_cost": state.get("model_cost", 0),
+                "elapsed_seconds": state.get("elapsed_seconds", 0),
+                "context_tokens": state.get("context_tokens", 0),
+                "observation_chars": state.get("observation_chars", 0),
+                "context_truncations": state.get("context_truncations", 0),
+            },
+            "limits": budget.model_dump(mode="json") if budget else {},
+            "profile": (
+                {"name": profile.name, "version": profile.version, "completion_mode": profile.completion_mode}
+                if profile
+                else None
+            ),
             "model_calls": [
                 value.model_dump(mode="json") for value in repository.list_model_calls(run_id)
             ],
@@ -687,6 +784,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not config.master_key:
             return []
         return get_settings_service().list_providers(enabled_only=True)
+
+    @application.get("/api/v1/agent-profiles", response_model=list[AgentProfileSummary])
+    async def public_agent_profiles() -> list[AgentProfileSummary]:
+        return [
+            AgentProfileSummary(
+                profile_id=value.profile_id,
+                version=value.version,
+                name=value.name,
+                description=value.description,
+                run_mode=value.run_mode,
+                completion_mode=value.completion_mode,
+                is_default=value.is_default,
+            )
+            for value in repository.list_agent_profiles()
+            if value.enabled
+        ]
 
     @application.get(
         "/api/v1/admin/settings/agent-profiles",
