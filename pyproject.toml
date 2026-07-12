@@ -16,6 +16,7 @@ dependencies = [
   "python-multipart>=0.0.12,<1",
   "langgraph>=0.2,<1",
   "cryptography>=44,<47",
+  "jsonschema>=4.23,<5",
 ]
 
 [project.optional-dependencies]

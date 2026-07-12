@@ -62,6 +62,7 @@ npm run e2e
 - [架构与恢复](docs/architecture.md)
 - [模型 Provider](docs/model-provider.md)
 - [Agent 配置与版本](docs/agent-profiles.md)
+- [上下文、记忆与完成可信等级](docs/context-memory.md)
 - [安全边界](docs/security.md)
 - [测试分层](docs/testing.md)
 - [生产部署与备份](docs/deployment.md)

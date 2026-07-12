@@ -50,8 +50,20 @@ def provider_server():
                         }
                     )
                 else:
-                    observations = context["observations"]
-                    if observations and observations[-1]["success"]:
+                    observations = context.get("observations_untrusted", context.get("observations", []))
+                    if "需要补充" in context["untrusted_task"]:
+                        if not context.get("supplemental_inputs"):
+                            action = {
+                                "kind": "request_input",
+                                "summary": "请补充目标受众",
+                            }
+                        else:
+                            action = {
+                                "kind": "finish",
+                                "summary": "已生成建议",
+                                "answer": "建议面向技术团队分阶段实施",
+                            }
+                    elif observations and observations[-1]["success"]:
                         latest = observations[-1]
                         action = {
                             "kind": "finish",
@@ -267,6 +279,51 @@ def test_agent_profile_api_versions_preview_export_and_thread_snapshot(tmp_path)
         assert exported_profile["default_provider_id"] is None
         assert exported_profile["fallback_provider_ids"] == []
         assert "api_key" not in exported.text
+
+
+def test_waiting_input_api_persists_memory_and_resumes(tmp_path, provider_server):
+    app = configured_app(tmp_path)
+    headers = {"Authorization": "Bearer test-admin-token"}
+    with TestClient(app) as client:
+        provider = create_provider(client, provider_server)
+        profile_response = client.post(
+            "/api/v1/admin/settings/agent-profiles",
+            headers=headers,
+            json={
+                "name": "交互建议助手",
+                "default_provider_id": provider["id"],
+                "completion_mode": "advisory",
+                "validation_policy": {"require_external_evidence": False},
+            },
+        )
+        assert profile_response.status_code == 201, profile_response.text
+        profile = profile_response.json()
+        thread = client.post(
+            "/api/v1/threads",
+            json={"title": "waiting", "agent_profile_id": profile["profile_id"]},
+        ).json()
+        client.post(
+            f"/api/v1/threads/{thread['id']}/messages",
+            json={"content": "需要补充后给出方案"},
+        )
+        started = client.post(f"/api/v1/threads/{thread['id']}/runs", json={})
+        assert started.status_code == 202, started.text
+        run_id = started.json()["id"]
+        assert wait_for_terminal(client, run_id)["status"] == "waiting_input"
+        supplied = client.post(
+            f"/api/v1/runs/{run_id}/input", json={"content": "目标受众是技术团队"}
+        )
+        assert supplied.status_code == 202, supplied.text
+        finished = wait_for_terminal(client, run_id)
+        assert finished["status"] == "completed"
+        assert finished["validation_status"] == "unverified"
+        memories = client.get(f"/api/v1/threads/{thread['id']}/memories").json()
+        assert any(item["kind"] == "user_input" for item in memories)
+        assert any(item["kind"] == "run_summary" for item in memories)
+        assert client.patch(
+            f"/api/v1/threads/{thread['id']}/memories", json={"enabled": False}
+        ).status_code == 204
+        assert client.delete(f"/api/v1/threads/{thread['id']}/memories").status_code == 204
 
 
 def test_competition_lock_stop_openapi_and_upload_policy(tmp_path):

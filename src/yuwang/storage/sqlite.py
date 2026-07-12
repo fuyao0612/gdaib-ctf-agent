@@ -14,6 +14,7 @@ from yuwang.domain.models import (
     Event,
     EventType,
     EvidenceRecord,
+    MemoryRecord,
     Message,
     ModelCall,
     Run,
@@ -69,7 +70,9 @@ class SQLiteRepository:
                 CREATE TABLE IF NOT EXISTS provider_snapshots(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS agent_profile_versions(profile_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(profile_id,version));
                 CREATE TABLE IF NOT EXISTS run_agent_profiles(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, kind TEXT NOT NULL, enabled INTEGER NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
                 """
             )
 
@@ -121,9 +124,9 @@ class SQLiteRepository:
 
     def save_run(self, value: Run) -> Run:
         with self._lock, self.connect() as db:
-            if value.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
+            if value.status in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}:
                 active = db.execute(
-                    "SELECT id FROM runs WHERE thread_id=? AND status IN ('queued','running') AND id<>?",
+                    "SELECT id FROM runs WHERE thread_id=? AND status IN ('queued','running','waiting_input') AND id<>?",
                     (str(value.thread_id), str(value.id)),
                 ).fetchone()
                 if active:
@@ -532,3 +535,47 @@ class SQLiteRepository:
                 "SELECT data FROM run_agent_profiles WHERE run_id=?", (str(run_id),)
             ).fetchone()
         return AgentProfileVersion.model_validate_json(row["data"]) if row else None
+
+    def save_memory(self, value: MemoryRecord) -> MemoryRecord:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO memories VALUES(?,?,?,?,?,?)",
+                (
+                    str(value.id),
+                    str(value.thread_id),
+                    value.kind,
+                    int(value.enabled),
+                    value.model_dump_json(),
+                    value.created_at.isoformat(),
+                ),
+            )
+        return value
+
+    def list_memories(
+        self, thread_id: UUID | str, enabled_only: bool = True
+    ) -> list[MemoryRecord]:
+        query = "SELECT data FROM memories WHERE thread_id=?"
+        parameters: list[Any] = [str(thread_id)]
+        if enabled_only:
+            query += " AND enabled=1"
+        query += " ORDER BY created_at"
+        with self.connect() as db:
+            rows = db.execute(query, parameters).fetchall()
+        return [MemoryRecord.model_validate_json(row["data"]) for row in rows]
+
+    def clear_memories(self, thread_id: UUID | str) -> None:
+        with self.connect() as db:
+            db.execute("DELETE FROM memories WHERE thread_id=?", (str(thread_id),))
+
+    def set_memories_enabled(self, thread_id: UUID | str, enabled: bool) -> None:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM memories WHERE thread_id=?", (str(thread_id),)
+            ).fetchall()
+            for row in rows:
+                value = MemoryRecord.model_validate_json(row["data"])
+                value.enabled = enabled
+                db.execute(
+                    "UPDATE memories SET enabled=?, data=? WHERE id=?",
+                    (int(enabled), value.model_dump_json(), str(value.id)),
+                )

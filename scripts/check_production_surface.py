@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = [ROOT / "src", ROOT / "apps" / "api", ROOT / "apps" / "web" / "src"]
 EXCLUDED = {"node_modules", "dist", "__pycache__"}
-pattern = re.compile(r"\bmo" r"ck\b", re.IGNORECASE)
+pattern = re.compile(r"\bmo" r"ck\b|safe_demo|固定演示", re.IGNORECASE)
 violations: list[str] = []
 for target in TARGETS:
     for path in target.rglob("*"):

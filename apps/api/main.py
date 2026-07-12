@@ -18,9 +18,11 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from pydantic import BaseModel, Field
 
 from yuwang import __version__
-from yuwang.agent import AgentEngine
+from yuwang.agent import AgentEngine, AgentStateModel
 from yuwang.domain.models import (
     Artifact,
+    EventType,
+    MemoryRecord,
     Message,
     MessageRole,
     Run,
@@ -97,6 +99,14 @@ class ProfileCopy(BaseModel):
 class TemplatePreview(BaseModel):
     template: str = Field(min_length=1, max_length=20_000)
     values: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunInput(BaseModel):
+    content: str = Field(min_length=1, max_length=20_000)
+
+
+class MemoryToggle(BaseModel):
+    enabled: bool
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -193,7 +203,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         stale.transition(RunStatus.FAILED, "无法解密恢复所需的 Provider 快照")
                         repository.save_run(stale)
                         continue
-                    engine = AgentEngine(repository, provider, registry, policy)
+                    profile = repository.get_run_agent_profile(stale.id) or profile_service.resolve(None)
+                    engine = AgentEngine(
+                        repository,
+                        provider,
+                        registry,
+                        policy,
+                        profile=profile,
+                        artifact_root=config.artifact_root,
+                    )
                     task_handle = asyncio.create_task(engine.resume(stale.id, task_spec))
                     tasks[stale.id] = task_handle
                     task_handle.add_done_callback(cleanup_callback(stale.id))
@@ -276,9 +294,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             budget=profile.budget,
         )
 
-    async def execute(run: Run, task: TaskSpec, provider: ProviderChain) -> None:
-        engine = AgentEngine(repository, provider, registry, policy)
-        await engine.run(run.id, task)
+    async def execute(
+        run: Run,
+        task: TaskSpec,
+        provider: ProviderChain,
+        profile: AgentProfileVersion,
+        initial_state: AgentStateModel | None = None,
+    ) -> None:
+        engine = AgentEngine(
+            repository,
+            provider,
+            registry,
+            policy,
+            profile=profile,
+            artifact_root=config.artifact_root,
+        )
+        await engine.run(run.id, task, initial_state)
 
     @application.get("/api/v1/health")
     async def health() -> dict[str, str]:
@@ -329,7 +360,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         active = [
             run
             for run in repository.list_runs(thread_id)
-            if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}
+            if run.status in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}
         ]
         if thread.mode == ThreadMode.COMPETITION and active:
             raise HTTPException(409, "competition 模式运行中禁止补充提示")
@@ -419,7 +450,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             repository.save_run_agent_profile(run.id, profile)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
-        task_handle = asyncio.create_task(execute(run, task, provider))
+        task_handle = asyncio.create_task(execute(run, task, provider, profile))
         tasks[run.id] = task_handle
         task_handle.add_done_callback(cleanup_callback(run.id))
         return run
@@ -431,9 +462,83 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.post("/api/v1/runs/{run_id}/stop", response_model=Run)
     async def stop_run(run_id: UUID) -> Run:
         run = require_run(run_id)
-        if run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}:
+        if run.status not in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}:
             raise HTTPException(409, "运行已结束")
-        return repository.request_stop(run_id)
+        stopped = repository.request_stop(run_id)
+        task = tasks.get(run_id)
+        if task and not task.done():
+            task.cancel()
+        return stopped
+
+    @application.post("/api/v1/runs/{run_id}/input", response_model=Run, status_code=202)
+    async def submit_run_input(run_id: UUID, body: RunInput) -> Run:
+        run = require_run(run_id)
+        if run.status != RunStatus.WAITING_INPUT:
+            raise HTTPException(409, "运行当前不在等待补充状态")
+        task_spec = repository.get_run_task(run.id)
+        checkpoint = repository.latest_checkpoint(run.id)
+        provider_configs = repository.get_provider_snapshot(run.id)
+        profile = repository.get_run_agent_profile(run.id)
+        if not task_spec or not checkpoint or not provider_configs or not profile:
+            raise HTTPException(409, "补充恢复所需快照不完整")
+        state = AgentStateModel.model_validate(checkpoint.state)
+        if len(state.supplemental_inputs) >= profile.intervention_policy.max_requests:
+            raise HTTPException(409, "人工补充次数已达到配置上限")
+        state.supplemental_inputs.append(body.content)
+        state.action = None
+        repository.save_message(
+            Message(
+                thread_id=run.thread_id,
+                role=MessageRole.USER,
+                content=body.content,
+            )
+        )
+        if profile.memory_policy.enabled:
+            repository.save_memory(
+                MemoryRecord(
+                    thread_id=run.thread_id,
+                    source_run_id=run.id,
+                    kind="user_input",
+                    content=body.content,
+                )
+            )
+        repository.save_checkpoint(run.id, "input_received", state.model_dump(mode="json"))
+        run.transition(RunStatus.RUNNING)
+        repository.save_run(run)
+        repository.create_event(
+            run.id,
+            EventType.INPUT_RECEIVED,
+            "已接收用户补充，准备从检查点继续",
+            {"input_length": len(body.content)},
+        )
+        provider = build_provider_chain_from_configs(provider_configs)
+        engine = AgentEngine(
+            repository,
+            provider,
+            registry,
+            policy,
+            profile=profile,
+            artifact_root=config.artifact_root,
+        )
+        task_handle = asyncio.create_task(engine.resume(run.id, task_spec))
+        tasks[run.id] = task_handle
+        task_handle.add_done_callback(cleanup_callback(run.id))
+        return run
+
+    @application.get("/api/v1/threads/{thread_id}/memories", response_model=list[MemoryRecord])
+    async def list_thread_memories(thread_id: UUID) -> list[MemoryRecord]:
+        require_thread(thread_id)
+        return repository.list_memories(thread_id, enabled_only=False)
+
+    @application.delete("/api/v1/threads/{thread_id}/memories", status_code=204)
+    async def clear_thread_memories(thread_id: UUID) -> None:
+        require_thread(thread_id)
+        repository.clear_memories(thread_id)
+
+    @application.patch("/api/v1/threads/{thread_id}/memories", status_code=204)
+    async def toggle_thread_memories(thread_id: UUID, body: MemoryToggle) -> None:
+        require_thread(thread_id)
+        repository.set_memories_enabled(thread_id, body.enabled)
 
     @application.post("/api/v1/runs/{run_id}/retry", response_model=Run, status_code=202)
     async def retry_run(run_id: UUID) -> Run:
@@ -464,7 +569,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         repository.save_run_task(retried.id, task)
         repository.save_provider_snapshot(retried.id, provider_configs)
         repository.save_run_agent_profile(retried.id, profile)
-        task_handle = asyncio.create_task(execute(retried, task, provider))
+        checkpoint = repository.latest_checkpoint(previous.id)
+        initial_state = AgentStateModel.model_validate(checkpoint.state) if checkpoint else None
+        task_handle = asyncio.create_task(
+            execute(retried, task, provider, profile, initial_state)
+        )
         tasks[retried.id] = task_handle
         task_handle.add_done_callback(cleanup_callback(retried.id))
         return retried
@@ -525,7 +634,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 run = repository.get_run(run_id)
                 if (
                     run
-                    and run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}
+                    and run.status
+                    not in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}
                     and not repository.list_events(run_id, cursor)
                 ):
                     return

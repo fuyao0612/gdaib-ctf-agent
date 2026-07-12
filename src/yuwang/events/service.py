@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from yuwang.domain.models import Event, EventType
 from yuwang.policy import redact
-from yuwang.storage import SQLiteRepository
 
 
 class EventService:
-    def __init__(self, repository: SQLiteRepository) -> None:
+    def __init__(self, repository: Any) -> None:
         self.repository = repository
 
     def emit(
@@ -21,7 +20,10 @@ class EventService:
     ) -> Event:
         clean_summary = redact(summary)
         clean_payload = self._redact_value(payload or {})
-        return self.repository.create_event(run_id, event_type, clean_summary, clean_payload)
+        return cast(
+            Event,
+            self.repository.create_event(run_id, event_type, clean_summary, clean_payload),
+        )
 
     def _redact_value(self, value: Any) -> Any:
         if isinstance(value, str):

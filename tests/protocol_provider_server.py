@@ -51,9 +51,9 @@ class Handler(BaseHTTPRequestHandler):
                 "steps": ["Read controlled attachment metadata", "Return sourced digest evidence"],
                 "success_approach": "Bind the SHA-256 candidate to the successful tool call.",
             }
-        observations = context.get("observations", [])
+        observations = context.get("observations_untrusted", context.get("observations", []))
         if not observations:
-            attachment = context["attachments"][0]
+            attachment = context.get("attachments_untrusted", context.get("attachments", []))[0]
             return {
                 "kind": "call_tool",
                 "summary": "Compute metadata for the controlled attachment.",
@@ -77,7 +77,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
-        self.wfile.write(encoded)
+        try:
+            self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionAbortedError):
+            return
 
     def log_message(self, format: str, *args: object) -> None:
         return

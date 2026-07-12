@@ -95,6 +95,9 @@ class WorkflowDefinition(BaseModel):
             raise ValueError(f"工作流包含未注册节点：{sorted(unknown)}")
         if len(value) != len(set(value)):
             raise ValueError("工作流节点不能重复")
+        required = {"normalize_task", "select_action", "verify", "generate_report"}
+        if not required.issubset(value):
+            raise ValueError(f"工作流缺少平台必需节点：{sorted(required - set(value))}")
         return value
 
 

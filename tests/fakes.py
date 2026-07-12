@@ -56,7 +56,28 @@ class FakeModelProvider:
                 ).model_dump()
             )
         context = json.loads(prompt)
-        observations = context.get("observations", [])
+        observations = context.get("observations_untrusted", context.get("observations", []))
+        supplemental = context.get("supplemental_inputs", [])
+        if self.scenario == "request_input" and not supplemental:
+            return output_type.model_validate(
+                AgentAction(kind="request_input", summary="请补充目标受众").model_dump()
+            )
+        if self.scenario in {"request_input", "advisory"}:
+            return output_type.model_validate(
+                AgentAction(
+                    kind="finish",
+                    summary="生成建议回答",
+                    answer=f"建议：{supplemental[-1] if supplemental else '采用分阶段方案'}",
+                ).model_dump()
+            )
+        if self.scenario == "structured":
+            return output_type.model_validate(
+                AgentAction(
+                    kind="finish",
+                    summary="生成结构化结果",
+                    structured_output={"title": "validated", "priority": 1},
+                ).model_dump()
+            )
         if observations and observations[-1]["success"]:
             latest = observations[-1]
             value = AgentAction(

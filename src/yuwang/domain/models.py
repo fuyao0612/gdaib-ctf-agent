@@ -25,12 +25,13 @@ class ThreadMode(StrEnum):
 class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
+    WAITING_INPUT = "waiting_input"
     COMPLETED = "completed"
     FAILED = "failed"
     STOPPED = "stopped"
 
 
-ACTIVE_RUN_STATUSES = {RunStatus.QUEUED, RunStatus.RUNNING}
+ACTIVE_RUN_STATUSES = {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}
 
 
 class MessageRole(StrEnum):
@@ -52,6 +53,9 @@ class EventType(StrEnum):
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
     RUN_STOPPED = "run_stopped"
+    RUN_WAITING_INPUT = "run_waiting_input"
+    INPUT_RECEIVED = "input_received"
+    CONTEXT_TRUNCATED = "context_truncated"
 
 
 class Budget(BaseModel):
@@ -96,6 +100,9 @@ class Run(DomainModel):
     attempt: int = Field(1, ge=1)
     stop_requested: bool = False
     error: str | None = None
+    completion_mode: str = "evidence"
+    validation_status: Literal["pending", "unverified", "validated", "failed"] = "pending"
+    evidence_level: Literal["none", "model", "structured", "external"] = "none"
     created_at: datetime = Field(default_factory=utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -103,7 +110,17 @@ class Run(DomainModel):
     def transition(self, target: RunStatus, error: str | None = None) -> None:
         allowed = {
             RunStatus.QUEUED: {RunStatus.RUNNING, RunStatus.FAILED, RunStatus.STOPPED},
-            RunStatus.RUNNING: {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.STOPPED},
+            RunStatus.RUNNING: {
+                RunStatus.WAITING_INPUT,
+                RunStatus.COMPLETED,
+                RunStatus.FAILED,
+                RunStatus.STOPPED,
+            },
+            RunStatus.WAITING_INPUT: {
+                RunStatus.RUNNING,
+                RunStatus.FAILED,
+                RunStatus.STOPPED,
+            },
             RunStatus.COMPLETED: set(),
             RunStatus.FAILED: set(),
             RunStatus.STOPPED: set(),
@@ -152,7 +169,7 @@ class Artifact(DomainModel):
 class TaskSpec(DomainModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True, frozen=True)
     body: str = Field(min_length=1, max_length=100_000)
-    scenario: str = "safe_demo"
+    scenario: str = "general"
     mode: ThreadMode = ThreadMode.NORMAL
     artifact_ids: list[UUID] = Field(default_factory=list)
     authorized_targets: list[str] = Field(default_factory=list)
@@ -223,6 +240,18 @@ class AgentAction(BaseModel):
     tool_input: dict[str, Any] = Field(default_factory=dict)
     candidate: EvidenceCandidate | None = None
     updated_plan: list[str] = Field(default_factory=list)
+    answer: str | None = Field(default=None, max_length=100_000)
+    structured_output: dict[str, Any] | None = None
+
+
+class MemoryRecord(DomainModel):
+    id: UUID = Field(default_factory=uuid4)
+    thread_id: UUID
+    kind: Literal["thread_summary", "run_summary", "important_fact", "user_input"]
+    content: str = Field(min_length=1, max_length=100_000)
+    enabled: bool = True
+    source_run_id: UUID | None = None
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class VerificationRule(BaseModel):
