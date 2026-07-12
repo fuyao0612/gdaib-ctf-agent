@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import pytest
@@ -35,3 +36,31 @@ def test_missing_records(tmp_path):
     assert repository.get_report(uuid4()) is None
     with pytest.raises(KeyError):
         repository.request_stop(uuid4())
+
+
+def test_event_sequences_are_transactional_under_concurrency(tmp_path):
+    repository = SQLiteRepository(tmp_path / "events.db")
+    thread = repository.save_thread(Thread(title="concurrent"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    events = EventService(repository)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(
+            pool.map(
+                lambda index: events.emit(run.id, EventType.STATUS_UPDATE, f"event {index}"),
+                range(20),
+            )
+        )
+    persisted = repository.list_events(run.id)
+    assert [event.sequence for event in persisted] == list(range(1, 21))
+
+
+def test_checkpoints_are_append_only_versioned_state(tmp_path):
+    repository = SQLiteRepository(tmp_path / "checkpoints.db")
+    run_id = uuid4()
+    repository.save_checkpoint(run_id, "plan", {"value": 1, "elapsed_seconds": 1.5})
+    repository.save_checkpoint(run_id, "plan", {"value": 2, "elapsed_seconds": 2.5})
+    checkpoints = repository.list_checkpoints(run_id)
+    assert [item.checkpoint_sequence for item in checkpoints] == [1, 2]
+    assert [item.state["value"] for item in checkpoints] == [1, 2]
+    assert checkpoints[-1].state_schema_version == "2.0"
+    assert repository.latest_checkpoint(run_id) == checkpoints[-1]

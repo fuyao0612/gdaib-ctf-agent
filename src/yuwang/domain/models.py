@@ -188,6 +188,28 @@ class ToolCall(DomainModel):
     artifact_ids: list[UUID] = Field(default_factory=list)
 
 
+class EvidenceRecord(DomainModel):
+    id: UUID = Field(default_factory=uuid4)
+    run_id: UUID
+    candidate: str
+    source_call_id: UUID
+    location: str
+    verified: bool
+    verification_summary: str
+    rule_kind: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class RunCheckpoint(DomainModel):
+    run_id: UUID
+    checkpoint_sequence: int = Field(ge=1)
+    node: str
+    state_schema_version: str = "2.0"
+    state: dict[str, Any]
+    elapsed_seconds: float = Field(ge=0)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class AgentAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["call_tool", "replan", "finish", "fail", "request_input"]

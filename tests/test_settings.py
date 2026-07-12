@@ -106,3 +106,18 @@ def test_agent_defaults_persist(tmp_path):
     defaults = AgentDefaults(context_token_budget=64000, provider_retry_budget=4)
     service.save_agent_defaults(defaults)
     assert service.get_agent_defaults() == defaults
+
+
+def test_provider_snapshot_is_encrypted_and_immutable(tmp_path):
+    repository = SQLiteRepository(tmp_path / "snapshots.db")
+    service = SettingsService(repository, SecretCipher(Fernet.generate_key().decode()))
+    view = service.create_provider(input_config())
+    stored = service.get_provider(view.id)
+    run_id = __import__("uuid").uuid4()
+    repository.save_provider_snapshot(run_id, [stored])
+    restored = repository.get_provider_snapshot(run_id)
+    assert restored == [stored]
+    assert b"secret-provider-key" not in (tmp_path / "snapshots.db").read_bytes()
+    changed = stored.model_copy(update={"model": "changed-model"})
+    with pytest.raises(ValueError, match="不可变"):
+        repository.save_provider_snapshot(run_id, [changed])

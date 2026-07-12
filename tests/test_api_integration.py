@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import Settings, create_app
 from tests.fakes import FakeEchoTool
-from yuwang.domain.models import Run, RunStatus
+from yuwang.agent import AgentStateModel
+from yuwang.domain.models import AgentAction, AgentPlan, Observation, Run, RunStatus, TaskSpec
 
 
 def wait_for_terminal(client, run_id):
@@ -156,6 +157,11 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         report = client.get(f"/api/v1/runs/{run_id}/report")
         assert report.status_code == 200
         assert "调整：协议服务生成的计划" in report.json()["markdown"]
+        audit = client.get(f"/api/v1/runs/{run_id}/audit").json()
+        assert audit["model_calls"] and audit["tool_calls"] and audit["evidence"]
+        assert [item["checkpoint_sequence"] for item in audit["checkpoints"]] == list(
+            range(1, len(audit["checkpoints"]) + 1)
+        )
         assert client.get(f"/api/v1/artifacts/{artifact['id']}/download").content == b"evidence"
         assert len(client.get("/api/v1/providers").json()) == 1
         assert len(client.get("/api/v1/tools").json()) == 3
@@ -210,3 +216,56 @@ def test_competition_lock_stop_openapi_and_upload_policy(tmp_path):
         )
         assert denied.status_code == 400
         assert client.get("/api/v1/openapi.json").json()["info"]["version"] == "0.1.0"
+
+
+def test_service_lifespan_resumes_active_run_from_checkpoint(tmp_path, provider_server):
+    app = configured_app(tmp_path)
+    app.state.registry.register(FakeEchoTool())
+    with TestClient(app) as client:
+        provider = create_provider(client, provider_server)
+        repository = app.state.repository
+        thread = client.post("/api/v1/threads", json={"title": "restart"}).json()
+        run = Run(
+            thread_id=thread["id"],
+            provider="本地协议服务",
+            provider_config_id=provider["id"],
+        )
+        run.transition(RunStatus.RUNNING)
+        repository.save_run(run)
+        task = TaskSpec(
+            body="resume after restart",
+            verification_rules=[{"kind": "regex", "value": "verified"}],
+        )
+        repository.save_run_task(run.id, task)
+        provider_config = repository.get_provider_config(provider["id"])
+        assert provider_config is not None
+        repository.save_provider_snapshot(run.id, [provider_config])
+        observation = Observation(
+            call_id=__import__("uuid").uuid4(),
+            tool_name="test_echo",
+            success=True,
+            output={"echoed": "verified"},
+            summary="completed before restart",
+        )
+        state = AgentStateModel(
+            run_id=run.id,
+            task=task,
+            plan=AgentPlan(
+                summary="persisted plan",
+                steps=["verify existing evidence"],
+                success_approach="deterministic regex",
+            ),
+            action=AgentAction(
+                kind="call_tool",
+                summary="already done",
+                tool_name="test_echo",
+                tool_input={"text": "verified"},
+            ),
+            observations=[observation],
+            elapsed_seconds=2.0,
+        )
+        repository.save_checkpoint(run.id, "execute_tool", state.model_dump(mode="json"))
+    with TestClient(app) as restarted:
+        assert wait_for_terminal(restarted, str(run.id))["status"] == "completed"
+        events = restarted.get(f"/api/v1/runs/{run.id}/events").json()
+        assert any("恢复" in event["summary"] for event in events)

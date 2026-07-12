@@ -15,8 +15,7 @@ class EventService:
     def emit(self, run_id: UUID, event_type: EventType, summary: str, payload: dict[str, Any] | None = None) -> Event:
         clean_summary = redact(summary)
         clean_payload = self._redact_value(payload or {})
-        event = Event(run_id=run_id, sequence=self.repository.next_sequence(run_id), type=event_type, summary=clean_summary, payload=clean_payload)
-        return self.repository.append_event(event)
+        return self.repository.create_event(run_id, event_type, clean_summary, clean_payload)
 
     def _redact_value(self, value: Any) -> Any:
         if isinstance(value, str):

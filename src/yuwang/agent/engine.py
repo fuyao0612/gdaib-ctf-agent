@@ -14,10 +14,14 @@ from yuwang.agent.verification import SuccessVerifier
 from yuwang.domain.models import (
     AgentAction,
     AgentPlan,
+    CallStatus,
     EventType,
+    EvidenceRecord,
+    ModelCall,
     Observation,
     RunStatus,
     TaskSpec,
+    ToolCall,
 )
 from yuwang.events import EventService
 from yuwang.model_providers import ModelProvider, ProviderError
@@ -48,7 +52,7 @@ class AgentStateModel(BaseModel):
     tool_calls: int = 0
     tool_failures: int = 0
     tokens: int = 0
-    started_monotonic: float = Field(default_factory=time.monotonic)
+    elapsed_seconds: float = Field(default=0, ge=0)
     plan: AgentPlan | None = None
     action: AgentAction | None = None
     observations: list[Observation] = Field(default_factory=list)
@@ -67,7 +71,7 @@ class GraphState(TypedDict, total=False):
     tool_calls: int
     tool_failures: int
     tokens: int
-    started_monotonic: float
+    elapsed_seconds: float
     plan: dict[str, Any] | None
     action: dict[str, Any] | None
     observations: list[dict[str, Any]]
@@ -96,12 +100,17 @@ class AgentEngine:
         self.events = EventService(repository)
         self.reporter = ReportGenerator()
         self.verifier = SuccessVerifier()
+        self._last_tick: dict[UUID, float] = {}
         self.graph = self._build_graph()
 
     def _state(self, raw: GraphState) -> AgentStateModel:
         return AgentStateModel.model_validate(raw)
 
     def _checkpoint(self, node: str, state: AgentStateModel) -> None:
+        now = time.monotonic()
+        previous_tick = self._last_tick.get(state.run_id, now)
+        state.elapsed_seconds += max(0.0, now - previous_tick)
+        self._last_tick[state.run_id] = now
         state.step += 1
         budget = state.task.budget
         run = self.repository.get_run(state.run_id)
@@ -115,7 +124,7 @@ class AgentEngine:
             raise BudgetExceeded("超过工具调用预算")
         if state.tokens > budget.max_tokens:
             raise BudgetExceeded("超过 Token 预算")
-        if time.monotonic() - state.started_monotonic > budget.max_duration_seconds:
+        if state.elapsed_seconds > budget.max_duration_seconds:
             raise BudgetExceeded("超过总时长预算")
         self.repository.save_checkpoint(
             state.run_id, node, state.model_dump(mode="json")
@@ -159,15 +168,49 @@ class AgentEngine:
     ) -> BaseModel:
         prompt = self._context(state, purpose)
         state.model_calls += 1
-        state.tokens += max(1, len(prompt) // 4)
-        return await asyncio.wait_for(
-            self.provider.generate_structured(
-                prompt,
-                output_type,
+        input_tokens = max(1, len(prompt) // 4)
+        state.tokens += input_tokens
+        started = time.perf_counter()
+        try:
+            result = await asyncio.wait_for(
+                self.provider.generate_structured(
+                    prompt,
+                    output_type,
+                    timeout=state.task.budget.step_timeout_seconds,
+                ),
                 timeout=state.task.budget.step_timeout_seconds,
-            ),
-            timeout=state.task.budget.step_timeout_seconds,
+            )
+        except Exception as exc:
+            category = exc.category if isinstance(exc, ProviderError) else "timeout" if isinstance(exc, TimeoutError) else "service"
+            self.repository.save_model_call(
+                ModelCall(
+                    run_id=state.run_id,
+                    provider=self.provider.name,
+                    model=str(getattr(self.provider, "model", "provider-chain")),
+                    duration_ms=int((time.perf_counter() - started) * 1000),
+                    input_tokens=input_tokens,
+                    output_tokens=0,
+                    status=CallStatus.FAILED,
+                    error_category=str(category),
+                    metadata={"purpose": purpose},
+                )
+            )
+            raise
+        output_tokens = max(1, len(result.model_dump_json()) // 4)
+        state.tokens += output_tokens
+        self.repository.save_model_call(
+            ModelCall(
+                run_id=state.run_id,
+                provider=self.provider.name,
+                model=str(getattr(self.provider, "model", "provider-chain")),
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                status=CallStatus.SUCCEEDED,
+                metadata={"purpose": purpose},
+            )
         )
+        return result
 
     async def _ingest(self, raw: GraphState) -> GraphState:
         state = self._state(raw)
@@ -231,12 +274,8 @@ class AgentEngine:
         state = self._state(raw)
         if not state.action or state.action.kind != "call_tool" or not state.action.tool_name:
             raise AgentDeclaredFailure("工具动作缺少必要字段")
-        decision = self.policy.check_tool(
-            state.task,
-            state.action.tool_name,
-            state.action.tool_input,
-            self.registry.names(),
-        )
+        tool = self.registry.get(state.action.tool_name)
+        decision = self.policy.check_tool(state.task, tool.spec, state.action.tool_input)
         self.events.emit(
             state.run_id,
             EventType.POLICY_CHECKED,
@@ -262,6 +301,16 @@ class AgentEngine:
             raise AgentDeclaredFailure("没有可执行工具动作")
         state.tool_calls += 1
         call_id = uuid4()
+        self.repository.save_tool_call(
+            ToolCall(
+                id=call_id,
+                run_id=state.run_id,
+                tool_name=state.action.tool_name,
+                input_summary=state.action.summary,
+                duration_ms=0,
+                status=CallStatus.STARTED,
+            )
+        )
         self.events.emit(
             state.run_id,
             EventType.TOOL_STARTED,
@@ -275,6 +324,19 @@ class AgentEngine:
         )
         if not result.success:
             state.tool_failures += 1
+        self.repository.save_tool_call(
+            ToolCall(
+                id=call_id,
+                run_id=state.run_id,
+                tool_name=state.action.tool_name,
+                input_summary=state.action.summary,
+                result_summary=result.summary,
+                duration_ms=result.duration_ms,
+                status=CallStatus.SUCCEEDED if result.success else CallStatus.FAILED,
+                error=result.error.message if result.error else None,
+                artifact_ids=[UUID(value) for value in result.artifact_ids],
+            )
+        )
         observation = Observation(
             call_id=call_id,
             tool_name=state.action.tool_name,
@@ -332,6 +394,18 @@ class AgentEngine:
         result = self.verifier.verify(state.task, candidate, state.observations)
         state.verified = result.verified
         state.verification_summary = result.summary
+        if candidate:
+            self.repository.save_evidence(
+                EvidenceRecord(
+                    run_id=state.run_id,
+                    candidate=candidate.value,
+                    source_call_id=candidate.source_call_id,
+                    location=candidate.location,
+                    verified=result.verified,
+                    verification_summary=result.summary,
+                    rule_kind=result.rule_kind,
+                )
+            )
         self.events.emit(
             state.run_id,
             EventType.STATUS_UPDATE,
@@ -358,20 +432,24 @@ class AgentEngine:
             raise RuntimeError("运行记录不存在")
         run.transition(RunStatus.COMPLETED)
         self.repository.save_run(run)
-        duration_ms = int((time.monotonic() - state.started_monotonic) * 1000)
+        duration_ms = int(state.elapsed_seconds * 1000)
         events = self.repository.list_events(run.id)
         markdown, data = self.reporter.generate(
             run,
             state.task,
             events,
             {
-                "model_calls": state.model_calls,
-                "tool_calls": state.tool_calls,
+                "model_calls": len(self.repository.list_model_calls(run.id)),
+                "tool_calls": len(self.repository.list_tool_calls(run.id)),
                 "tool_failures": state.tool_failures,
                 "tokens": state.tokens,
                 "duration_ms": duration_ms,
                 "plan": state.plan.model_dump(mode="json") if state.plan else None,
                 "verification": state.verification_summary,
+                "evidence_records": [
+                    value.model_dump(mode="json")
+                    for value in self.repository.list_evidence(run.id)
+                ],
             },
         )
         self.repository.save_report(run.id, markdown, data)
@@ -413,7 +491,7 @@ class AgentEngine:
             reason = f"需要用户输入：{reason}"
         raise AgentDeclaredFailure(reason)
 
-    def _build_graph(self) -> Any:
+    def _build_graph(self, entry_point: str = "ingest") -> Any:
         graph = StateGraph(GraphState)
         add_node = cast(Any, graph.add_node)
         for name, function in [
@@ -431,7 +509,7 @@ class AgentEngine:
             ("fail", self._fail),
         ]:
             add_node(name, function)
-        graph.set_entry_point("ingest")
+        graph.set_entry_point(entry_point)
         graph.add_edge("ingest", "normalize_task")
         graph.add_edge("normalize_task", "plan")
         graph.add_edge("plan", "select_action")
@@ -470,19 +548,68 @@ class AgentEngine:
             raise KeyError("运行不存在")
         run.transition(RunStatus.RUNNING)
         self.repository.save_run(run)
+        self._last_tick[run.id] = time.monotonic()
         self.events.emit(
             run.id, EventType.RUN_STARTED, "Agent 运行已开始", {"provider": run.provider}
         )
         initial = AgentStateModel(run_id=run.id, task=task)
+        await self._invoke(run, task, initial, self.graph)
+
+    async def resume(self, run_id: UUID, task: TaskSpec) -> None:
+        run = self.repository.get_run(run_id)
+        if not run:
+            raise KeyError("运行不存在")
+        checkpoint = self.repository.latest_checkpoint(run_id)
+        if checkpoint is None:
+            if run.status == RunStatus.QUEUED:
+                await self.run(run_id, task)
+                return
+            await self._mark_recovery_failed(run, task, "运行缺少可恢复检查点")
+            return
+        state = AgentStateModel.model_validate(checkpoint.state)
+        state.elapsed_seconds = checkpoint.elapsed_seconds
+        self._last_tick[run.id] = time.monotonic()
+        uncertain = [
+            call
+            for call in self.repository.list_tool_calls(run_id)
+            if call.status == CallStatus.STARTED
+        ]
+        for call in uncertain:
+            tool = self.registry.get(call.tool_name)
+            if not tool.spec.idempotent:
+                await self._mark_recovery_failed(
+                    run,
+                    task,
+                    f"工具 {call.tool_name} 的执行结果不确定且非幂等，禁止自动重复",
+                )
+                return
+            call.status = CallStatus.FAILED
+            call.error = "服务中断；幂等调用将在恢复流程重新执行"
+            self.repository.save_tool_call(call)
+        target = self._resume_target(checkpoint.node, state)
+        self.events.emit(
+            run.id,
+            EventType.STATUS_UPDATE,
+            "已从持久化检查点恢复运行",
+            {
+                "checkpoint_sequence": checkpoint.checkpoint_sequence,
+                "resume_node": target,
+            },
+        )
+        await self._invoke(run, task, state, self._build_graph(target))
+
+    async def _invoke(
+        self, run: Any, task: TaskSpec, initial: AgentStateModel, graph: Any
+    ) -> None:
         try:
-            await self.graph.ainvoke(initial.model_dump(mode="python"))
+            await graph.ainvoke(initial.model_dump(mode="python"))
         except RunStopped as exc:
-            run = self.repository.get_run(run_id) or run
+            run = self.repository.get_run(run.id) or run
             run.transition(RunStatus.STOPPED, str(exc))
             self.repository.save_run(run)
             self.events.emit(run.id, EventType.RUN_STOPPED, "运行已按请求安全停止")
-        except (Exception, ProviderError) as exc:
-            run = self.repository.get_run(run_id) or run
+        except Exception as exc:
+            run = self.repository.get_run(run.id) or run
             run.transition(RunStatus.FAILED, str(exc)[:500])
             self.repository.save_run(run)
             self.events.emit(
@@ -491,6 +618,40 @@ class AgentEngine:
             events = self.repository.list_events(run.id)
             markdown, data = self.reporter.generate(run, task, events, {})
             self.repository.save_report(run.id, markdown, data)
+        finally:
+            self._last_tick.pop(run.id, None)
+
+    async def _mark_recovery_failed(self, run: Any, task: TaskSpec, reason: str) -> None:
+        run.transition(RunStatus.FAILED, reason)
+        self.repository.save_run(run)
+        self.events.emit(run.id, EventType.RUN_FAILED, "恢复已安全终止", {"error": reason})
+        markdown, data = self.reporter.generate(
+            run, task, self.repository.list_events(run.id), {}
+        )
+        self.repository.save_report(run.id, markdown, data)
+
+    def _resume_target(self, node: str, state: AgentStateModel) -> str:
+        if node == "select_action":
+            return self._route_action(cast(GraphState, state.model_dump(mode="python")))
+        if node == "policy_check":
+            return self._route_policy(cast(GraphState, state.model_dump(mode="python")))
+        if node == "observe":
+            return self._route_observe(cast(GraphState, state.model_dump(mode="python")))
+        if node == "verify":
+            return self._route_verify(cast(GraphState, state.model_dump(mode="python")))
+        mapping = {
+            "ingest": "normalize_task",
+            "normalize_task": "plan",
+            "plan": "select_action",
+            "execute_tool": "observe",
+            "replan": "select_action",
+            "complete": "generate_report",
+            "fail": "fail",
+        }
+        try:
+            return mapping[node]
+        except KeyError as exc:
+            raise AgentDeclaredFailure(f"未知恢复节点：{node}") from exc
 
     @staticmethod
     def _fingerprint(action: AgentAction) -> str:

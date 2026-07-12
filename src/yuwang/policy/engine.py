@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
 from yuwang.domain.models import TaskSpec
+from yuwang.tooling.sdk import ToolSpec
 
 
 class SecurityConfig(BaseModel):
@@ -42,20 +43,24 @@ class PolicyEngine:
     def __init__(self, config: SecurityConfig | None = None) -> None:
         self.config = config or SecurityConfig()
 
-    def check_tool(self, task: TaskSpec, tool_name: str, tool_input: dict[str, object], registered: set[str]) -> PolicyDecision:
-        if tool_name not in registered:
-            return PolicyDecision(allowed=False, reason="工具未注册，默认拒绝")
-        if tool_name in {"shell", "exec", "command"}:
-            return PolicyDecision(allowed=False, reason="禁止任意 Shell")
-        if tool_name == "localhost_http_probe":
-            url = str(tool_input.get("url", ""))
-            parsed = urlparse(url)
-            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-                return PolicyDecision(allowed=False, reason="无效 HTTP 目标")
-            if parsed.hostname not in self.config.allowed_http_hosts:
-                return PolicyDecision(allowed=False, reason="网络目标不在本地白名单")
-            if task.authorized_targets and parsed.hostname not in task.authorized_targets:
+    def check_tool(
+        self, task: TaskSpec, tool: ToolSpec, tool_input: dict[str, object]
+    ) -> PolicyDecision:
+        if tool.requires_network:
+            raw_target = next(
+                (str(tool_input[key]) for key in ("url", "target", "host") if key in tool_input),
+                "",
+            )
+            parsed = urlparse(raw_target if "://" in raw_target else f"//{raw_target}")
+            hostname = parsed.hostname
+            if not hostname:
+                return PolicyDecision(allowed=False, reason="网络工具缺少有效目标")
+            if not task.authorized_targets:
+                return PolicyDecision(allowed=False, reason="任务未声明网络授权目标")
+            if hostname not in task.authorized_targets and raw_target not in task.authorized_targets:
                 return PolicyDecision(allowed=False, reason="目标不在任务授权范围")
+            if "localhost" in tool.allowed_target_types and not self.is_local_address(hostname):
+                return PolicyDecision(allowed=False, reason="工具仅允许本地测试目标")
         return PolicyDecision(allowed=True, reason="工具与目标符合授权策略")
 
     def validate_upload(self, filename: str, size: int, existing_count: int) -> None:

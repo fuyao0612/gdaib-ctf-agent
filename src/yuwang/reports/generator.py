@@ -10,6 +10,12 @@ class ReportGenerator:
     def generate(self, run: Run, task: TaskSpec, events: list[Event], metrics: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         replans = [event.summary for event in events if str(event.type) == "replanned"]
         evidence = [event.summary for event in events if str(event.type) in {"tool_finished", "artifact_created"}]
+        for record in metrics.get("evidence_records", []):
+            if isinstance(record, dict):
+                evidence.append(
+                    f"候选证据 {record.get('source_call_id')} {record.get('location')}："
+                    f"{record.get('verification_summary')}"
+                )
         policy = [event.summary for event in events if str(event.type) == "policy_checked"]
         plan_data = metrics.get("plan") or {}
         plan_steps = plan_data.get("steps", []) if isinstance(plan_data, dict) else []

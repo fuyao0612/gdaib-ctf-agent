@@ -5,7 +5,7 @@ import hashlib
 import mimetypes
 import os
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -35,6 +35,7 @@ from yuwang.model_providers import OpenAICompatibleProvider, ProviderChain, Prov
 from yuwang.policy import PolicyEngine, SecurityConfig
 from yuwang.settings import (
     AgentDefaults,
+    ProviderConfig,
     ProviderConfigInput,
     ProviderConfigView,
     SecretCipher,
@@ -87,6 +88,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     registry = create_reference_registry(config.artifact_root)
     tasks: dict[UUID, asyncio.Task[None]] = {}
 
+    def cleanup_callback(run_id: UUID) -> Callable[[asyncio.Task[None]], None]:
+        def cleanup(_: asyncio.Task[None]) -> None:
+            tasks.pop(run_id, None)
+
+        return cleanup
+
     def get_settings_service() -> SettingsService:
         if not config.master_key:
             raise HTTPException(503, "设置服务不可用：需要配置 YUWANG_MASTER_KEY")
@@ -107,15 +114,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if scheme.lower() != "bearer" or not secrets.compare_digest(token, config.admin_token):
             raise HTTPException(401, "管理员鉴权失败")
 
-    def build_provider_chain(provider_config_id: UUID | None) -> ProviderChain:
+    def build_provider_chain_from_configs(provider_configs: list[ProviderConfig]) -> ProviderChain:
         service = get_settings_service()
-        provider_configs = service.resolve_chain(provider_config_id)
         return ProviderChain(
             [
                 OpenAICompatibleProvider(
                     name=value.name,
                     base_url=value.base_url,
-                    api_key=service.decrypt_api_key(value.id),
+                    api_key=service.cipher.decrypt(value.encrypted_api_key),
                     model=value.model,
                     timeout_seconds=value.timeout_seconds,
                     max_retries=value.max_retries,
@@ -125,15 +131,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ]
         )
 
+    def resolve_provider_chain(
+        provider_config_id: UUID | None,
+    ) -> tuple[list[ProviderConfig], ProviderChain]:
+        provider_configs = get_settings_service().resolve_chain(provider_config_id)
+        return provider_configs, build_provider_chain_from_configs(provider_configs)
+
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        # A crashed process cannot safely replay a possibly side-effecting node. Mark it
-        # retryable instead; completed history and checkpoints remain available.
         for thread in repository.list_threads():
             for stale in repository.list_runs(thread.id):
                 if stale.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
-                    stale.transition(RunStatus.FAILED, "服务重启中断；可安全重试")
-                    repository.save_run(stale)
+                    task_spec = repository.get_run_task(stale.id)
+                    snapshots = repository.get_provider_snapshot(stale.id)
+                    if not task_spec or not snapshots:
+                        stale.transition(RunStatus.FAILED, "恢复所需快照缺失")
+                        repository.save_run(stale)
+                        continue
+                    try:
+                        provider = build_provider_chain_from_configs(snapshots)
+                    except (ValueError, HTTPException):
+                        stale.transition(RunStatus.FAILED, "无法解密恢复所需的 Provider 快照")
+                        repository.save_run(stale)
+                        continue
+                    engine = AgentEngine(repository, provider, registry, policy)
+                    task_handle = asyncio.create_task(engine.resume(stale.id, task_spec))
+                    tasks[stale.id] = task_handle
+                    task_handle.add_done_callback(cleanup_callback(stale.id))
         yield
         for task in tasks.values():
             if not task.done():
@@ -262,8 +286,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def start_run(thread_id: UUID, body: RunCreate = Body(default_factory=RunCreate)) -> Run:
         thread = require_thread(thread_id)
         try:
-            provider = build_provider_chain(body.provider_config_id)
-            selected = get_settings_service().resolve_chain(body.provider_config_id)[0]
+            provider_configs, provider = resolve_provider_chain(body.provider_config_id)
+            selected = provider_configs[0]
         except (ValueError, KeyError) as exc:
             raise HTTPException(409, str(exc)) from exc
         task = build_task(thread, body)
@@ -275,11 +299,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             repository.save_run(run)
             repository.save_run_task(run.id, task)
+            repository.save_provider_snapshot(run.id, provider_configs)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         task_handle = asyncio.create_task(execute(run, task, provider))
         tasks[run.id] = task_handle
-        task_handle.add_done_callback(lambda _: tasks.pop(run.id, None))
+        task_handle.add_done_callback(cleanup_callback(run.id))
         return run
 
     @application.get("/api/v1/runs/{run_id}", response_model=Run)
@@ -303,7 +328,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not task:
             raise HTTPException(409, "原运行缺少 TaskSpec 快照，无法安全重试")
         try:
-            provider = build_provider_chain(previous.provider_config_id)
+            provider_configs = repository.get_provider_snapshot(previous.id)
+            if not provider_configs:
+                raise ValueError("原运行缺少 Provider 快照")
+            provider = build_provider_chain_from_configs(provider_configs)
         except (ValueError, KeyError) as exc:
             raise HTTPException(409, str(exc)) from exc
         retried = Run(
@@ -314,15 +342,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         repository.save_run(retried)
         repository.save_run_task(retried.id, task)
+        repository.save_provider_snapshot(retried.id, provider_configs)
         task_handle = asyncio.create_task(execute(retried, task, provider))
         tasks[retried.id] = task_handle
-        task_handle.add_done_callback(lambda _: tasks.pop(retried.id, None))
+        task_handle.add_done_callback(cleanup_callback(retried.id))
         return retried
 
     @application.get("/api/v1/runs/{run_id}/events")
     async def list_events(run_id: UUID, after: int = Query(0, ge=0)) -> list[dict[str, Any]]:
         require_run(run_id)
         return [event.model_dump(mode="json") for event in repository.list_events(run_id, after)]
+
+    @application.get("/api/v1/runs/{run_id}/audit")
+    async def run_audit(run_id: UUID) -> dict[str, Any]:
+        require_run(run_id)
+        return {
+            "model_calls": [
+                value.model_dump(mode="json") for value in repository.list_model_calls(run_id)
+            ],
+            "tool_calls": [
+                value.model_dump(mode="json") for value in repository.list_tool_calls(run_id)
+            ],
+            "evidence": [
+                value.model_dump(mode="json") for value in repository.list_evidence(run_id)
+            ],
+            "checkpoints": [
+                {
+                    "checkpoint_sequence": value.checkpoint_sequence,
+                    "node": value.node,
+                    "state_schema_version": value.state_schema_version,
+                    "elapsed_seconds": value.elapsed_seconds,
+                    "created_at": value.created_at,
+                }
+                for value in repository.list_checkpoints(run_id)
+            ],
+        }
 
     @application.get("/api/v1/runs/{run_id}/events/stream")
     async def stream_events(run_id: UUID, request: Request, last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None, after: int = Query(0, ge=0)) -> StreamingResponse:

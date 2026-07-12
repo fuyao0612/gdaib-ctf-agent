@@ -5,24 +5,23 @@ from tests.fakes import FakeEchoTool, FakeModelProvider
 from yuwang.domain.models import AgentAction, TaskSpec
 from yuwang.model_providers import OpenAICompatibleProvider, ProviderChain, ProviderError
 from yuwang.policy import PolicyEngine, redact
-from yuwang.tooling.sdk import ToolExecutor, ToolRegistry
+from yuwang.tooling.sdk import LocalhostHTTPProbeTool, ToolExecutor, ToolRegistry
 
 
 def test_policy_default_deny_and_local_allow():
     policy = PolicyEngine()
     task = TaskSpec(body="probe", authorized_targets=["localhost"])
-    assert not policy.check_tool(task, "missing", {}, {"test_echo"}).allowed
+    assert policy.check_tool(task, FakeEchoTool().spec, {}).allowed
+    probe = LocalhostHTTPProbeTool().spec
     assert not policy.check_tool(
         task,
-        "localhost_http_probe",
+        probe,
         {"url": "https://example.com"},
-        {"localhost_http_probe"},
     ).allowed
     assert policy.check_tool(
         task,
-        "localhost_http_probe",
+        probe,
         {"url": "http://localhost:8000"},
-        {"localhost_http_probe"},
     ).allowed
 
 

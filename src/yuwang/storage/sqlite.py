@@ -9,7 +9,20 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from yuwang.domain.models import Artifact, Event, Message, Run, RunStatus, TaskSpec, Thread
+from yuwang.domain.models import (
+    Artifact,
+    Event,
+    EventType,
+    EvidenceRecord,
+    Message,
+    ModelCall,
+    Run,
+    RunCheckpoint,
+    RunStatus,
+    TaskSpec,
+    Thread,
+    ToolCall,
+)
 from yuwang.settings.models import AgentDefaults, ProviderConfig
 
 T = TypeVar("T", bound=BaseModel)
@@ -45,10 +58,14 @@ class SQLiteRepository:
                 CREATE TABLE IF NOT EXISTS events(event_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, sequence INTEGER NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(run_id, sequence));
                 CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS reports(run_id TEXT PRIMARY KEY, markdown TEXT NOT NULL, json_data TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS checkpoints(run_id TEXT NOT NULL, node TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(run_id,node));
                 CREATE TABLE IF NOT EXISTS provider_configs(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS run_tasks(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE IF NOT EXISTS run_checkpoints(run_id TEXT NOT NULL, checkpoint_sequence INTEGER NOT NULL, node TEXT NOT NULL, state_schema_version TEXT NOT NULL, elapsed_seconds REAL NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(run_id,checkpoint_sequence));
+                CREATE TABLE IF NOT EXISTS model_calls(id TEXT PRIMARY KEY, run_id TEXT NOT NULL, data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS tool_calls(id TEXT PRIMARY KEY, run_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS evidence(id TEXT PRIMARY KEY, run_id TEXT NOT NULL, data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS provider_snapshots(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 """
             )
 
@@ -113,10 +130,45 @@ class SQLiteRepository:
 
     def append_event(self, event: Event) -> Event:
         with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             expected = db.execute("SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE run_id=?", (str(event.run_id),)).fetchone()["n"]
             if event.sequence != expected:
                 raise ValueError(f"event sequence must be {expected}")
             db.execute("INSERT INTO events VALUES(?,?,?,?,?)", (str(event.event_id), str(event.run_id), event.sequence, str(event.type), self._dump(event)))
+        return event
+
+    def create_event(
+        self,
+        run_id: UUID,
+        event_type: EventType,
+        summary: str,
+        payload: dict[str, Any],
+    ) -> Event:
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            sequence = int(
+                db.execute(
+                    "SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE run_id=?",
+                    (str(run_id),),
+                ).fetchone()["n"]
+            )
+            event = Event(
+                run_id=run_id,
+                sequence=sequence,
+                type=event_type,
+                summary=summary,
+                payload=payload,
+            )
+            db.execute(
+                "INSERT INTO events VALUES(?,?,?,?,?)",
+                (
+                    str(event.event_id),
+                    str(run_id),
+                    sequence,
+                    str(event.type),
+                    event.model_dump_json(),
+                ),
+            )
         return event
 
     def next_sequence(self, run_id: UUID | str) -> int:
@@ -144,8 +196,49 @@ class SQLiteRepository:
         return [self._load(Artifact, row["data"]) for row in rows]
 
     def save_checkpoint(self, run_id: UUID | str, node: str, data: dict[str, Any]) -> None:
+        elapsed = float(data.get("elapsed_seconds", 0.0))
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            sequence = int(
+                db.execute(
+                    "SELECT COALESCE(MAX(checkpoint_sequence),0)+1 AS n FROM run_checkpoints WHERE run_id=?",
+                    (str(run_id),),
+                ).fetchone()["n"]
+            )
+            checkpoint = RunCheckpoint(
+                run_id=UUID(str(run_id)),
+                checkpoint_sequence=sequence,
+                node=node,
+                state=data,
+                elapsed_seconds=elapsed,
+            )
+            db.execute(
+                "INSERT INTO run_checkpoints(run_id,checkpoint_sequence,node,state_schema_version,elapsed_seconds,data) VALUES(?,?,?,?,?,?)",
+                (
+                    str(run_id),
+                    sequence,
+                    node,
+                    checkpoint.state_schema_version,
+                    elapsed,
+                    checkpoint.model_dump_json(),
+                ),
+            )
+
+    def latest_checkpoint(self, run_id: UUID | str) -> RunCheckpoint | None:
         with self.connect() as db:
-            db.execute("INSERT OR REPLACE INTO checkpoints(run_id,node,data) VALUES(?,?,?)", (str(run_id), node, json.dumps(data, ensure_ascii=False, default=str)))
+            row = db.execute(
+                "SELECT data FROM run_checkpoints WHERE run_id=? ORDER BY checkpoint_sequence DESC LIMIT 1",
+                (str(run_id),),
+            ).fetchone()
+        return RunCheckpoint.model_validate_json(row["data"]) if row else None
+
+    def list_checkpoints(self, run_id: UUID | str) -> list[RunCheckpoint]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM run_checkpoints WHERE run_id=? ORDER BY checkpoint_sequence",
+                (str(run_id),),
+            ).fetchall()
+        return [RunCheckpoint.model_validate_json(row["data"]) for row in rows]
 
     def save_report(self, run_id: UUID | str, markdown: str, data: dict[str, Any]) -> None:
         with self.connect() as db:
@@ -228,3 +321,69 @@ class SQLiteRepository:
                 "SELECT data FROM run_tasks WHERE run_id=?", (str(run_id),)
             ).fetchone()
         return TaskSpec.model_validate_json(row["data"]) if row else None
+
+    def save_model_call(self, value: ModelCall) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO model_calls(id,run_id,data) VALUES(?,?,?)",
+                (str(value.id), str(value.run_id), value.model_dump_json()),
+            )
+
+    def list_model_calls(self, run_id: UUID | str) -> list[ModelCall]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM model_calls WHERE run_id=? ORDER BY rowid", (str(run_id),)
+            ).fetchall()
+        return [ModelCall.model_validate_json(row["data"]) for row in rows]
+
+    def save_tool_call(self, value: ToolCall) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO tool_calls(id,run_id,status,data) VALUES(?,?,?,?)",
+                (str(value.id), str(value.run_id), str(value.status), value.model_dump_json()),
+            )
+
+    def list_tool_calls(self, run_id: UUID | str) -> list[ToolCall]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM tool_calls WHERE run_id=? ORDER BY rowid", (str(run_id),)
+            ).fetchall()
+        return [ToolCall.model_validate_json(row["data"]) for row in rows]
+
+    def save_evidence(self, value: EvidenceRecord) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO evidence(id,run_id,data) VALUES(?,?,?)",
+                (str(value.id), str(value.run_id), value.model_dump_json()),
+            )
+
+    def list_evidence(self, run_id: UUID | str) -> list[EvidenceRecord]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM evidence WHERE run_id=? ORDER BY rowid", (str(run_id),)
+            ).fetchall()
+        return [EvidenceRecord.model_validate_json(row["data"]) for row in rows]
+
+    def save_provider_snapshot(self, run_id: UUID, values: list[ProviderConfig]) -> None:
+        serialized = json.dumps(
+            [value.model_dump(mode="json") for value in values], ensure_ascii=False
+        )
+        with self.connect() as db:
+            existing = db.execute(
+                "SELECT data FROM provider_snapshots WHERE run_id=?", (str(run_id),)
+            ).fetchone()
+            if existing and existing["data"] != serialized:
+                raise ValueError("Run 的 Provider 快照不可变")
+            db.execute(
+                "INSERT OR IGNORE INTO provider_snapshots(run_id,data) VALUES(?,?)",
+                (str(run_id), serialized),
+            )
+
+    def get_provider_snapshot(self, run_id: UUID | str) -> list[ProviderConfig]:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT data FROM provider_snapshots WHERE run_id=?", (str(run_id),)
+            ).fetchone()
+        if not row:
+            return []
+        return [ProviderConfig.model_validate(value) for value in json.loads(row["data"])]
