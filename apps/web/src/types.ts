@@ -8,18 +8,24 @@ export interface Event { event_id: string; run_id: string; sequence: number; typ
 export interface ThreadDetail extends Thread { messages: Message[]; runs: Run[]; artifacts: Artifact[] }
 export interface Report { markdown: string; data: Record<string, unknown> }
 export type ProviderPreset = 'deepseek' | 'qwen' | 'glm' | 'custom'
+export type StructuredMode = 'auto' | 'json_schema' | 'json_object' | 'prompt_json'
+export type FallbackCategory = 'rate_limit' | 'timeout' | 'invalid_output' | 'service'
 export interface ProviderConfig {
   id: string; name: string; preset: ProviderPreset; base_url: string; model: string
   enabled: boolean; is_default: boolean; fallback_order: number | null
-  timeout_seconds: number; max_retries: number; structured_mode: 'json_schema' | 'json_object'
+  timeout_seconds: number; max_retries: number; structured_mode: StructuredMode
+  input_price_per_million: number; output_price_per_million: number
+  resolved_structured_mode: string; fallback_on: FallbackCategory[]
   has_api_key: boolean; created_at: string; updated_at: string
 }
 export interface ProviderConfigInput {
   name: string; preset: ProviderPreset; base_url: string; model: string; api_key?: string | null
   enabled: boolean; is_default: boolean; fallback_order: number | null
-  timeout_seconds: number; max_retries: number; structured_mode: 'json_schema' | 'json_object'
+  timeout_seconds: number; max_retries: number; structured_mode: StructuredMode
+  input_price_per_million: number; output_price_per_million: number
+  fallback_on: FallbackCategory[]
 }
 export interface AgentDefaults {
-  budget: { max_steps: number; max_model_calls: number; max_tool_calls: number; max_tokens: number; max_duration_seconds: number; step_timeout_seconds: number }
+  budget: { max_steps: number; max_model_calls: number; max_tool_calls: number; max_tokens: number; max_model_cost: number; max_duration_seconds: number; step_timeout_seconds: number }
   provider_retry_budget: number; context_token_budget: number; observation_char_budget: number
 }

@@ -79,7 +79,10 @@ class SQLiteRepository:
 
     def save_thread(self, value: Thread) -> Thread:
         with self.connect() as db:
-            db.execute("INSERT OR REPLACE INTO threads VALUES(?,?,?)", (str(value.id), self._dump(value), value.created_at.isoformat()))
+            db.execute(
+                "INSERT OR REPLACE INTO threads VALUES(?,?,?)",
+                (str(value.id), self._dump(value), value.created_at.isoformat()),
+            )
         return value
 
     def get_thread(self, thread_id: UUID | str) -> Thread | None:
@@ -94,21 +97,43 @@ class SQLiteRepository:
 
     def save_message(self, value: Message) -> Message:
         with self.connect() as db:
-            db.execute("INSERT INTO messages VALUES(?,?,?,?)", (str(value.id), str(value.thread_id), self._dump(value), value.created_at.isoformat()))
+            db.execute(
+                "INSERT INTO messages VALUES(?,?,?,?)",
+                (
+                    str(value.id),
+                    str(value.thread_id),
+                    self._dump(value),
+                    value.created_at.isoformat(),
+                ),
+            )
         return value
 
     def list_messages(self, thread_id: UUID | str) -> list[Message]:
         with self.connect() as db:
-            rows = db.execute("SELECT data FROM messages WHERE thread_id=? ORDER BY created_at", (str(thread_id),)).fetchall()
+            rows = db.execute(
+                "SELECT data FROM messages WHERE thread_id=? ORDER BY created_at", (str(thread_id),)
+            ).fetchall()
         return [self._load(Message, row["data"]) for row in rows]
 
     def save_run(self, value: Run) -> Run:
         with self._lock, self.connect() as db:
             if value.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
-                active = db.execute("SELECT id FROM runs WHERE thread_id=? AND status IN ('queued','running') AND id<>?", (str(value.thread_id), str(value.id))).fetchone()
+                active = db.execute(
+                    "SELECT id FROM runs WHERE thread_id=? AND status IN ('queued','running') AND id<>?",
+                    (str(value.thread_id), str(value.id)),
+                ).fetchone()
                 if active:
                     raise ValueError("thread already has an active run")
-            db.execute("INSERT OR REPLACE INTO runs VALUES(?,?,?,?,?)", (str(value.id), str(value.thread_id), str(value.status), self._dump(value), value.created_at.isoformat()))
+            db.execute(
+                "INSERT OR REPLACE INTO runs VALUES(?,?,?,?,?)",
+                (
+                    str(value.id),
+                    str(value.thread_id),
+                    str(value.status),
+                    self._dump(value),
+                    value.created_at.isoformat(),
+                ),
+            )
         return value
 
     def get_run(self, run_id: UUID | str) -> Run | None:
@@ -118,7 +143,9 @@ class SQLiteRepository:
 
     def list_runs(self, thread_id: UUID | str) -> list[Run]:
         with self.connect() as db:
-            rows = db.execute("SELECT data FROM runs WHERE thread_id=? ORDER BY created_at", (str(thread_id),)).fetchall()
+            rows = db.execute(
+                "SELECT data FROM runs WHERE thread_id=? ORDER BY created_at", (str(thread_id),)
+            ).fetchall()
         return [self._load(Run, row["data"]) for row in rows]
 
     def request_stop(self, run_id: UUID | str) -> Run:
@@ -131,10 +158,22 @@ class SQLiteRepository:
     def append_event(self, event: Event) -> Event:
         with self._lock, self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            expected = db.execute("SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE run_id=?", (str(event.run_id),)).fetchone()["n"]
+            expected = db.execute(
+                "SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE run_id=?",
+                (str(event.run_id),),
+            ).fetchone()["n"]
             if event.sequence != expected:
                 raise ValueError(f"event sequence must be {expected}")
-            db.execute("INSERT INTO events VALUES(?,?,?,?,?)", (str(event.event_id), str(event.run_id), event.sequence, str(event.type), self._dump(event)))
+            db.execute(
+                "INSERT INTO events VALUES(?,?,?,?,?)",
+                (
+                    str(event.event_id),
+                    str(event.run_id),
+                    event.sequence,
+                    str(event.type),
+                    self._dump(event),
+                ),
+            )
         return event
 
     def create_event(
@@ -173,26 +212,48 @@ class SQLiteRepository:
 
     def next_sequence(self, run_id: UUID | str) -> int:
         with self.connect() as db:
-            return int(db.execute("SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE run_id=?", (str(run_id),)).fetchone()["n"])
+            return int(
+                db.execute(
+                    "SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE run_id=?",
+                    (str(run_id),),
+                ).fetchone()["n"]
+            )
 
     def list_events(self, run_id: UUID | str, after: int = 0) -> list[Event]:
         with self.connect() as db:
-            rows = db.execute("SELECT data FROM events WHERE run_id=? AND sequence>? ORDER BY sequence", (str(run_id), after)).fetchall()
+            rows = db.execute(
+                "SELECT data FROM events WHERE run_id=? AND sequence>? ORDER BY sequence",
+                (str(run_id), after),
+            ).fetchall()
         return [self._load(Event, row["data"]) for row in rows]
 
     def save_artifact(self, value: Artifact) -> Artifact:
         with self.connect() as db:
-            db.execute("INSERT INTO artifacts VALUES(?,?,?,?,?)", (str(value.id), str(value.thread_id), str(value.run_id) if value.run_id else None, self._dump(value), value.created_at.isoformat()))
+            db.execute(
+                "INSERT INTO artifacts VALUES(?,?,?,?,?)",
+                (
+                    str(value.id),
+                    str(value.thread_id),
+                    str(value.run_id) if value.run_id else None,
+                    self._dump(value),
+                    value.created_at.isoformat(),
+                ),
+            )
         return value
 
     def get_artifact(self, artifact_id: UUID | str) -> Artifact | None:
         with self.connect() as db:
-            row = db.execute("SELECT data FROM artifacts WHERE id=?", (str(artifact_id),)).fetchone()
+            row = db.execute(
+                "SELECT data FROM artifacts WHERE id=?", (str(artifact_id),)
+            ).fetchone()
         return self._load(Artifact, row["data"]) if row else None
 
     def list_artifacts(self, thread_id: UUID | str) -> list[Artifact]:
         with self.connect() as db:
-            rows = db.execute("SELECT data FROM artifacts WHERE thread_id=? ORDER BY created_at", (str(thread_id),)).fetchall()
+            rows = db.execute(
+                "SELECT data FROM artifacts WHERE thread_id=? ORDER BY created_at",
+                (str(thread_id),),
+            ).fetchall()
         return [self._load(Artifact, row["data"]) for row in rows]
 
     def save_checkpoint(self, run_id: UUID | str, node: str, data: dict[str, Any]) -> None:
@@ -242,11 +303,16 @@ class SQLiteRepository:
 
     def save_report(self, run_id: UUID | str, markdown: str, data: dict[str, Any]) -> None:
         with self.connect() as db:
-            db.execute("INSERT OR REPLACE INTO reports VALUES(?,?,?)", (str(run_id), markdown, json.dumps(data, ensure_ascii=False, default=str)))
+            db.execute(
+                "INSERT OR REPLACE INTO reports VALUES(?,?,?)",
+                (str(run_id), markdown, json.dumps(data, ensure_ascii=False, default=str)),
+            )
 
     def get_report(self, run_id: UUID | str) -> tuple[str, dict[str, Any]] | None:
         with self.connect() as db:
-            row = db.execute("SELECT markdown,json_data FROM reports WHERE run_id=?", (str(run_id),)).fetchone()
+            row = db.execute(
+                "SELECT markdown,json_data FROM reports WHERE run_id=?", (str(run_id),)
+            ).fetchone()
         return (row["markdown"], json.loads(row["json_data"])) if row else None
 
     def save_provider_config(self, value: ProviderConfig) -> ProviderConfig:
@@ -266,9 +332,7 @@ class SQLiteRepository:
 
     def list_provider_configs(self) -> list[ProviderConfig]:
         with self.connect() as db:
-            rows = db.execute(
-                "SELECT data FROM provider_configs ORDER BY created_at"
-            ).fetchall()
+            rows = db.execute("SELECT data FROM provider_configs ORDER BY created_at").fetchall()
         return [ProviderConfig.model_validate_json(row["data"]) for row in rows]
 
     def set_default_provider(self, provider_id: UUID) -> None:
@@ -290,9 +354,7 @@ class SQLiteRepository:
 
     def get_agent_defaults(self) -> AgentDefaults:
         with self.connect() as db:
-            row = db.execute(
-                "SELECT data FROM app_settings WHERE key='agent_defaults'"
-            ).fetchone()
+            row = db.execute("SELECT data FROM app_settings WHERE key='agent_defaults'").fetchone()
         return AgentDefaults.model_validate_json(row["data"]) if row else AgentDefaults()
 
     def save_agent_defaults(self, value: AgentDefaults) -> None:
@@ -317,9 +379,7 @@ class SQLiteRepository:
 
     def get_run_task(self, run_id: UUID | str) -> TaskSpec | None:
         with self.connect() as db:
-            row = db.execute(
-                "SELECT data FROM run_tasks WHERE run_id=?", (str(run_id),)
-            ).fetchone()
+            row = db.execute("SELECT data FROM run_tasks WHERE run_id=?", (str(run_id),)).fetchone()
         return TaskSpec.model_validate_json(row["data"]) if row else None
 
     def save_model_call(self, value: ModelCall) -> None:

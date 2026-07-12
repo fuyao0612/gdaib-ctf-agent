@@ -9,6 +9,7 @@ from yuwang.settings.models import (
     ProviderConfig,
     ProviderConfigInput,
     ProviderConfigView,
+    resolve_structured_mode,
     validate_provider_url,
 )
 from yuwang.settings.security import SecretCipher
@@ -52,6 +53,7 @@ class SettingsService:
         if not value.api_key:
             raise ValueError("新建 Provider 必须填写 API Key")
         base_url = validate_provider_url(value.base_url, self.allow_insecure_local)
+        resolve_structured_mode(value.preset, value.structured_mode)
         config = ProviderConfig(
             name=value.name,
             preset=value.preset,
@@ -63,7 +65,10 @@ class SettingsService:
             fallback_order=value.fallback_order,
             timeout_seconds=value.timeout_seconds,
             max_retries=value.max_retries,
+            input_price_per_million=value.input_price_per_million,
+            output_price_per_million=value.output_price_per_million,
             structured_mode=value.structured_mode,
+            fallback_on=value.fallback_on,
         )
         self.repository.save_provider_config(config)
         if config.is_default:
@@ -73,6 +78,7 @@ class SettingsService:
     def update_provider(self, provider_id: UUID, value: ProviderConfigInput) -> ProviderConfigView:
         current = self.get_provider(provider_id)
         current.name = value.name
+        resolve_structured_mode(value.preset, value.structured_mode)
         current.preset = value.preset
         current.base_url = validate_provider_url(value.base_url, self.allow_insecure_local)
         current.model = value.model
@@ -83,7 +89,10 @@ class SettingsService:
         current.fallback_order = value.fallback_order
         current.timeout_seconds = value.timeout_seconds
         current.max_retries = value.max_retries
+        current.input_price_per_million = value.input_price_per_million
+        current.output_price_per_million = value.output_price_per_million
         current.structured_mode = value.structured_mode
+        current.fallback_on = value.fallback_on
         current.updated_at = utcnow().isoformat()
         self.repository.save_provider_config(current)
         if current.is_default:

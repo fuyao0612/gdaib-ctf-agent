@@ -106,19 +106,43 @@ class ToolExecutor:
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
 
-    async def execute(self, name: str, raw_input: dict[str, Any], timeout: float | None = None) -> ToolResult:
+    async def execute(
+        self, name: str, raw_input: dict[str, Any], timeout: float | None = None
+    ) -> ToolResult:
         started = time.perf_counter()
         try:
             tool = self.registry.get(name)
             value = tool.input_model.model_validate(raw_input)
-            output = await asyncio.wait_for(tool.execute(value), timeout=timeout or tool.spec.timeout_seconds)
-            return ToolResult(success=True, summary=f"{name} 执行成功", output=output.model_dump(mode="json"), duration_ms=int((time.perf_counter() - started) * 1000))
+            output = await asyncio.wait_for(
+                tool.execute(value), timeout=timeout or tool.spec.timeout_seconds
+            )
+            return ToolResult(
+                success=True,
+                summary=f"{name} 执行成功",
+                output=output.model_dump(mode="json"),
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
         except ValidationError as exc:
-            return ToolResult(success=False, summary=f"{name} 输入无效", error=ToolError(code="invalid_input", message=str(exc)), duration_ms=int((time.perf_counter() - started) * 1000))
+            return ToolResult(
+                success=False,
+                summary=f"{name} 输入无效",
+                error=ToolError(code="invalid_input", message=str(exc)),
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
         except TimeoutError:
-            return ToolResult(success=False, summary=f"{name} 执行超时", error=ToolError(code="timeout", message="tool timeout", retryable=True), duration_ms=int((time.perf_counter() - started) * 1000))
+            return ToolResult(
+                success=False,
+                summary=f"{name} 执行超时",
+                error=ToolError(code="timeout", message="tool timeout", retryable=True),
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
         except Exception as exc:  # plugin boundary deliberately isolates failures
-            return ToolResult(success=False, summary=f"{name} 执行失败", error=ToolError(code="execution_error", message=str(exc), retryable=True), duration_ms=int((time.perf_counter() - started) * 1000))
+            return ToolResult(
+                success=False,
+                summary=f"{name} 执行失败",
+                error=ToolError(code="execution_error", message=str(exc), retryable=True),
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
 
 
 class FileMetadataInput(BaseModel):
@@ -140,14 +164,34 @@ class FileMetadataTool(ToolPlugin[FileMetadataInput, FileMetadataOutput]):
 
     @property
     def spec(self) -> ToolSpec:
-        return ToolSpec(name="file_metadata", version="1.0.0", description="计算受控附件的哈希、大小与 MIME，不解析内容", capabilities=["file", "metadata"], scenarios=["safe_demo", "forensics"], risk="low", permissions=["artifact:read"], requires_network=False, allowed_target_types=["artifact"], timeout_seconds=5, error_codes=["path_denied", "not_found"], idempotent=True, artifact_types=[], input_schema=self.input_model.model_json_schema(), output_schema=self.output_model.model_json_schema())
+        return ToolSpec(
+            name="file_metadata",
+            version="1.0.0",
+            description="计算受控附件的哈希、大小与 MIME，不解析内容",
+            capabilities=["file", "metadata"],
+            scenarios=["safe_demo", "forensics"],
+            risk="low",
+            permissions=["artifact:read"],
+            requires_network=False,
+            allowed_target_types=["artifact"],
+            timeout_seconds=5,
+            error_codes=["path_denied", "not_found"],
+            idempotent=True,
+            artifact_types=[],
+            input_schema=self.input_model.model_json_schema(),
+            output_schema=self.output_model.model_json_schema(),
+        )
 
     async def execute(self, value: FileMetadataInput) -> FileMetadataOutput:
         candidate = (self.root / value.path).resolve()
         if self.root not in candidate.parents or not candidate.is_file():
             raise ValueError("path denied or missing")
         data = await asyncio.to_thread(candidate.read_bytes)
-        return FileMetadataOutput(sha256=hashlib.sha256(data).hexdigest(), size=len(data), mime_type=mimetypes.guess_type(candidate.name)[0] or "application/octet-stream")
+        return FileMetadataOutput(
+            sha256=hashlib.sha256(data).hexdigest(),
+            size=len(data),
+            mime_type=mimetypes.guess_type(candidate.name)[0] or "application/octet-stream",
+        )
 
 
 class ProbeInput(BaseModel):
@@ -165,12 +209,30 @@ class LocalhostHTTPProbeTool(ToolPlugin[ProbeInput, ProbeOutput]):
 
     @property
     def spec(self) -> ToolSpec:
-        return ToolSpec(name="localhost_http_probe", version="1.0.0", description="仅探测经策略批准的本地 HTTP 服务", capabilities=["http", "metadata"], scenarios=["safe_demo"], risk="medium", permissions=["network:localhost"], requires_network=True, allowed_target_types=["localhost"], timeout_seconds=5, error_codes=["request_failed"], idempotent=True, artifact_types=[], input_schema=self.input_model.model_json_schema(), output_schema=self.output_model.model_json_schema())
+        return ToolSpec(
+            name="localhost_http_probe",
+            version="1.0.0",
+            description="仅探测经策略批准的本地 HTTP 服务",
+            capabilities=["http", "metadata"],
+            scenarios=["safe_demo"],
+            risk="medium",
+            permissions=["network:localhost"],
+            requires_network=True,
+            allowed_target_types=["localhost"],
+            timeout_seconds=5,
+            error_codes=["request_failed"],
+            idempotent=True,
+            artifact_types=[],
+            input_schema=self.input_model.model_json_schema(),
+            output_schema=self.output_model.model_json_schema(),
+        )
 
     async def execute(self, value: ProbeInput) -> ProbeOutput:
         async with httpx.AsyncClient(follow_redirects=False) as client:
             response = await client.get(value.url)
-        return ProbeOutput(status_code=response.status_code, content_type=response.headers.get("content-type", ""))
+        return ProbeOutput(
+            status_code=response.status_code, content_type=response.headers.get("content-type", "")
+        )
 
 
 def create_reference_registry(artifact_root: Path) -> ToolRegistry:

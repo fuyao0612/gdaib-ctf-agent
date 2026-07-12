@@ -1,4 +1,4 @@
-
+import httpx
 import pytest
 
 from tests.fakes import FakeEchoTool, FakeModelProvider
@@ -16,6 +16,7 @@ from yuwang.domain.models import (
     Thread,
     ToolCall,
 )
+from yuwang.model_providers import OpenAICompatibleProvider
 from yuwang.policy import PolicyEngine
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolRegistry, ToolSpec
@@ -96,6 +97,7 @@ def test_budget_guards_and_stop(tmp_path):
         (Budget(max_model_calls=1), {"model_calls": 2}),
         (Budget(max_tool_calls=1), {"tool_calls": 2}),
         (Budget(max_tokens=10), {"tokens": 11}),
+        (Budget(max_model_cost=0.01), {"model_cost": 0.02}),
         (Budget(max_duration_seconds=1), {"elapsed_seconds": 2}),
     ],
 )
@@ -110,6 +112,48 @@ def test_each_budget_dimension_is_enforced(tmp_path, budget, state_update):
     )
     with pytest.raises(BudgetExceeded):
         engine._checkpoint("budget", state)
+
+
+@pytest.mark.asyncio
+async def test_engine_accounts_provider_reported_requests_and_tokens(tmp_path):
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"summary":"plan","steps":["one"],"success_approach":"verify"}'
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 31, "completion_tokens": 7, "total_tokens": 38},
+            },
+        )
+
+    repository = SQLiteRepository(tmp_path / "metering.db")
+    thread = repository.save_thread(Thread(title="metering"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    provider = OpenAICompatibleProvider(
+        name="metered",
+        base_url="https://provider.test/v1",
+        api_key="test-provider-key",
+        model="metered-model",
+        input_price_per_million=2,
+        output_price_per_million=4,
+        structured_mode="json_object",
+        transport=httpx.MockTransport(handler),
+    )
+    engine = AgentEngine(repository, provider, ToolRegistry(), PolicyEngine())
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="meter this call"))
+    result = await engine._model_call(state, AgentPlan, "metering test")
+    assert isinstance(result, AgentPlan)
+    assert state.model_calls == 1 and state.tokens == 38
+    assert state.model_cost == pytest.approx(0.00009)
+    recorded = repository.list_model_calls(run.id)[0]
+    assert (recorded.input_tokens, recorded.output_tokens) == (31, 7)
+    assert recorded.metadata["usage_reported"] is True
+    assert recorded.metadata["cost"] == pytest.approx(0.00009)
 
 
 @pytest.mark.asyncio

@@ -52,6 +52,7 @@ class AgentStateModel(BaseModel):
     tool_calls: int = 0
     tool_failures: int = 0
     tokens: int = 0
+    model_cost: float = Field(default=0, ge=0)
     elapsed_seconds: float = Field(default=0, ge=0)
     plan: AgentPlan | None = None
     action: AgentAction | None = None
@@ -71,6 +72,7 @@ class GraphState(TypedDict, total=False):
     tool_calls: int
     tool_failures: int
     tokens: int
+    model_cost: float
     elapsed_seconds: float
     plan: dict[str, Any] | None
     action: dict[str, Any] | None
@@ -124,11 +126,11 @@ class AgentEngine:
             raise BudgetExceeded("超过工具调用预算")
         if state.tokens > budget.max_tokens:
             raise BudgetExceeded("超过 Token 预算")
+        if state.model_cost > budget.max_model_cost:
+            raise BudgetExceeded("超过模型费用预算")
         if state.elapsed_seconds > budget.max_duration_seconds:
             raise BudgetExceeded("超过总时长预算")
-        self.repository.save_checkpoint(
-            state.run_id, node, state.model_dump(mode="json")
-        )
+        self.repository.save_checkpoint(state.run_id, node, state.model_dump(mode="json"))
 
     def _result(self, node: str, state: AgentStateModel) -> GraphState:
         self._checkpoint(node, state)
@@ -175,6 +177,7 @@ class AgentEngine:
                 "model_calls": budget.max_model_calls - state.model_calls,
                 "tool_calls": budget.max_tool_calls - state.tool_calls,
                 "tokens": budget.max_tokens - state.tokens,
+                "model_cost": budget.max_model_cost - state.model_cost,
             },
         }
         return json.dumps(context, ensure_ascii=False, separators=(",", ":"))
@@ -183,9 +186,7 @@ class AgentEngine:
         self, state: AgentStateModel, output_type: type[BaseModel], purpose: str
     ) -> BaseModel:
         prompt = self._context(state, purpose)
-        state.model_calls += 1
-        input_tokens = max(1, len(prompt) // 4)
-        state.tokens += input_tokens
+        estimated_input_tokens = max(1, len(prompt) // 4)
         started = time.perf_counter()
         try:
             result = await asyncio.wait_for(
@@ -197,33 +198,83 @@ class AgentEngine:
                 timeout=state.task.budget.step_timeout_seconds,
             )
         except Exception as exc:
-            category = exc.category if isinstance(exc, ProviderError) else "timeout" if isinstance(exc, TimeoutError) else "service"
+            category = (
+                exc.category
+                if isinstance(exc, ProviderError)
+                else "timeout"
+                if isinstance(exc, TimeoutError)
+                else "service"
+            )
+            metrics = exc.metrics if isinstance(exc, ProviderError) else None
+            request_count = metrics.request_count if metrics else 1
+            input_tokens = (
+                metrics.input_tokens
+                if metrics and metrics.usage_reported
+                else estimated_input_tokens
+            )
+            state.model_calls += request_count
+            state.tokens += input_tokens
+            state.model_cost += metrics.cost if metrics else 0
             self.repository.save_model_call(
                 ModelCall(
                     run_id=state.run_id,
-                    provider=self.provider.name,
-                    model=str(getattr(self.provider, "model", "provider-chain")),
-                    duration_ms=int((time.perf_counter() - started) * 1000),
+                    provider=metrics.provider if metrics else self.provider.name,
+                    model=metrics.model
+                    if metrics
+                    else str(getattr(self.provider, "model", "provider-chain")),
+                    duration_ms=metrics.duration_ms
+                    if metrics
+                    else int((time.perf_counter() - started) * 1000),
                     input_tokens=input_tokens,
                     output_tokens=0,
                     status=CallStatus.FAILED,
                     error_category=str(category),
-                    metadata={"purpose": purpose},
+                    metadata={
+                        "purpose": purpose,
+                        "request_count": request_count,
+                        "retry_count": metrics.retry_count if metrics else 0,
+                        "usage_reported": metrics.usage_reported if metrics else False,
+                        "cost": metrics.cost if metrics else 0,
+                    },
                 )
             )
             raise
-        output_tokens = max(1, len(result.model_dump_json()) // 4)
-        state.tokens += output_tokens
+        metrics = getattr(self.provider, "last_call_metrics", None)
+        request_count = metrics.request_count if metrics else 1
+        input_tokens = (
+            metrics.input_tokens if metrics and metrics.usage_reported else estimated_input_tokens
+        )
+        output_tokens = (
+            metrics.output_tokens
+            if metrics and metrics.usage_reported
+            else max(1, len(result.model_dump_json()) // 4)
+        )
+        state.model_calls += request_count
+        state.tokens += input_tokens + output_tokens
+        state.model_cost += metrics.cost if metrics else 0
         self.repository.save_model_call(
             ModelCall(
                 run_id=state.run_id,
-                provider=self.provider.name,
-                model=str(getattr(self.provider, "model", "provider-chain")),
-                duration_ms=int((time.perf_counter() - started) * 1000),
+                provider=metrics.provider if metrics else self.provider.name,
+                model=metrics.model
+                if metrics
+                else str(getattr(self.provider, "model", "provider-chain")),
+                duration_ms=metrics.duration_ms
+                if metrics
+                else int((time.perf_counter() - started) * 1000),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 status=CallStatus.SUCCEEDED,
-                metadata={"purpose": purpose},
+                metadata={
+                    "purpose": purpose,
+                    "request_count": request_count,
+                    "retry_count": metrics.retry_count if metrics else 0,
+                    "usage_reported": metrics.usage_reported if metrics else False,
+                    "total_tokens": metrics.total_tokens
+                    if metrics
+                    else input_tokens + output_tokens,
+                    "cost": metrics.cost if metrics else 0,
+                },
             )
         )
         return result
@@ -273,9 +324,7 @@ class AgentEngine:
                 kind="replan",
                 summary="检测到重复动作，强制重新规划",
             )
-            self.events.emit(
-                state.run_id, EventType.WARNING, "检测到重复动作，已阻止再次执行"
-            )
+            self.events.emit(state.run_id, EventType.WARNING, "检测到重复动作，已阻止再次执行")
         if state.no_progress_count >= 3:
             raise AgentDeclaredFailure("连续无进展，已安全终止")
         self.events.emit(
@@ -361,7 +410,9 @@ class AgentEngine:
             summary=result.summary,
             error=result.error.message if result.error else None,
         )
-        if state.observations and self._observation_digest(state.observations[-1]) == self._observation_digest(observation):
+        if state.observations and self._observation_digest(
+            state.observations[-1]
+        ) == self._observation_digest(observation):
             state.no_progress_count += 1
         else:
             state.no_progress_count = 0
@@ -459,12 +510,12 @@ class AgentEngine:
                 "tool_calls": len(self.repository.list_tool_calls(run.id)),
                 "tool_failures": state.tool_failures,
                 "tokens": state.tokens,
+                "model_cost": state.model_cost,
                 "duration_ms": duration_ms,
                 "plan": state.plan.model_dump(mode="json") if state.plan else None,
                 "verification": state.verification_summary,
                 "evidence_records": [
-                    value.model_dump(mode="json")
-                    for value in self.repository.list_evidence(run.id)
+                    value.model_dump(mode="json") for value in self.repository.list_evidence(run.id)
                 ],
             },
         )
@@ -614,9 +665,7 @@ class AgentEngine:
         )
         await self._invoke(run, task, state, self._build_graph(target))
 
-    async def _invoke(
-        self, run: Any, task: TaskSpec, initial: AgentStateModel, graph: Any
-    ) -> None:
+    async def _invoke(self, run: Any, task: TaskSpec, initial: AgentStateModel, graph: Any) -> None:
         try:
             await graph.ainvoke(initial.model_dump(mode="python"))
         except RunStopped as exc:
@@ -628,9 +677,7 @@ class AgentEngine:
             run = self.repository.get_run(run.id) or run
             run.transition(RunStatus.FAILED, str(exc)[:500])
             self.repository.save_run(run)
-            self.events.emit(
-                run.id, EventType.RUN_FAILED, "运行安全终止", {"error": run.error}
-            )
+            self.events.emit(run.id, EventType.RUN_FAILED, "运行安全终止", {"error": run.error})
             events = self.repository.list_events(run.id)
             markdown, data = self.reporter.generate(run, task, events, {})
             self.repository.save_report(run.id, markdown, data)
@@ -641,9 +688,7 @@ class AgentEngine:
         run.transition(RunStatus.FAILED, reason)
         self.repository.save_run(run)
         self.events.emit(run.id, EventType.RUN_FAILED, "恢复已安全终止", {"error": reason})
-        markdown, data = self.reporter.generate(
-            run, task, self.repository.list_events(run.id), {}
-        )
+        markdown, data = self.reporter.generate(run, task, self.repository.list_events(run.id), {})
         self.repository.save_report(run.id, markdown, data)
 
     def _resume_target(self, node: str, state: AgentStateModel) -> str:
@@ -686,7 +731,11 @@ class AgentEngine:
     @staticmethod
     def _observation_digest(observation: Observation) -> str:
         value = json.dumps(
-            {"success": observation.success, "output": observation.output, "error": observation.error},
+            {
+                "success": observation.success,
+                "output": observation.output,
+                "error": observation.error,
+            },
             sort_keys=True,
             ensure_ascii=False,
         )

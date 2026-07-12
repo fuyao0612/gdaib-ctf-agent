@@ -25,6 +25,14 @@ def wait_for_terminal(client, run_id):
 @pytest.fixture
 def provider_server():
     class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            encoded = json.dumps({"data": [{"id": "test-model"}, {"id": "test-model-alt"}]}).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
         def do_POST(self):  # noqa: N802
             length = int(self.headers.get("content-length", "0"))
             body = json.loads(self.rfile.read(length))
@@ -34,11 +42,13 @@ def provider_server():
             else:
                 context = json.loads(prompt)
                 if "生成动态计划" in context["purpose"] or "重新规划" in context["purpose"]:
-                    response_content = json.dumps({
-                        "summary": "协议服务生成的计划",
-                        "steps": ["调用测试工具", "验证候选"],
-                        "success_approach": "使用确定性规则验证工具证据",
-                    })
+                    response_content = json.dumps(
+                        {
+                            "summary": "协议服务生成的计划",
+                            "steps": ["调用测试工具", "验证候选"],
+                            "success_approach": "使用确定性规则验证工具证据",
+                        }
+                    )
                 else:
                     observations = context["observations"]
                     if observations and observations[-1]["success"]:
@@ -46,7 +56,11 @@ def provider_server():
                         action = {
                             "kind": "finish",
                             "summary": "提交带来源候选",
-                            "candidate": {"value": latest["output"]["echoed"], "source_call_id": latest["call_id"], "location": "/echoed"},
+                            "candidate": {
+                                "value": latest["output"]["echoed"],
+                                "source_call_id": latest["call_id"],
+                                "location": "/echoed",
+                            },
                             "tool_input": {},
                         }
                     else:
@@ -58,7 +72,10 @@ def provider_server():
                         }
                     response_content = json.dumps(action)
             encoded = json.dumps(
-                {"choices": [{"message": {"content": response_content}}]}
+                {
+                    "choices": [{"message": {"content": response_content}}],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16},
+                }
             ).encode()
             self.send_response(200)
             self.send_header("content-type", "application/json")
@@ -116,6 +133,13 @@ def create_provider(client: TestClient, base_url: str) -> dict:
         headers={"Authorization": "Bearer test-admin-token"},
     )
     assert tested.status_code == 200, tested.text
+    assert tested.json()["usage_reported"] is True
+    discovered = client.get(
+        f"/api/v1/admin/settings/providers/{body['id']}/models",
+        headers={"Authorization": "Bearer test-admin-token"},
+    )
+    assert discovered.status_code == 200
+    assert discovered.json()["models"] == ["test-model", "test-model-alt"]
     return body
 
 
@@ -125,9 +149,7 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
     with TestClient(app) as client:
         assert client.get("/api/v1/health").json()["version"] == "0.2.0"
         provider = create_provider(client, provider_server)
-        thread = client.post(
-            "/api/v1/threads", json={"title": "集成任务", "mode": "normal"}
-        ).json()
+        thread = client.post("/api/v1/threads", json={"title": "集成任务", "mode": "normal"}).json()
         uploaded = client.post(
             f"/api/v1/threads/{thread['id']}/artifacts",
             files={"upload": ("sample.txt", b"evidence", "text/plain")},
@@ -150,9 +172,7 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         assert wait_for_terminal(client, run_id)["status"] == "completed"
         events = client.get(f"/api/v1/runs/{run_id}/events").json()
         assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
-        resumed = client.get(
-            f"/api/v1/runs/{run_id}/events", params={"after": 2}
-        ).json()
+        resumed = client.get(f"/api/v1/runs/{run_id}/events", params={"after": 2}).json()
         assert resumed[0]["sequence"] == 3
         report = client.get(f"/api/v1/runs/{run_id}/report")
         assert report.status_code == 200

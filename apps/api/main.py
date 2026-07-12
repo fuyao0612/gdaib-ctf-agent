@@ -41,7 +41,7 @@ from yuwang.settings import (
     SecretCipher,
     SettingsService,
 )
-from yuwang.settings.models import PROVIDER_PRESETS
+from yuwang.settings.models import PROVIDER_PRESETS, ProviderPreset, resolve_structured_mode
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import create_reference_registry
 
@@ -49,7 +49,11 @@ from yuwang.tooling import create_reference_registry
 class Settings(BaseModel):
     database_path: Path = Path(os.getenv("YUWANG_DATABASE_PATH", "data/yuwang.db"))
     artifact_root: Path = Path(os.getenv("YUWANG_ARTIFACT_ROOT", "data/artifacts"))
-    cors_origins: list[str] = Field(default_factory=lambda: os.getenv("YUWANG_CORS_ORIGINS", "http://localhost:5173,http://localhost:8080").split(","))
+    cors_origins: list[str] = Field(
+        default_factory=lambda: os.getenv(
+            "YUWANG_CORS_ORIGINS", "http://localhost:5173,http://localhost:8080"
+        ).split(",")
+    )
     max_request_bytes: int = 6 * 1024 * 1024
     admin_token: str = os.getenv("YUWANG_ADMIN_TOKEN", "")
     master_key: str = os.getenv("YUWANG_MASTER_KEY", "")
@@ -116,6 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def build_provider_chain_from_configs(provider_configs: list[ProviderConfig]) -> ProviderChain:
         service = get_settings_service()
+        defaults = service.get_agent_defaults()
         return ProviderChain(
             [
                 OpenAICompatibleProvider(
@@ -124,11 +129,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     api_key=service.cipher.decrypt(value.encrypted_api_key),
                     model=value.model,
                     timeout_seconds=value.timeout_seconds,
-                    max_retries=value.max_retries,
-                    structured_mode=value.structured_mode,
+                    max_retries=min(value.max_retries, defaults.provider_retry_budget),
+                    structured_mode=resolve_structured_mode(value.preset, value.structured_mode),
+                    fallback_on=value.fallback_on,
+                    input_price_per_million=value.input_price_per_million,
+                    output_price_per_million=value.output_price_per_million,
+                    request_overrides=(
+                        {"enable_thinking": False} if value.preset == ProviderPreset.QWEN else {}
+                    ),
                 )
                 for value in provider_configs
-            ]
+            ],
+            retry_budget=defaults.provider_retry_budget,
         )
 
     def resolve_provider_chain(
@@ -163,24 +175,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not task.done():
                 task.cancel()
 
-    application = FastAPI(title="御网智元 API", version=__version__, lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/v1/openapi.json")
+    application = FastAPI(
+        title="御网智元 API",
+        version=__version__,
+        lifespan=lifespan,
+        docs_url="/api/docs",
+        openapi_url="/api/v1/openapi.json",
+    )
     application.state.repository = repository
     application.state.settings = config
     application.state.registry = registry
     application.state.tasks = tasks
-    application.add_middleware(CORSMiddleware, allow_origins=config.cors_origins, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type", "Last-Event-ID"], allow_credentials=False)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.cors_origins,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
+        allow_credentials=False,
+    )
 
     @application.middleware("http")
     async def request_size_limit(request: Request, call_next: Any) -> Any:
         length = request.headers.get("content-length")
         if length and int(length) > config.max_request_bytes:
-            return JSONResponse(status_code=413, content={"error": {"code": "request_too_large", "message": "请求体超过限制"}})
+            return JSONResponse(
+                status_code=413,
+                content={"error": {"code": "request_too_large", "message": "请求体超过限制"}},
+            )
         return await call_next(request)
 
     @application.exception_handler(HTTPException)
     async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
         detail = exc.detail if isinstance(exc.detail, str) else "请求失败"
-        return JSONResponse(status_code=exc.status_code, content={"error": {"code": f"http_{exc.status_code}", "message": detail}})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": f"http_{exc.status_code}", "message": detail}},
+        )
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
@@ -208,7 +238,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(409, "请先发送任务消息")
         latest = user_messages[-1]
         defaults = get_settings_service().get_agent_defaults()
-        return TaskSpec(body=latest.content, mode=thread.mode, artifact_ids=latest.artifact_ids, authorized_targets=create.authorized_targets, success_conditions=create.success_conditions, verification_rules=create.verification_rules, budget=defaults.budget)
+        return TaskSpec(
+            body=latest.content,
+            mode=thread.mode,
+            artifact_ids=latest.artifact_ids,
+            authorized_targets=create.authorized_targets,
+            success_conditions=create.success_conditions,
+            verification_rules=create.verification_rules,
+            budget=defaults.budget,
+        )
 
     async def execute(run: Run, task: TaskSpec, provider: ProviderChain) -> None:
         engine = AgentEngine(repository, provider, registry, policy)
@@ -229,7 +267,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/api/v1/threads/{thread_id}")
     async def get_thread(thread_id: UUID) -> dict[str, Any]:
         thread = require_thread(thread_id)
-        return {**thread.model_dump(mode="json"), "messages": [item.model_dump(mode="json") for item in repository.list_messages(thread.id)], "runs": [item.model_dump(mode="json") for item in repository.list_runs(thread.id)], "artifacts": [item.model_dump(mode="json") for item in repository.list_artifacts(thread.id)]}
+        return {
+            **thread.model_dump(mode="json"),
+            "messages": [
+                item.model_dump(mode="json") for item in repository.list_messages(thread.id)
+            ],
+            "runs": [item.model_dump(mode="json") for item in repository.list_runs(thread.id)],
+            "artifacts": [
+                item.model_dump(mode="json") for item in repository.list_artifacts(thread.id)
+            ],
+        }
 
     @application.patch("/api/v1/threads/{thread_id}/archive", response_model=Thread)
     async def archive_thread(thread_id: UUID) -> Thread:
@@ -238,25 +285,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         thread.updated_at = utcnow()
         return repository.save_thread(thread)
 
-    @application.post("/api/v1/threads/{thread_id}/messages", response_model=Message, status_code=201)
+    @application.post(
+        "/api/v1/threads/{thread_id}/messages", response_model=Message, status_code=201
+    )
     async def send_message(thread_id: UUID, body: MessageCreate) -> Message:
         thread = require_thread(thread_id)
-        active = [run for run in repository.list_runs(thread_id) if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}]
+        active = [
+            run
+            for run in repository.list_runs(thread_id)
+            if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}
+        ]
         if thread.mode == ThreadMode.COMPETITION and active:
             raise HTTPException(409, "competition 模式运行中禁止补充提示")
         for artifact_id in body.artifact_ids:
             artifact = repository.get_artifact(artifact_id)
             if not artifact or artifact.thread_id != thread_id:
                 raise HTTPException(400, "附件引用无效")
-        return repository.save_message(Message(thread_id=thread_id, role=MessageRole.USER, content=body.content, artifact_ids=body.artifact_ids))
+        return repository.save_message(
+            Message(
+                thread_id=thread_id,
+                role=MessageRole.USER,
+                content=body.content,
+                artifact_ids=body.artifact_ids,
+            )
+        )
 
-    @application.post("/api/v1/threads/{thread_id}/artifacts", response_model=Artifact, status_code=201)
+    @application.post(
+        "/api/v1/threads/{thread_id}/artifacts", response_model=Artifact, status_code=201
+    )
     async def upload_artifact(thread_id: UUID, upload: Annotated[UploadFile, File()]) -> Artifact:
         require_thread(thread_id)
         content = await upload.read(config.max_request_bytes + 1)
         filename = Path(upload.filename or "").name
         try:
-            policy.validate_upload(filename, len(content), len(repository.list_artifacts(thread_id)))
+            policy.validate_upload(
+                filename, len(content), len(repository.list_artifacts(thread_id))
+            )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         artifact_id = uuid4()
@@ -264,7 +328,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         destination = config.artifact_root / storage_ref
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
-        artifact = Artifact(id=artifact_id, thread_id=thread_id, filename=filename, kind="upload", sha256=hashlib.sha256(content).hexdigest(), size=len(content), mime_type=upload.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream", storage_ref=storage_ref)
+        artifact = Artifact(
+            id=artifact_id,
+            thread_id=thread_id,
+            filename=filename,
+            kind="upload",
+            sha256=hashlib.sha256(content).hexdigest(),
+            size=len(content),
+            mime_type=upload.content_type
+            or mimetypes.guess_type(filename)[0]
+            or "application/octet-stream",
+            storage_ref=storage_ref,
+        )
         return repository.save_artifact(artifact)
 
     @application.get("/api/v1/threads/{thread_id}/artifacts", response_model=list[Artifact])
@@ -379,7 +454,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @application.get("/api/v1/runs/{run_id}/events/stream")
-    async def stream_events(run_id: UUID, request: Request, last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None, after: int = Query(0, ge=0)) -> StreamingResponse:
+    async def stream_events(
+        run_id: UUID,
+        request: Request,
+        last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+        after: int = Query(0, ge=0),
+    ) -> StreamingResponse:
         require_run(run_id)
         cursor = max(after, int(last_event_id or 0))
 
@@ -397,7 +477,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # every version without registering a hard-coded listener list.
                     yield f"id: {event.sequence}\ndata: {event.model_dump_json()}\n\n"
                 run = repository.get_run(run_id)
-                if run and run.status not in {RunStatus.QUEUED, RunStatus.RUNNING} and not repository.list_events(run_id, cursor):
+                if (
+                    run
+                    and run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}
+                    and not repository.list_events(run_id, cursor)
+                ):
                     return
                 if not events:
                     idle += 1
@@ -406,7 +490,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     await asyncio.sleep(0.1)
                 else:
                     idle = 0
-        return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @application.get("/api/v1/runs/{run_id}/report")
     async def report_preview(run_id: UUID) -> dict[str, Any]:
@@ -421,14 +510,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         report = repository.get_report(run_id)
         if not report:
             raise HTTPException(404, "报告尚未生成")
-        return PlainTextResponse(report[0], media_type="text/markdown", headers={"Content-Disposition": f'attachment; filename="report-{run_id}.md"'})
+        return PlainTextResponse(
+            report[0],
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="report-{run_id}.md"'},
+        )
 
     @application.get("/api/v1/runs/{run_id}/report.json")
     async def report_json(run_id: UUID) -> JSONResponse:
         report = repository.get_report(run_id)
         if not report:
             raise HTTPException(404, "报告尚未生成")
-        return JSONResponse(report[1], headers={"Content-Disposition": f'attachment; filename="report-{run_id}.json"'})
+        return JSONResponse(
+            report[1],
+            headers={"Content-Disposition": f'attachment; filename="report-{run_id}.json"'},
+        )
 
     @application.get("/api/v1/providers")
     async def providers() -> list[ProviderConfigView]:
@@ -437,7 +533,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return get_settings_service().list_providers(enabled_only=True)
 
     @application.get("/api/v1/provider-presets")
-    async def provider_presets() -> dict[str, dict[str, str]]:
+    async def provider_presets() -> dict[str, dict[str, Any]]:
         return {key.value: value for key, value in PROVIDER_PRESETS.items()}
 
     @application.get(
@@ -492,7 +588,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "/api/v1/admin/settings/providers/{provider_id}/test",
         dependencies=[Depends(require_admin)],
     )
-    async def admin_test_provider(provider_id: UUID) -> dict[str, str]:
+    async def admin_test_provider(provider_id: UUID) -> dict[str, Any]:
         service = get_settings_service()
         try:
             value = service.get_provider(provider_id)
@@ -503,14 +599,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 model=value.model,
                 timeout_seconds=value.timeout_seconds,
                 max_retries=value.max_retries,
-                structured_mode=value.structured_mode,
+                structured_mode=resolve_structured_mode(value.preset, value.structured_mode),
+                fallback_on=value.fallback_on,
+                input_price_per_million=value.input_price_per_million,
+                output_price_per_million=value.output_price_per_million,
+                request_overrides=(
+                    {"enable_thinking": False} if value.preset == ProviderPreset.QWEN else {}
+                ),
             )
-            await provider.test_connection()
+            metrics = await provider.test_connection()
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         except ProviderError as exc:
-            raise HTTPException(502, f"连接测试失败：{exc.category}") from exc
-        return {"status": "ok"}
+            raise HTTPException(502, f"连接测试失败：{exc}") from exc
+        return {
+            "status": "ok",
+            "provider": metrics.provider,
+            "model": metrics.model,
+            "structured_mode": provider.structured_mode,
+            "latency_ms": metrics.duration_ms,
+            "usage_reported": metrics.usage_reported,
+        }
+
+    @application.get(
+        "/api/v1/admin/settings/providers/{provider_id}/models",
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_discover_provider_models(provider_id: UUID) -> dict[str, Any]:
+        service = get_settings_service()
+        try:
+            value = service.get_provider(provider_id)
+            provider = OpenAICompatibleProvider(
+                name=value.name,
+                base_url=value.base_url,
+                api_key=service.decrypt_api_key(value.id),
+                model=value.model,
+                timeout_seconds=value.timeout_seconds,
+                max_retries=0,
+                structured_mode=resolve_structured_mode(value.preset, value.structured_mode),
+            )
+            models = await provider.discover_models()
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ProviderError as exc:
+            raise HTTPException(502, f"模型发现失败：{exc}") from exc
+        return {"models": models, "manual_model_supported": True}
 
     @application.get(
         "/api/v1/admin/settings/agent",

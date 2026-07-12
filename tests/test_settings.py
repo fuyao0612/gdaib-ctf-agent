@@ -8,7 +8,11 @@ from yuwang.settings import (
     SecretCipher,
     SettingsService,
 )
-from yuwang.settings.models import PROVIDER_PRESETS, validate_provider_url
+from yuwang.settings.models import (
+    PROVIDER_PRESETS,
+    resolve_structured_mode,
+    validate_provider_url,
+)
 from yuwang.storage import SQLiteRepository
 
 
@@ -121,3 +125,9 @@ def test_provider_snapshot_is_encrypted_and_immutable(tmp_path):
     changed = stored.model_copy(update={"model": "changed-model"})
     with pytest.raises(ValueError, match="不可变"):
         repository.save_provider_snapshot(run_id, [changed])
+
+
+def test_provider_capability_negotiation_preserves_v02_rows():
+    assert resolve_structured_mode(ProviderPreset.DEEPSEEK, "auto") == "json_object"
+    assert resolve_structured_mode(ProviderPreset.DEEPSEEK, "json_schema") == "json_object"
+    assert resolve_structured_mode(ProviderPreset.CUSTOM, "json_schema") == "json_schema"

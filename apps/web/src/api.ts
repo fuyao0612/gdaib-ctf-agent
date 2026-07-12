@@ -32,6 +32,7 @@ export const api = {
   updateProvider: (token: string, id: string, value: ProviderConfigInput) => request<ProviderConfig>(`/admin/settings/providers/${id}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(value) }),
   deleteProvider: (token: string, id: string) => request<void>(`/admin/settings/providers/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }),
   testProvider: (token: string, id: string) => request<{ status: string }>(`/admin/settings/providers/${id}/test`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }),
+  discoverProviderModels: (token: string, id: string) => request<{ models: string[]; manual_model_supported: boolean }>(`/admin/settings/providers/${id}/models`, { headers: { Authorization: `Bearer ${token}` } }),
   agentDefaults: (token: string) => request<AgentDefaults>('/admin/settings/agent', { headers: { Authorization: `Bearer ${token}` } }),
   saveAgentDefaults: (token: string, value: AgentDefaults) => request<AgentDefaults>('/admin/settings/agent', { method: 'PUT', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(value) }),
 }

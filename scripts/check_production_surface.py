@@ -19,5 +19,7 @@ for target in TARGETS:
         if pattern.search(path.read_text(encoding="utf-8")):
             violations.append(str(path.relative_to(ROOT)))
 if violations:
-    raise SystemExit("Production surface contains forbidden test-double references: " + ", ".join(violations))
+    raise SystemExit(
+        "Production surface contains forbidden test-double references: " + ", ".join(violations)
+    )
 print("Production source surface is clean.")

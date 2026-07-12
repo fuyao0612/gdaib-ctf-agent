@@ -60,6 +60,7 @@ class Budget(BaseModel):
     max_model_calls: int = Field(8, ge=1, le=50)
     max_tool_calls: int = Field(8, ge=1, le=50)
     max_tokens: int = Field(8000, ge=1, le=200_000)
+    max_model_cost: float = Field(10.0, ge=0, le=100_000)
     max_duration_seconds: float = Field(120, gt=0, le=3600)
     step_timeout_seconds: float = Field(15, gt=0, le=300)
 

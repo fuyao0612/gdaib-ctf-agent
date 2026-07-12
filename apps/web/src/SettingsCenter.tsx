@@ -1,13 +1,15 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { api } from './api'
-import type { AgentDefaults, ProviderConfig, ProviderConfigInput, ProviderPreset } from './types'
+import type { AgentDefaults, FallbackCategory, ProviderConfig, ProviderConfigInput, ProviderPreset, StructuredMode } from './types'
 
 interface Props { onClose: () => void; onChanged: () => Promise<void> }
 
 const emptyProvider: ProviderConfigInput = {
   name: '', preset: 'deepseek', base_url: 'https://api.deepseek.com', model: 'deepseek-v4-flash',
   api_key: '', enabled: true, is_default: false, fallback_order: null,
-  timeout_seconds: 60, max_retries: 2, structured_mode: 'json_schema',
+  timeout_seconds: 60, max_retries: 2, structured_mode: 'auto',
+  input_price_per_million: 0, output_price_per_million: 0,
+  fallback_on: ['rate_limit', 'timeout', 'service'],
 }
 
 export default function SettingsCenter({ onClose, onChanged }: Props) {
@@ -36,7 +38,11 @@ export default function SettingsCenter({ onClose, onChanged }: Props) {
 
   function selectPreset(preset: ProviderPreset) {
     const value = presets[preset]
-    setForm(current => ({ ...current, preset, ...(value ?? {}) }))
+    setForm(current => ({
+      ...current,
+      preset,
+      ...(value ? { base_url: value.base_url, model: value.model } : {}),
+    }))
   }
 
   function edit(value: ProviderConfig) {
@@ -46,6 +52,9 @@ export default function SettingsCenter({ onClose, onChanged }: Props) {
       api_key: '', enabled: value.enabled, is_default: value.is_default,
       fallback_order: value.fallback_order, timeout_seconds: value.timeout_seconds,
       max_retries: value.max_retries, structured_mode: value.structured_mode,
+      input_price_per_million: value.input_price_per_million,
+      output_price_per_million: value.output_price_per_million,
+      fallback_on: value.fallback_on,
     })
     setNotice('编辑时留空 API Key 将保留现有密钥。')
   }
@@ -101,14 +110,17 @@ export default function SettingsCenter({ onClose, onChanged }: Props) {
               <label>API Key<input type="password" autoComplete="new-password" value={form.api_key ?? ''} placeholder={editingId ? '留空以保留现有密钥' : '输入 Provider API Key'} onChange={event => setForm({ ...form, api_key: event.target.value })} required={!editingId} /></label>
               <label>超时（秒）<input type="number" min="1" max="600" value={form.timeout_seconds} onChange={event => setForm({ ...form, timeout_seconds: Number(event.target.value) })} /></label>
               <label>重试次数<input type="number" min="0" max="8" value={form.max_retries} onChange={event => setForm({ ...form, max_retries: Number(event.target.value) })} /></label>
+              <label>输入价格/百万 Token<input type="number" min="0" step="0.0001" value={form.input_price_per_million} onChange={event => setForm({ ...form, input_price_per_million: Number(event.target.value) })} /></label>
+              <label>输出价格/百万 Token<input type="number" min="0" step="0.0001" value={form.output_price_per_million} onChange={event => setForm({ ...form, output_price_per_million: Number(event.target.value) })} /></label>
               <label>备用顺序<input type="number" min="0" max="100" value={form.fallback_order ?? ''} onChange={event => setForm({ ...form, fallback_order: event.target.value === '' ? null : Number(event.target.value) })} /></label>
-              <label>结构化模式<select value={form.structured_mode} onChange={event => setForm({ ...form, structured_mode: event.target.value as 'json_schema' | 'json_object' })}><option value="json_schema">JSON Schema</option><option value="json_object">JSON Object</option></select></label></div>
+              <label>结构化模式<select value={form.structured_mode} onChange={event => setForm({ ...form, structured_mode: event.target.value as StructuredMode })}><option value="auto">自动协商（推荐）</option><option value="json_schema">JSON Schema</option><option value="json_object">JSON Object</option><option value="prompt_json">提示词兼容模式</option></select></label></div>
+            <fieldset className="check-row"><legend>允许触发备用模型的错误</legend>{(['rate_limit','timeout','service','invalid_output'] as FallbackCategory[]).map(category => <label key={category}><input type="checkbox" checked={form.fallback_on.includes(category)} onChange={event => setForm({ ...form, fallback_on: event.target.checked ? [...form.fallback_on, category] : form.fallback_on.filter(value => value !== category) })} />{category}</label>)}</fieldset>
             <div className="check-row"><label><input type="checkbox" checked={form.enabled} onChange={event => setForm({ ...form, enabled: event.target.checked })} />启用</label><label><input type="checkbox" checked={form.is_default} onChange={event => setForm({ ...form, is_default: event.target.checked })} />设为默认</label></div>
             <button className="primary" disabled={busy}>{editingId ? '保存修改' : '创建 Provider'}</button>
           </form>
         </section>
         {agent && <section><div className="settings-title"><h3>Agent 默认预算</h3></div><form className="settings-form" onSubmit={saveAgent}><div className="form-grid">
-          {([['最大步骤','max_steps'],['模型调用','max_model_calls'],['工具调用','max_tool_calls'],['最大 Token','max_tokens'],['总时长（秒）','max_duration_seconds'],['单步超时（秒）','step_timeout_seconds']] as const).map(([label,key]) => <label key={key}>{label}<input type="number" value={agent.budget[key]} onChange={event => setAgent({ ...agent, budget: { ...agent.budget, [key]: Number(event.target.value) } })} /></label>)}
+          {([['最大步骤','max_steps'],['模型调用','max_model_calls'],['工具调用','max_tool_calls'],['最大 Token','max_tokens'],['最大模型费用','max_model_cost'],['总时长（秒）','max_duration_seconds'],['单步超时（秒）','step_timeout_seconds']] as const).map(([label,key]) => <label key={key}>{label}<input type="number" value={agent.budget[key]} onChange={event => setAgent({ ...agent, budget: { ...agent.budget, [key]: Number(event.target.value) } })} /></label>)}
           <label>Provider 重试预算<input type="number" value={agent.provider_retry_budget} onChange={event => setAgent({ ...agent, provider_retry_budget: Number(event.target.value) })} /></label>
           <label>上下文 Token 预算<input type="number" value={agent.context_token_budget} onChange={event => setAgent({ ...agent, context_token_budget: Number(event.target.value) })} /></label>
           <label>观察字符预算<input type="number" value={agent.observation_char_budget} onChange={event => setAgent({ ...agent, observation_char_budget: Number(event.target.value) })} /></label>
