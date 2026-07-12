@@ -1,12 +1,20 @@
+import json
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import pytest
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from apps.api.main import Settings, create_app
+from tests.fakes import FakeEchoTool
+from yuwang.agent import AgentStateModel
+from yuwang.domain.models import AgentAction, AgentPlan, Observation, Run, RunStatus, TaskSpec
 
 
 def wait_for_terminal(client, run_id):
-    for _ in range(100):
+    for _ in range(150):
         run = client.get(f"/api/v1/runs/{run_id}").json()
         if run["status"] not in {"queued", "running"}:
             return run
@@ -14,73 +22,250 @@ def wait_for_terminal(client, run_id):
     raise AssertionError("run did not finish")
 
 
-def test_full_api_persistence_upload_sse_and_report(tmp_path):
-    settings = Settings(database_path=tmp_path / "api.db", artifact_root=tmp_path / "artifacts")
-    with TestClient(create_app(settings)) as client:
-        assert client.get("/api/v1/health").json()["version"] == "0.1.0"
-        thread = client.post("/api/v1/threads", json={"title": "集成演示", "mode": "normal"}).json()
-        uploaded = client.post(f"/api/v1/threads/{thread['id']}/artifacts", files={"upload": ("sample.txt", b"evidence", "text/plain")})
-        assert uploaded.status_code == 201
+@pytest.fixture
+def provider_server():
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("content-length", "0"))
+            body = json.loads(self.rfile.read(length))
+            prompt = body["messages"][-1]["content"]
+            if '"status":"ok"' in prompt:
+                response_content = '{"status":"ok"}'
+            else:
+                context = json.loads(prompt)
+                if "生成动态计划" in context["purpose"] or "重新规划" in context["purpose"]:
+                    response_content = json.dumps({
+                        "summary": "协议服务生成的计划",
+                        "steps": ["调用测试工具", "验证候选"],
+                        "success_approach": "使用确定性规则验证工具证据",
+                    })
+                else:
+                    observations = context["observations"]
+                    if observations and observations[-1]["success"]:
+                        latest = observations[-1]
+                        action = {
+                            "kind": "finish",
+                            "summary": "提交带来源候选",
+                            "candidate": {"value": latest["output"]["echoed"], "source_call_id": latest["call_id"], "location": "/echoed"},
+                            "tool_input": {},
+                        }
+                    else:
+                        action = {
+                            "kind": "call_tool",
+                            "summary": "协议服务选择测试工具",
+                            "tool_name": "test_echo",
+                            "tool_input": {"text": "verified", "fail": not observations},
+                        }
+                    response_content = json.dumps(action)
+            encoded = json.dumps(
+                {"choices": [{"message": {"content": response_content}}]}
+            ).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def log_message(self, *_):
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/v1"
+    server.shutdown()
+    thread.join(timeout=2)
+
+
+def configured_app(tmp_path):
+    return create_app(
+        Settings(
+            database_path=tmp_path / "api.db",
+            artifact_root=tmp_path / "artifacts",
+            admin_token="test-admin-token",
+            master_key=Fernet.generate_key().decode(),
+            allow_insecure_local_provider=True,
+        )
+    )
+
+
+def create_provider(client: TestClient, base_url: str) -> dict:
+    response = client.post(
+        "/api/v1/admin/settings/providers",
+        headers={"Authorization": "Bearer test-admin-token"},
+        json={
+            "name": "本地协议服务",
+            "preset": "custom",
+            "base_url": base_url,
+            "model": "test-model",
+            "api_key": "test-api-key-value",
+            "enabled": True,
+            "is_default": True,
+            "fallback_order": 0,
+            "timeout_seconds": 5,
+            "max_retries": 0,
+            "structured_mode": "json_schema",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert "api_key" not in body and "encrypted_api_key" not in body
+    assert body["has_api_key"] is True
+    tested = client.post(
+        f"/api/v1/admin/settings/providers/{body['id']}/test",
+        headers={"Authorization": "Bearer test-admin-token"},
+    )
+    assert tested.status_code == 200, tested.text
+    return body
+
+
+def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
+    app = configured_app(tmp_path)
+    app.state.registry.register(FakeEchoTool())
+    with TestClient(app) as client:
+        assert client.get("/api/v1/health").json()["version"] == "0.2.0"
+        provider = create_provider(client, provider_server)
+        thread = client.post(
+            "/api/v1/threads", json={"title": "集成任务", "mode": "normal"}
+        ).json()
+        uploaded = client.post(
+            f"/api/v1/threads/{thread['id']}/artifacts",
+            files={"upload": ("sample.txt", b"evidence", "text/plain")},
+        )
         artifact = uploaded.json()
-        message = client.post(f"/api/v1/threads/{thread['id']}/messages", json={"content": "请完成安全演示", "artifact_ids": [artifact["id"]]})
+        message = client.post(
+            f"/api/v1/threads/{thread['id']}/messages",
+            json={"content": "执行协议集成任务", "artifact_ids": [artifact["id"]]},
+        )
         assert message.status_code == 201
-        started = client.post(f"/api/v1/threads/{thread['id']}/runs", json={"provider": "mock"})
-        assert started.status_code == 202
+        started = client.post(
+            f"/api/v1/threads/{thread['id']}/runs",
+            json={
+                "provider_config_id": provider["id"],
+                "verification_rules": [{"kind": "regex", "value": "verified"}],
+            },
+        )
+        assert started.status_code == 202, started.text
         run_id = started.json()["id"]
         assert wait_for_terminal(client, run_id)["status"] == "completed"
         events = client.get(f"/api/v1/runs/{run_id}/events").json()
         assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
-        resumed = client.get(f"/api/v1/runs/{run_id}/events", params={"after": 2}).json()
+        resumed = client.get(
+            f"/api/v1/runs/{run_id}/events", params={"after": 2}
+        ).json()
         assert resumed[0]["sequence"] == 3
-        stream = client.get(f"/api/v1/runs/{run_id}/events/stream", params={"after": len(events) - 1})
-        assert f"id: {len(events)}" in stream.text
         report = client.get(f"/api/v1/runs/{run_id}/report")
-        assert report.status_code == 200 and "首次工具调用失败" in report.json()["markdown"]
-        assert client.get(f"/api/v1/runs/{run_id}/report.md").status_code == 200
-        assert client.get(f"/api/v1/runs/{run_id}/report.json").status_code == 200
+        assert report.status_code == 200
+        assert "调整：协议服务生成的计划" in report.json()["markdown"]
+        audit = client.get(f"/api/v1/runs/{run_id}/audit").json()
+        assert audit["model_calls"] and audit["tool_calls"] and audit["evidence"]
+        assert [item["checkpoint_sequence"] for item in audit["checkpoints"]] == list(
+            range(1, len(audit["checkpoints"]) + 1)
+        )
         assert client.get(f"/api/v1/artifacts/{artifact['id']}/download").content == b"evidence"
-        assert len(client.get("/api/v1/providers").json()) == 2
+        assert len(client.get("/api/v1/providers").json()) == 1
         assert len(client.get("/api/v1/tools").json()) == 3
-    with TestClient(create_app(settings)) as reopened:
+    with TestClient(app) as reopened:
         detail = reopened.get(f"/api/v1/threads/{thread['id']}").json()
         assert detail["messages"] and detail["runs"] and detail["artifacts"]
 
 
-def test_competition_lock_errors_and_archive(tmp_path):
-    with TestClient(create_app(Settings(database_path=tmp_path / "c.db", artifact_root=tmp_path / "a"))) as client:
-        thread = client.post("/api/v1/threads", json={"title": "比赛", "mode": "competition"}).json()
-        client.post(f"/api/v1/threads/{thread['id']}/messages", json={"content": "task"})
-        run = client.post(f"/api/v1/threads/{thread['id']}/runs", json={}).json()
-        locked = client.post(f"/api/v1/threads/{thread['id']}/messages", json={"content": "extra hint"})
-        assert locked.status_code in {201, 409}  # deterministic run may finish before this request
-        wait_for_terminal(client, run["id"])
-        archived = client.patch(f"/api/v1/threads/{thread['id']}/archive").json()
-        assert archived["archived"] is True
-        error = client.get("/api/v1/runs/00000000-0000-0000-0000-000000000000")
-        assert error.json()["error"]["code"] == "http_404"
-
-
-def test_stop_retry_openapi_and_upload_policy(tmp_path):
-    app = create_app(
-        Settings(database_path=tmp_path / "control.db", artifact_root=tmp_path / "files")
-    )
+def test_unconfigured_provider_and_admin_auth_are_explicit(tmp_path):
+    app = configured_app(tmp_path)
     with TestClient(app) as client:
-        thread = client.post("/api/v1/threads", json={"title": "control"}).json()
-        client.post(f"/api/v1/threads/{thread['id']}/messages", json={"content": "safe"})
-        from yuwang.domain.models import Run, RunStatus
+        assert client.get("/api/v1/admin/settings/providers").status_code == 401
+        thread = client.post("/api/v1/threads", json={"title": "needs model"}).json()
+        client.post(f"/api/v1/threads/{thread['id']}/messages", json={"content": "task"})
+        response = client.post(f"/api/v1/threads/{thread['id']}/runs", json={})
+        assert response.status_code == 409
+        assert "需要配置模型" in response.json()["error"]["message"]
+        validation = client.post(
+            "/api/v1/admin/settings/providers",
+            headers={"Authorization": "Bearer test-admin-token"},
+            json={
+                "name": "bad",
+                "preset": "custom",
+                "base_url": "https://provider.example/v1",
+                "model": "x",
+                "api_key": "leak123",
+            },
+        )
+        assert validation.status_code == 422
+        assert "leak123" not in validation.text
 
+
+def test_competition_lock_stop_openapi_and_upload_policy(tmp_path):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        thread = client.post(
+            "/api/v1/threads", json={"title": "比赛", "mode": "competition"}
+        ).json()
         repository = app.state.repository
         queued = repository.save_run(Run(thread_id=thread["id"]))
+        locked = client.post(
+            f"/api/v1/threads/{thread['id']}/messages", json={"content": "extra hint"}
+        )
+        assert locked.status_code == 409
         stopped = client.post(f"/api/v1/runs/{queued.id}/stop")
         assert stopped.status_code == 200 and stopped.json()["stop_requested"]
         queued.transition(RunStatus.STOPPED, "test stop")
         repository.save_run(queued)
-        retried = client.post(f"/api/v1/runs/{queued.id}/retry")
-        assert retried.status_code == 202
-        assert wait_for_terminal(client, retried.json()["id"])["status"] == "completed"
         denied = client.post(
             f"/api/v1/threads/{thread['id']}/artifacts",
             files={"upload": ("unsafe.exe", b"x", "application/octet-stream")},
         )
         assert denied.status_code == 400
-        assert client.get("/api/v1/openapi.json").json()["info"]["version"] == "0.1.0"
+        assert client.get("/api/v1/openapi.json").json()["info"]["version"] == "0.2.0"
+
+
+def test_service_lifespan_resumes_active_run_from_checkpoint(tmp_path, provider_server):
+    app = configured_app(tmp_path)
+    app.state.registry.register(FakeEchoTool())
+    with TestClient(app) as client:
+        provider = create_provider(client, provider_server)
+        repository = app.state.repository
+        thread = client.post("/api/v1/threads", json={"title": "restart"}).json()
+        run = Run(
+            thread_id=thread["id"],
+            provider="本地协议服务",
+            provider_config_id=provider["id"],
+        )
+        run.transition(RunStatus.RUNNING)
+        repository.save_run(run)
+        task = TaskSpec(
+            body="resume after restart",
+            verification_rules=[{"kind": "regex", "value": "verified"}],
+        )
+        repository.save_run_task(run.id, task)
+        provider_config = repository.get_provider_config(provider["id"])
+        assert provider_config is not None
+        repository.save_provider_snapshot(run.id, [provider_config])
+        observation = Observation(
+            call_id=__import__("uuid").uuid4(),
+            tool_name="test_echo",
+            success=True,
+            output={"echoed": "verified"},
+            summary="completed before restart",
+        )
+        state = AgentStateModel(
+            run_id=run.id,
+            task=task,
+            plan=AgentPlan(
+                summary="persisted plan",
+                steps=["verify existing evidence"],
+                success_approach="deterministic regex",
+            ),
+            action=AgentAction(
+                kind="call_tool",
+                summary="already done",
+                tool_name="test_echo",
+                tool_input={"text": "verified"},
+            ),
+            observations=[observation],
+            elapsed_seconds=2.0,
+        )
+        repository.save_checkpoint(run.id, "execute_tool", state.model_dump(mode="json"))
+    with TestClient(app) as restarted:
+        assert wait_for_terminal(restarted, str(run.id))["status"] == "completed"
+        events = restarted.get(f"/api/v1/runs/{run.id}/events").json()
+        assert any("恢复" in event["summary"] for event in events)

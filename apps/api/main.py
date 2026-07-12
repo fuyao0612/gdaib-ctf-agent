@@ -4,13 +4,15 @@ import asyncio
 import hashlib
 import mimetypes
 import os
-from collections.abc import AsyncIterator
+import secrets
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import Body, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -26,10 +28,20 @@ from yuwang.domain.models import (
     TaskSpec,
     Thread,
     ThreadMode,
+    VerificationRule,
     utcnow,
 )
-from yuwang.model_providers import MockModelProvider, OpenAICompatibleProvider
+from yuwang.model_providers import OpenAICompatibleProvider, ProviderChain, ProviderError
 from yuwang.policy import PolicyEngine, SecurityConfig
+from yuwang.settings import (
+    AgentDefaults,
+    ProviderConfig,
+    ProviderConfigInput,
+    ProviderConfigView,
+    SecretCipher,
+    SettingsService,
+)
+from yuwang.settings.models import PROVIDER_PRESETS
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import create_reference_registry
 
@@ -39,6 +51,11 @@ class Settings(BaseModel):
     artifact_root: Path = Path(os.getenv("YUWANG_ARTIFACT_ROOT", "data/artifacts"))
     cors_origins: list[str] = Field(default_factory=lambda: os.getenv("YUWANG_CORS_ORIGINS", "http://localhost:5173,http://localhost:8080").split(","))
     max_request_bytes: int = 6 * 1024 * 1024
+    admin_token: str = os.getenv("YUWANG_ADMIN_TOKEN", "")
+    master_key: str = os.getenv("YUWANG_MASTER_KEY", "")
+    allow_insecure_local_provider: bool = (
+        os.getenv("YUWANG_ALLOW_INSECURE_LOCAL_PROVIDER", "false").lower() == "true"
+    )
 
 
 class ThreadCreate(BaseModel):
@@ -52,9 +69,10 @@ class MessageCreate(BaseModel):
 
 
 class RunCreate(BaseModel):
-    provider: str = "mock"
+    provider_config_id: UUID | None = None
     authorized_targets: list[str] = Field(default_factory=list)
     success_conditions: list[str] = Field(default_factory=lambda: ["reference_tool_succeeded"])
+    verification_rules: list[VerificationRule] = Field(default_factory=list)
 
 
 class ErrorBody(BaseModel):
@@ -70,15 +88,76 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     registry = create_reference_registry(config.artifact_root)
     tasks: dict[UUID, asyncio.Task[None]] = {}
 
+    def cleanup_callback(run_id: UUID) -> Callable[[asyncio.Task[None]], None]:
+        def cleanup(_: asyncio.Task[None]) -> None:
+            tasks.pop(run_id, None)
+
+        return cleanup
+
+    def get_settings_service() -> SettingsService:
+        if not config.master_key:
+            raise HTTPException(503, "设置服务不可用：需要配置 YUWANG_MASTER_KEY")
+        try:
+            cipher = SecretCipher(config.master_key)
+        except ValueError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        return SettingsService(
+            repository,
+            cipher,
+            allow_insecure_local=config.allow_insecure_local_provider,
+        )
+
+    def require_admin(authorization: Annotated[str | None, Header()] = None) -> None:
+        if not config.admin_token:
+            raise HTTPException(503, "管理员鉴权未配置")
+        scheme, _, token = (authorization or "").partition(" ")
+        if scheme.lower() != "bearer" or not secrets.compare_digest(token, config.admin_token):
+            raise HTTPException(401, "管理员鉴权失败")
+
+    def build_provider_chain_from_configs(provider_configs: list[ProviderConfig]) -> ProviderChain:
+        service = get_settings_service()
+        return ProviderChain(
+            [
+                OpenAICompatibleProvider(
+                    name=value.name,
+                    base_url=value.base_url,
+                    api_key=service.cipher.decrypt(value.encrypted_api_key),
+                    model=value.model,
+                    timeout_seconds=value.timeout_seconds,
+                    max_retries=value.max_retries,
+                    structured_mode=value.structured_mode,
+                )
+                for value in provider_configs
+            ]
+        )
+
+    def resolve_provider_chain(
+        provider_config_id: UUID | None,
+    ) -> tuple[list[ProviderConfig], ProviderChain]:
+        provider_configs = get_settings_service().resolve_chain(provider_config_id)
+        return provider_configs, build_provider_chain_from_configs(provider_configs)
+
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        # A crashed process cannot safely replay a possibly side-effecting node. Mark it
-        # retryable instead; completed history and checkpoints remain available.
         for thread in repository.list_threads():
             for stale in repository.list_runs(thread.id):
                 if stale.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
-                    stale.transition(RunStatus.FAILED, "服务重启中断；可安全重试")
-                    repository.save_run(stale)
+                    task_spec = repository.get_run_task(stale.id)
+                    snapshots = repository.get_provider_snapshot(stale.id)
+                    if not task_spec or not snapshots:
+                        stale.transition(RunStatus.FAILED, "恢复所需快照缺失")
+                        repository.save_run(stale)
+                        continue
+                    try:
+                        provider = build_provider_chain_from_configs(snapshots)
+                    except (ValueError, HTTPException):
+                        stale.transition(RunStatus.FAILED, "无法解密恢复所需的 Provider 快照")
+                        repository.save_run(stale)
+                        continue
+                    engine = AgentEngine(repository, provider, registry, policy)
+                    task_handle = asyncio.create_task(engine.resume(stale.id, task_spec))
+                    tasks[stale.id] = task_handle
+                    task_handle.add_done_callback(cleanup_callback(stale.id))
         yield
         for task in tasks.values():
             if not task.done():
@@ -89,7 +168,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.settings = config
     application.state.registry = registry
     application.state.tasks = tasks
-    application.add_middleware(CORSMiddleware, allow_origins=config.cors_origins, allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type", "Last-Event-ID"], allow_credentials=False)
+    application.add_middleware(CORSMiddleware, allow_origins=config.cors_origins, allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type", "Last-Event-ID"], allow_credentials=False)
 
     @application.middleware("http")
     async def request_size_limit(request: Request, call_next: Any) -> Any:
@@ -102,6 +181,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
         detail = exc.detail if isinstance(exc.detail, str) else "请求失败"
         return JSONResponse(status_code=exc.status_code, content={"error": {"code": f"http_{exc.status_code}", "message": detail}})
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "validation_error", "message": "请求参数校验失败"}},
+        )
 
     def require_thread(thread_id: UUID) -> Thread:
         thread = repository.get_thread(thread_id)
@@ -121,10 +207,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not user_messages:
             raise HTTPException(409, "请先发送任务消息")
         latest = user_messages[-1]
-        return TaskSpec(body=latest.content, mode=thread.mode, artifact_ids=latest.artifact_ids, authorized_targets=create.authorized_targets, success_conditions=create.success_conditions)
+        defaults = get_settings_service().get_agent_defaults()
+        return TaskSpec(body=latest.content, mode=thread.mode, artifact_ids=latest.artifact_ids, authorized_targets=create.authorized_targets, success_conditions=create.success_conditions, verification_rules=create.verification_rules, budget=defaults.budget)
 
-    async def execute(run: Run, task: TaskSpec) -> None:
-        provider = MockModelProvider()
+    async def execute(run: Run, task: TaskSpec, provider: ProviderChain) -> None:
         engine = AgentEngine(repository, provider, registry, policy)
         await engine.run(run.id, task)
 
@@ -199,17 +285,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.post("/api/v1/threads/{thread_id}/runs", response_model=Run, status_code=202)
     async def start_run(thread_id: UUID, body: RunCreate = Body(default_factory=RunCreate)) -> Run:
         thread = require_thread(thread_id)
-        if body.provider not in {"mock", "openai-compatible"}:
-            raise HTTPException(400, "未知 Provider")
-        if body.provider == "openai-compatible" and not OpenAICompatibleProvider().configured:
-            raise HTTPException(400, "OpenAI 兼容 Provider 尚未配置")
+        try:
+            provider_configs, provider = resolve_provider_chain(body.provider_config_id)
+            selected = provider_configs[0]
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(409, str(exc)) from exc
         task = build_task(thread, body)
-        run = Run(thread_id=thread.id, provider=body.provider)
+        run = Run(
+            thread_id=thread.id,
+            provider=selected.name,
+            provider_config_id=selected.id,
+        )
         try:
             repository.save_run(run)
+            repository.save_run_task(run.id, task)
+            repository.save_provider_snapshot(run.id, provider_configs)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
-        tasks[run.id] = asyncio.create_task(execute(run, task))
+        task_handle = asyncio.create_task(execute(run, task, provider))
+        tasks[run.id] = task_handle
+        task_handle.add_done_callback(cleanup_callback(run.id))
         return run
 
     @application.get("/api/v1/runs/{run_id}", response_model=Run)
@@ -229,16 +324,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if previous.status not in {RunStatus.FAILED, RunStatus.STOPPED}:
             raise HTTPException(409, "仅失败或停止的运行可重试")
         thread = require_thread(previous.thread_id)
-        task = build_task(thread, RunCreate(provider=previous.provider))
-        retried = Run(thread_id=thread.id, provider=previous.provider, attempt=previous.attempt + 1)
+        task = repository.get_run_task(previous.id)
+        if not task:
+            raise HTTPException(409, "原运行缺少 TaskSpec 快照，无法安全重试")
+        try:
+            provider_configs = repository.get_provider_snapshot(previous.id)
+            if not provider_configs:
+                raise ValueError("原运行缺少 Provider 快照")
+            provider = build_provider_chain_from_configs(provider_configs)
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        retried = Run(
+            thread_id=thread.id,
+            provider=previous.provider,
+            provider_config_id=previous.provider_config_id,
+            attempt=previous.attempt + 1,
+        )
         repository.save_run(retried)
-        tasks[retried.id] = asyncio.create_task(execute(retried, task))
+        repository.save_run_task(retried.id, task)
+        repository.save_provider_snapshot(retried.id, provider_configs)
+        task_handle = asyncio.create_task(execute(retried, task, provider))
+        tasks[retried.id] = task_handle
+        task_handle.add_done_callback(cleanup_callback(retried.id))
         return retried
 
     @application.get("/api/v1/runs/{run_id}/events")
     async def list_events(run_id: UUID, after: int = Query(0, ge=0)) -> list[dict[str, Any]]:
         require_run(run_id)
         return [event.model_dump(mode="json") for event in repository.list_events(run_id, after)]
+
+    @application.get("/api/v1/runs/{run_id}/audit")
+    async def run_audit(run_id: UUID) -> dict[str, Any]:
+        require_run(run_id)
+        return {
+            "model_calls": [
+                value.model_dump(mode="json") for value in repository.list_model_calls(run_id)
+            ],
+            "tool_calls": [
+                value.model_dump(mode="json") for value in repository.list_tool_calls(run_id)
+            ],
+            "evidence": [
+                value.model_dump(mode="json") for value in repository.list_evidence(run_id)
+            ],
+            "checkpoints": [
+                {
+                    "checkpoint_sequence": value.checkpoint_sequence,
+                    "node": value.node,
+                    "state_schema_version": value.state_schema_version,
+                    "elapsed_seconds": value.elapsed_seconds,
+                    "created_at": value.created_at,
+                }
+                for value in repository.list_checkpoints(run_id)
+            ],
+        }
 
     @application.get("/api/v1/runs/{run_id}/events/stream")
     async def stream_events(run_id: UUID, request: Request, last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None, after: int = Query(0, ge=0)) -> StreamingResponse:
@@ -293,9 +431,102 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(report[1], headers={"Content-Disposition": f'attachment; filename="report-{run_id}.json"'})
 
     @application.get("/api/v1/providers")
-    async def providers() -> list[dict[str, Any]]:
-        compatible = OpenAICompatibleProvider()
-        return [{"name": "mock", "configured": True, "description": "确定性离线演示"}, {"name": "openai-compatible", "configured": compatible.configured, "description": "环境变量配置的 OpenAI 兼容 API"}]
+    async def providers() -> list[ProviderConfigView]:
+        if not config.master_key:
+            return []
+        return get_settings_service().list_providers(enabled_only=True)
+
+    @application.get("/api/v1/provider-presets")
+    async def provider_presets() -> dict[str, dict[str, str]]:
+        return {key.value: value for key, value in PROVIDER_PRESETS.items()}
+
+    @application.get(
+        "/api/v1/admin/settings/providers",
+        response_model=list[ProviderConfigView],
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_list_providers() -> list[ProviderConfigView]:
+        return get_settings_service().list_providers()
+
+    @application.post(
+        "/api/v1/admin/settings/providers",
+        response_model=ProviderConfigView,
+        status_code=201,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_create_provider(body: ProviderConfigInput) -> ProviderConfigView:
+        try:
+            return get_settings_service().create_provider(body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @application.put(
+        "/api/v1/admin/settings/providers/{provider_id}",
+        response_model=ProviderConfigView,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_update_provider(
+        provider_id: UUID, body: ProviderConfigInput
+    ) -> ProviderConfigView:
+        try:
+            return get_settings_service().update_provider(provider_id, body)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @application.delete(
+        "/api/v1/admin/settings/providers/{provider_id}",
+        status_code=204,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_delete_provider(provider_id: UUID) -> None:
+        try:
+            get_settings_service().delete_provider(provider_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @application.post(
+        "/api/v1/admin/settings/providers/{provider_id}/test",
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_test_provider(provider_id: UUID) -> dict[str, str]:
+        service = get_settings_service()
+        try:
+            value = service.get_provider(provider_id)
+            provider = OpenAICompatibleProvider(
+                name=value.name,
+                base_url=value.base_url,
+                api_key=service.decrypt_api_key(value.id),
+                model=value.model,
+                timeout_seconds=value.timeout_seconds,
+                max_retries=value.max_retries,
+                structured_mode=value.structured_mode,
+            )
+            await provider.test_connection()
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ProviderError as exc:
+            raise HTTPException(502, f"连接测试失败：{exc.category}") from exc
+        return {"status": "ok"}
+
+    @application.get(
+        "/api/v1/admin/settings/agent",
+        response_model=AgentDefaults,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_get_agent_defaults() -> AgentDefaults:
+        return get_settings_service().get_agent_defaults()
+
+    @application.put(
+        "/api/v1/admin/settings/agent",
+        response_model=AgentDefaults,
+        dependencies=[Depends(require_admin)],
+    )
+    async def admin_update_agent_defaults(body: AgentDefaults) -> AgentDefaults:
+        return get_settings_service().save_agent_defaults(body)
 
     @application.get("/api/v1/tools")
     async def tools() -> list[dict[str, Any]]:

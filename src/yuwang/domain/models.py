@@ -86,7 +86,8 @@ class Run(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     thread_id: UUID
     status: RunStatus = RunStatus.QUEUED
-    provider: str = "mock"
+    provider: str = "unconfigured"
+    provider_config_id: UUID | None = None
     attempt: int = Field(1, ge=1)
     stop_requested: bool = False
     error: str | None = None
@@ -144,6 +145,7 @@ class Artifact(DomainModel):
 
 
 class TaskSpec(DomainModel):
+    model_config = ConfigDict(extra="forbid", use_enum_values=True, frozen=True)
     body: str = Field(min_length=1, max_length=100_000)
     scenario: str = "safe_demo"
     mode: ThreadMode = ThreadMode.NORMAL
@@ -152,6 +154,7 @@ class TaskSpec(DomainModel):
     constraints: list[str] = Field(default_factory=list)
     budget: Budget = Field(default_factory=Budget)
     success_conditions: list[str] = Field(default_factory=lambda: ["reference_tool_succeeded"])
+    verification_rules: list[VerificationRule] = Field(default_factory=list)
 
 
 class CallStatus(StrEnum):
@@ -185,9 +188,63 @@ class ToolCall(DomainModel):
     artifact_ids: list[UUID] = Field(default_factory=list)
 
 
+class EvidenceRecord(DomainModel):
+    id: UUID = Field(default_factory=uuid4)
+    run_id: UUID
+    candidate: str
+    source_call_id: UUID
+    location: str
+    verified: bool
+    verification_summary: str
+    rule_kind: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class RunCheckpoint(DomainModel):
+    run_id: UUID
+    checkpoint_sequence: int = Field(ge=1)
+    node: str
+    state_schema_version: str = "2.0"
+    state: dict[str, Any]
+    elapsed_seconds: float = Field(ge=0)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class AgentAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["call_tool", "replan", "finish", "fail"]
+    kind: Literal["call_tool", "replan", "finish", "fail", "request_input"]
     summary: str
     tool_name: str | None = None
     tool_input: dict[str, Any] = Field(default_factory=dict)
+    candidate: EvidenceCandidate | None = None
+    updated_plan: list[str] = Field(default_factory=list)
+
+
+class VerificationRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["regex", "sha256"]
+    value: str = Field(min_length=1, max_length=2000)
+
+
+class EvidenceCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    value: str = Field(min_length=1, max_length=10000)
+    source_call_id: UUID
+    location: str = Field(min_length=1, max_length=500, pattern=r"^/")
+
+
+class AgentPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: str = Field(min_length=1, max_length=500)
+    steps: list[str] = Field(min_length=1, max_length=30)
+    success_approach: str = Field(min_length=1, max_length=500)
+
+
+class Observation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    call_id: UUID
+    tool_name: str
+    success: bool
+    output: dict[str, Any] = Field(default_factory=dict)
+    summary: str
+    error: str | None = None

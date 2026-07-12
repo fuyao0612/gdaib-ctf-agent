@@ -10,15 +10,23 @@ class ReportGenerator:
     def generate(self, run: Run, task: TaskSpec, events: list[Event], metrics: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         replans = [event.summary for event in events if str(event.type) == "replanned"]
         evidence = [event.summary for event in events if str(event.type) in {"tool_finished", "artifact_created"}]
+        for record in metrics.get("evidence_records", []):
+            if isinstance(record, dict):
+                evidence.append(
+                    f"候选证据 {record.get('source_call_id')} {record.get('location')}："
+                    f"{record.get('verification_summary')}"
+                )
         policy = [event.summary for event in events if str(event.type) == "policy_checked"]
+        plan_data = metrics.get("plan") or {}
+        plan_steps = plan_data.get("steps", []) if isinstance(plan_data, dict) else []
         data = {
             "schema_version": "1.0",
             "run_id": str(run.id),
             "task_summary": redact(task.body[:500]),
             "mode": str(task.mode),
             "status": str(run.status),
-            "result": "成功条件已验证" if str(run.status) == "completed" else (run.error or "运行未完成"),
-            "plan": ["规范化任务", "检查策略", "调用参考工具", "验证成功条件", "生成报告"],
+            "result": metrics.get("verification", "成功条件已验证") if str(run.status) == "completed" else (run.error or "运行未完成"),
+            "plan": plan_steps,
             "adjustments": replans,
             "evidence": evidence,
             "tool_metrics": {"calls": metrics.get("tool_calls", 0), "failures": metrics.get("tool_failures", 0)},
@@ -39,7 +47,7 @@ class ReportGenerator:
             data["result"],
             "",
             "## 计划与调整",
-            *[f"- {item}" for item in data["plan"]],
+            *([f"- {item}" for item in data["plan"]] or ["- 未生成计划"]),
             *[f"- 调整：{item}" for item in replans],
             "",
             "## 关键证据",

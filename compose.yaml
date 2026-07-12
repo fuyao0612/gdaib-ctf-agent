@@ -8,9 +8,8 @@ services:
       YUWANG_DATABASE_PATH: /data/yuwang.db
       YUWANG_ARTIFACT_ROOT: /data/artifacts
       YUWANG_CORS_ORIGINS: http://localhost:8080
-      OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}
-      OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
-      OPENAI_COMPATIBLE_MODEL: ${OPENAI_COMPATIBLE_MODEL:-}
+      YUWANG_ADMIN_TOKEN: ${YUWANG_ADMIN_TOKEN:?Set YUWANG_ADMIN_TOKEN in .env}
+      YUWANG_MASTER_KEY: ${YUWANG_MASTER_KEY:?Set YUWANG_MASTER_KEY in .env}
     volumes:
       - yuwang-data:/data
     healthcheck:

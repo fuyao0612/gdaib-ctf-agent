@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { api } from './api'
-import type { Artifact, Event, Mode, Report, Run, Thread, ThreadDetail } from './types'
+import SettingsCenter from './SettingsCenter'
+import type { Artifact, Event, Mode, ProviderConfig, Report, Run, Thread, ThreadDetail } from './types'
 import './styles.css'
 
 const terminal = new Set(['completed', 'failed', 'stopped'])
@@ -23,16 +24,24 @@ export default function App() {
   const [events, setEvents] = useState<Event[]>([])
   const [activeRun, setActiveRun] = useState<Run | null>(null)
   const [report, setReport] = useState<Report | null>(null)
-  const [message, setMessage] = useState('请分析附件元数据并完成安全的确定性验证闭环。')
+  const [message, setMessage] = useState('')
+  const [providers, setProviders] = useState<ProviderConfig[]>([])
+  const [selectedProviderId, setSelectedProviderId] = useState('')
+  const [successPattern, setSuccessPattern] = useState('')
   const [pendingArtifacts, setPendingArtifacts] = useState<Artifact[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
-  const [newTitle, setNewTitle] = useState('安全演示任务')
+  const [newTitle, setNewTitle] = useState('新的安全任务')
   const [newMode, setNewMode] = useState<Mode>('normal')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const sourceRef = useRef<EventSource | null>(null)
 
   const loadThreads = useCallback(async () => setThreads(await api.listThreads()), [])
+  const loadProviders = useCallback(async () => {
+    const values = await api.listProviders(); setProviders(values)
+    setSelectedProviderId(current => current && values.some(value => value.id === current) ? current : (values.find(value => value.is_default)?.id ?? values[0]?.id ?? ''))
+  }, [])
   const selectThread = useCallback(async (id: string) => {
     sourceRef.current?.close(); setError(''); setReport(null)
     const value = await api.detail(id); setDetail(value); setPendingArtifacts([])
@@ -41,7 +50,7 @@ export default function App() {
     else setEvents([])
   }, [])
 
-  useEffect(() => { void loadThreads() }, [loadThreads])
+  useEffect(() => { void Promise.all([loadThreads(), loadProviders()]) }, [loadThreads, loadProviders])
 
   const connect = useCallback((run: Run) => {
     sourceRef.current?.close()
@@ -68,11 +77,11 @@ export default function App() {
     setBusy(true); try { const artifact = await api.upload(detail.id, file); setPendingArtifacts(items => [...items, artifact]) } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
   }
   async function sendAndRun() {
-    if (!detail || !message.trim()) return
+    if (!detail || !message.trim() || !selectedProviderId || !successPattern.trim()) return
     setBusy(true); setError(''); setEvents([]); setReport(null)
     try {
       await api.message(detail.id, message, pendingArtifacts.map(item => item.id))
-      const run = await api.start(detail.id); setActiveRun(run); setPendingArtifacts([]); connect(run)
+      const run = await api.start(detail.id, selectedProviderId, successPattern); setActiveRun(run); setPendingArtifacts([]); connect(run)
       const updated = await api.detail(detail.id); setDetail(updated)
     } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
   }
@@ -87,6 +96,7 @@ export default function App() {
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">御</span><div><h1>御网智元</h1><p>安全 Agent 工作台</p></div></div>
       <button className="primary full" onClick={() => setCreateOpen(true)}>＋ 新建任务</button>
+      <button className="settings-button full" onClick={() => setSettingsOpen(true)}>⚙ 设置中心</button>
       <div className="section-label">任务线程</div>
       <nav className="thread-list">{threads.filter(item => !item.archived).map(thread => <button key={thread.id} className={`thread-item ${detail?.id === thread.id ? 'selected' : ''}`} onClick={() => void selectThread(thread.id)}><span>{thread.title}</span><small>{thread.mode}</small></button>)}</nav>
       <div className="security-note"><span>●</span><div><strong>安全边界已启用</strong><p>公网默认拒绝 · 凭据自动脱敏</p></div></div>
@@ -100,7 +110,7 @@ export default function App() {
           {events.length > 0 && <div className="agent-progress"><div className="progress-title"><span className="pulse" />Agent 执行记录 <span>{events.length} 项</span></div>{events.filter(item => !item.type.startsWith('tool_')).map(event => <EventCard key={event.event_id} event={event} />)}</div>}
           {report && <section className="report" data-testid="final-report"><div className="report-header"><h3>最终报告</h3><div><a href={api.reportUrl(activeRun!.id, 'md')}>Markdown</a><a href={api.reportUrl(activeRun!.id, 'json')}>JSON</a></div></div><ReactMarkdown>{report.markdown}</ReactMarkdown></section>}
         </section>
-        <footer className="composer"><div className="attachments">{pendingArtifacts.map(file => <span key={file.id}>📎 {file.filename} · {file.size} B</span>)}</div>{inputLocked && <div className="lock-note">竞赛模式运行中：已锁定补充提示，仅可观察或停止。</div>}<textarea aria-label="任务消息" value={message} onChange={event => setMessage(event.target.value)} disabled={inputLocked || busy} placeholder="描述已授权的安全任务…" /><div className="composer-actions"><label className="file-button">＋ 附件<input aria-label="上传附件" type="file" accept=".txt,.json,.md,.log,.bin" onChange={event => void upload(event.target.files?.[0])} /></label><span className="authorization">盾 已授权范围内执行</span><div className="run-actions">{running ? <button className="danger" onClick={() => void stop()}>停止</button> : activeRun && ['failed', 'stopped'].includes(activeRun.status) ? <button onClick={() => void retry()}>重试</button> : null}<button className="primary" disabled={busy || inputLocked || running || !message.trim()} onClick={() => void sendAndRun()}>{busy ? '处理中…' : '启动运行 ↗'}</button></div></div></footer>
+        <footer className="composer"><div className="attachments">{pendingArtifacts.map(file => <span key={file.id}>📎 {file.filename} · {file.size} B</span>)}</div>{inputLocked && <div className="lock-note">竞赛模式运行中：已锁定补充提示，仅可观察或停止。</div>}{providers.length === 0 && <div className="model-required">需要配置模型：请先进入设置中心添加、测试并启用 Provider。</div>}<textarea aria-label="任务消息" value={message} onChange={event => setMessage(event.target.value)} disabled={inputLocked || busy} placeholder="描述已授权的安全任务、目标范围与成功条件…" /><div className="verification-row"><label>成功答案正则<input aria-label="成功答案正则" value={successPattern} onChange={event => setSuccessPattern(event.target.value)} placeholder="例如 FLAG\{[A-Za-z0-9_-]+\}" disabled={running} /></label><small>模型只能提出候选；系统会核对工具证据后按此规则验证。</small></div><div className="composer-actions"><label className="file-button">＋ 附件<input aria-label="上传附件" type="file" accept=".txt,.json,.md,.log,.bin" onChange={event => void upload(event.target.files?.[0])} /></label><label className="provider-select">模型<select aria-label="运行模型" value={selectedProviderId} onChange={event => setSelectedProviderId(event.target.value)} disabled={running || providers.length === 0}><option value="">未配置</option>{providers.map(value => <option key={value.id} value={value.id}>{value.name} · {value.model}</option>)}</select></label><span className="authorization">盾 已授权范围内执行</span><div className="run-actions">{running ? <button className="danger" onClick={() => void stop()}>停止</button> : activeRun && ['failed', 'stopped'].includes(activeRun.status) ? <button onClick={() => void retry()}>重试</button> : null}<button className="primary" disabled={busy || inputLocked || running || !message.trim() || !selectedProviderId || !successPattern.trim()} onClick={() => void sendAndRun()}>{busy ? '处理中…' : '启动运行 ↗'}</button></div></div></footer>
       </>}
       {error && <div role="alert" className="toast">{error}</div>}
     </main>
@@ -113,5 +123,6 @@ export default function App() {
     </aside>
 
     {createOpen && <div className="modal-backdrop"><form className="modal" onSubmit={event => { event.preventDefault(); void createThread() }}><h2>创建安全任务</h2><label>任务名称<input aria-label="任务名称" value={newTitle} onChange={event => setNewTitle(event.target.value)} /></label><label>运行模式<select aria-label="运行模式" value={newMode} onChange={event => setNewMode(event.target.value as Mode)}><option value="normal">normal · 可继续交流</option><option value="competition">competition · 运行中锁定输入</option></select></label><p>所有网络目标默认拒绝，仅执行已注册且经策略批准的工具。</p><div><button type="button" onClick={() => setCreateOpen(false)}>取消</button><button className="primary" type="submit" disabled={busy}>创建</button></div></form></div>}
+    {settingsOpen && <SettingsCenter onClose={() => setSettingsOpen(false)} onChanged={loadProviders} />}
   </div>
 }

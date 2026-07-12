@@ -5,6 +5,6 @@ installed wheels share one contract. Deployment-specific registries may import
 and register them from their composition root without changing AgentEngine.
 """
 
-from yuwang.tooling.sdk import FileMetadataTool, LocalhostHTTPProbeTool, MockEchoTool
+from yuwang.tooling.sdk import FileMetadataTool, LocalhostHTTPProbeTool
 
-__all__ = ["FileMetadataTool", "LocalhostHTTPProbeTool", "MockEchoTool"]
+__all__ = ["FileMetadataTool", "LocalhostHTTPProbeTool"]

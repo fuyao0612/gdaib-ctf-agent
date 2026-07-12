@@ -1,15 +1,61 @@
 import { expect, test } from '@playwright/test'
 
-test('真实后端完成失败重规划闭环并展示报告', async ({ page }) => {
+async function configureProtocolProvider(page: import('@playwright/test').Page) {
+  await page.locator('.settings-button').click()
+  await page.locator('.admin-login input').fill(process.env.YUWANG_E2E_ADMIN_TOKEN!)
+  await page.locator('.admin-login button').click()
+  await expect(page.locator('.settings-content')).toBeVisible()
+
+  const form = page.locator('.settings-form').first()
+  await form.locator('select').first().selectOption('custom')
+  const inputs = form.locator('input')
+  await inputs.nth(0).fill('Protocol acceptance provider')
+  await inputs.nth(1).fill('http://127.0.0.1:8899/v1')
+  await inputs.nth(2).fill('protocol-test-model')
+  await inputs.nth(3).fill(`protocol-${Date.now()}`)
+  await form.locator('.check-row input').nth(1).check()
+  await form.locator('button.primary').click()
+  await expect(page.locator('.provider-row')).toContainText('Protocol acceptance provider')
+  await page.locator('.provider-row button').first().click()
+  await expect(page.locator('.settings-notice')).toBeVisible()
+  await page.locator('.settings-panel > header button').click()
+}
+
+async function uploadAndRun(page: import('@playwright/test').Page, message: string, file: string) {
+  await page.locator('input[type="file"]').setInputFiles({
+    name: file,
+    mimeType: 'text/plain',
+    buffer: Buffer.from(`evidence-${file}`),
+  })
+  await expect(page.locator('.attachments')).toContainText(file)
+  await page.locator('textarea').fill(message)
+  await page.locator('.verification-row input').fill('[a-f0-9]{64}')
+  await page.locator('.run-actions .primary').click()
+}
+
+test('production browser flow covers settings, SSE, stop/retry, reports and refresh recovery', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: '创建第一个任务' }).click()
-  await page.getByLabel('任务名称').fill(`E2E-${Date.now()}`)
-  await page.getByRole('button', { name: '创建', exact: true }).click()
-  await expect(page.getByText('启动运行 ↗')).toBeVisible()
-  await page.getByLabel('上传附件').setInputFiles({ name: 'sample.txt', mimeType: 'text/plain', buffer: Buffer.from('safe evidence') })
-  await expect(page.getByText(/sample.txt/)).toBeVisible()
-  await page.getByRole('button', { name: '启动运行 ↗' }).click()
-  await expect(page.getByTestId('event-replanned')).toContainText('首次工具调用失败')
-  await expect(page.getByTestId('final-report')).toContainText('成功条件已验证', { timeout: 15_000 })
-  await expect(page.getByText('2', { exact: true }).first()).toBeVisible()
+  await configureProtocolProvider(page)
+
+  await page.locator('.sidebar .primary.full').click()
+  await page.locator('.modal input').fill(`E2E-${Date.now()}`)
+  await page.locator('.modal button[type="submit"]').click()
+
+  await uploadAndRun(page, 'Inspect this controlled attachment', 'sample.txt')
+  await expect(page.getByTestId('event-tool_finished')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('final-report')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.badge-completed')).toBeVisible()
+  await expect(page.getByTestId('final-report').locator('a')).toHaveCount(2)
+
+  await page.reload()
+  await page.locator('.thread-item').first().click()
+  await expect(page.getByTestId('final-report')).toBeVisible()
+
+  await uploadAndRun(page, 'slow: verify stop and retry recovery', 'retry.txt')
+  await expect(page.locator('.run-actions .danger')).toBeVisible()
+  await page.locator('.run-actions .danger').click()
+  await expect(page.locator('.badge-stopped')).toBeVisible({ timeout: 20_000 })
+  await page.locator('.run-actions button').filter({ hasText: /.+/ }).first().click()
+  await expect(page.locator('.badge-completed')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId('final-report')).toBeVisible()
 })

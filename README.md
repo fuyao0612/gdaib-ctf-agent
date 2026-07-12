@@ -1,62 +1,68 @@
-# 御网智元 v0.1.0
+# 御网智元 v0.2.0
 
-御网智元是一个可审计、可恢复、默认安全的对话式网络安全 Agent 工作台。第一阶段用确定性 Mock 模型和受控参考工具跑通完整工程闭环，不执行真实漏洞利用、任意 Shell 或公网扫描。
+御网智元是一个可审计、可恢复、默认安全的对话式网络安全 Agent 工作台。v0.2 接入 DeepSeek、阿里云百炼/千问、智谱 GLM 与自定义 OpenAI 兼容服务，提供结构化自主决策、确定性成功验证、断点恢复和完整调用审计。
 
-## 一条命令启动
+系统只执行显式注册且经过策略检查的工具，不提供任意 Shell 或默认公网扫描能力。模型输出只是候选决策和候选证据，不能直接宣告任务成功。
 
-需要 Docker Desktop 与 Compose：
+## Docker 启动
 
-```bash
-docker compose up --build
+```powershell
+Copy-Item .env.example .env
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-打开 <http://localhost:8080>。API 健康检查位于 <http://localhost:8080/api/v1/health>，OpenAPI 位于 <http://localhost:8080/api/docs>。首次演示不需要 API Key，数据保存在 `yuwang-data` Docker 卷中。
+把两条命令生成的值分别写入 `.env` 的 `YUWANG_MASTER_KEY` 和 `YUWANG_ADMIN_TOKEN`，然后启动：
 
-## 完整演示
-
-1. 点击“创建第一个任务”，选择 `normal` 或 `competition`。
-2. 上传 `.txt/.json/.md/.log/.bin` 示例文件并输入已授权任务。
-3. 点击“启动运行”。Mock Provider 产生结构化 `CallTool`。
-4. 首次 `mock_echo` 按演示场景失败；右侧出现工具审计卡片。
-5. Agent 发出 `replanned`，第二次调用成功并验证条件。
-6. 查看最终 Markdown 报告，下载 Markdown/JSON；刷新页面验证历史仍存在。
-7. `competition` 模式运行中输入区会锁定，只保留观察、停止和重试。
-
-## 架构
-
-模块化单体保持依赖向内：React 只调用版本化 REST/SSE；FastAPI 负责传输层；Agent 核心通过协议接收 Provider、工具、策略和仓储。SQLite 持久化领域对象、检查点、严格递增事件与报告。详见 [架构文档](docs/architecture.md)。
-
-```text
-apps/api       FastAPI 传输层        apps/web       React 工作台
-src/yuwang/domain                  稳定 Pydantic 契约
-src/yuwang/agent                   LangGraph 状态闭环
-src/yuwang/model_providers         Mock / OpenAI 兼容 Provider
-src/yuwang/tooling + plugins       Tool SDK 与安全参考工具
-src/yuwang/policy                  默认拒绝策略与脱敏
-src/yuwang/events + storage        SSE 事件与 SQLite
-src/yuwang/reports                 Markdown/JSON 报告
-tests                              单元与集成测试
+```powershell
+docker compose up --build -d
+curl http://localhost:8080/api/v1/health
 ```
 
-## 本地开发
+打开 <http://localhost:8080>。首次使用进入“设置中心”，输入管理员令牌，选择厂商预设或自定义兼容端点，录入 API Key，执行连接测试并设为默认 Provider。API Key 只以认证加密密文持久化；主密钥和管理员令牌不进入仓库。
+
+## 使用流程
+
+1. 在设置中心配置并测试至少一个真实 Provider，可设置默认项与 fallback 顺序。
+2. 创建任务，上传受控附件，描述授权范围与目标。
+3. 填写确定性成功正则，选择运行模型并启动。
+4. 通过 SSE 实时查看计划、策略判断、工具调用、重规划和验证事件。
+5. 可停止运行、按原始不可变 TaskSpec/Provider 快照重试，或刷新页面继续查看历史。
+6. 查看并下载 Markdown/JSON 报告；通过 `/api/v1/runs/{run_id}/audit` 查询模型、工具、证据和检查点审计。
+
+## 本地开发与验收
 
 ```powershell
 python -m pip install -e ".[dev]"
 pytest
-python -m uvicorn apps.api.main:app --reload
+pytest -q -o addopts='' --cov=yuwang.agent --cov-report=term-missing --cov-fail-under=90 tests
+ruff check .
+mypy
 
 cd apps/web
 npm ci
-npm run dev
+npm run lint
+npm run typecheck
+npm test -- --run
+npm run build
+npx playwright install chromium
+npm run e2e
 ```
 
-全量静态检查与测试可执行 `powershell -File scripts/check.ps1`。浏览器测试执行 `cd apps/web && npx playwright install chromium && npm run e2e`。
+完整后端覆盖率门槛为 80%，Agent 核心门槛为 90%。真实厂商冒烟测试默认跳过，显式启用方式见[测试文档](docs/testing.md)。
 
-## 文档
+## 目录与文档
 
-- [架构与事件流](docs/architecture.md)
-- [工具开发](docs/tool-development.md)
+- `apps/api`：FastAPI REST/SSE 适配层
+- `apps/web`：React 工作台与设置中心
+- `src/yuwang/agent`：LangGraph 自主决策与恢复核心
+- `src/yuwang/model_providers`：真实 OpenAI 兼容 Provider 与 fallback
+- `src/yuwang/tooling`：受控工具 SDK 和参考工具
+- `src/yuwang/storage`：SQLite 持久化、检查点与审计
+- [架构与恢复](docs/architecture.md)
 - [模型 Provider](docs/model-provider.md)
 - [安全边界](docs/security.md)
 - [测试分层](docs/testing.md)
+- [生产部署与备份](docs/deployment.md)
+- [工具开发](docs/tool-development.md)
 - [协作规范](CONTRIBUTING.md)

@@ -121,29 +121,6 @@ class ToolExecutor:
             return ToolResult(success=False, summary=f"{name} 执行失败", error=ToolError(code="execution_error", message=str(exc), retryable=True), duration_ms=int((time.perf_counter() - started) * 1000))
 
 
-class EchoInput(BaseModel):
-    text: str = Field(min_length=1, max_length=1000)
-    fail: bool = False
-
-
-class EchoOutput(BaseModel):
-    echoed: str
-
-
-class MockEchoTool(ToolPlugin[EchoInput, EchoOutput]):
-    input_model = EchoInput
-    output_model = EchoOutput
-
-    @property
-    def spec(self) -> ToolSpec:
-        return ToolSpec(name="mock_echo", version="1.0.0", description="确定性回显，用于安全闭环演示", capabilities=["demo", "text"], scenarios=["safe_demo"], risk="low", permissions=[], requires_network=False, allowed_target_types=[], timeout_seconds=3, error_codes=["simulated_failure"], idempotent=True, artifact_types=[], input_schema=self.input_model.model_json_schema(), output_schema=self.output_model.model_json_schema())
-
-    async def execute(self, value: EchoInput) -> EchoOutput:
-        if value.fail:
-            raise RuntimeError("simulated first-attempt failure")
-        return EchoOutput(echoed=value.text)
-
-
 class FileMetadataInput(BaseModel):
     path: str
 
@@ -198,7 +175,6 @@ class LocalhostHTTPProbeTool(ToolPlugin[ProbeInput, ProbeOutput]):
 
 def create_reference_registry(artifact_root: Path) -> ToolRegistry:
     registry = ToolRegistry()
-    registry.register(MockEchoTool())
     registry.register(FileMetadataTool(artifact_root))
     registry.register(LocalhostHTTPProbeTool())
     return registry
