@@ -74,6 +74,12 @@ export default function App() {
       const event = JSON.parse(messageEvent.data) as Event
       setEvents(previous => previous.some(item => item.sequence === event.sequence) ? previous : [...previous, event])
       void api.audit(run.id).then(setAudit)
+      if (event.type === 'run_waiting_input') {
+        void api.detail(run.thread_id).then(value => {
+          setDetail(value)
+          setActiveRun(value.runs.find(item => item.id === run.id) ?? run)
+        })
+      }
       if (terminal.has(event.type.replace('run_', ''))) {
         source.close()
         void api.detail(run.thread_id).then(value => { const latest = value.runs.find(item => item.id === run.id) ?? run; setDetail(value); setActiveRun(latest); void loadThreads(); if (event.type === 'run_completed') void api.report(run.id).then(setReport) })

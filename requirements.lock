@@ -1,4 +1,4 @@
-# Python 3.11 direct dependency lock for reproducible v0.2.0 environments.
+# Python 3.11 direct dependency lock for reproducible v0.3.0 environments.
 # Transitive constraints are resolved by pip from these tested versions.
 fastapi==0.133.1
 uvicorn[standard]==0.41.0

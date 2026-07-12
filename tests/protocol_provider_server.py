@@ -52,6 +52,21 @@ class Handler(BaseHTTPRequestHandler):
                 "success_approach": "Bind the SHA-256 candidate to the successful tool call.",
             }
         observations = context.get("observations_untrusted", context.get("observations", []))
+        task = context.get("untrusted_task", "").lower()
+        if "human-input" in task:
+            if not context.get("supplemental_inputs"):
+                return {"kind": "request_input", "summary": "Please provide the missing scope."}
+            return {
+                "kind": "finish",
+                "summary": "Produce an advisory answer after human input.",
+                "answer": "A staged, reversible rollout is recommended.",
+            }
+        if "advisory-only" in task:
+            return {
+                "kind": "finish",
+                "summary": "Produce an advisory answer without external evidence.",
+                "answer": "Review the plan with the authorized operator before execution.",
+            }
         if not observations:
             attachment = context.get("attachments_untrusted", context.get("attachments", []))[0]
             return {
