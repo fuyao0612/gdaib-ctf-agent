@@ -1,0 +1,14 @@
+# Python 3.11 direct dependency lock for reproducible v0.1.0 environments.
+# Transitive constraints are resolved by pip from these tested versions.
+fastapi==0.133.1
+uvicorn[standard]==0.41.0
+pydantic==2.13.4
+pydantic-settings==2.13.1
+httpx==0.28.1
+python-multipart==0.0.27
+langgraph==0.6.11
+pytest==8.4.2
+pytest-asyncio==0.26.0
+pytest-cov==6.3.0
+ruff==0.15.21
+mypy==1.20.2

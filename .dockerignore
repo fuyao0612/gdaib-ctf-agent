@@ -1,0 +1,9 @@
+.git
+.github
+.venv
+data
+**/__pycache__
+**/.pytest_cache
+apps/web/node_modules
+apps/web/dist
+apps/web/test-results

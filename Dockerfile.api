@@ -1,0 +1,13 @@
+FROM python:3.11-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+COPY pyproject.toml requirements.runtime.lock ./
+RUN pip install --no-cache-dir -r requirements.runtime.lock
+COPY src ./src
+COPY apps ./apps
+RUN pip install --no-cache-dir --no-deps .
+RUN addgroup --system yuwang && adduser --system --ingroup yuwang yuwang && mkdir -p /data/artifacts && chown -R yuwang:yuwang /data
+USER yuwang
+ENV YUWANG_DATABASE_PATH=/data/yuwang.db YUWANG_ARTIFACT_ROOT=/data/artifacts
+EXPOSE 8000
+CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
