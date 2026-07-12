@@ -25,7 +25,9 @@ def test_rejects_out_of_order_and_concurrent_active_runs(tmp_path):
     thread = repository.save_thread(Thread(title="exclusive"))
     run = repository.save_run(Run(thread_id=thread.id))
     with pytest.raises(ValueError, match="sequence"):
-        repository.append_event(Event(run_id=run.id, sequence=2, type=EventType.WARNING, summary="bad"))
+        repository.append_event(
+            Event(run_id=run.id, sequence=2, type=EventType.WARNING, summary="bad")
+        )
     with pytest.raises(ValueError, match="active"):
         repository.save_run(Run(thread_id=thread.id))
 

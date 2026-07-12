@@ -12,7 +12,9 @@ class SecretCipher:
         try:
             self._fernet = Fernet(master_key.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:
-            raise ValueError("YUWANG_MASTER_KEY 必须是 Fernet 32 字节 URL-safe Base64 密钥") from exc
+            raise ValueError(
+                "YUWANG_MASTER_KEY 必须是 Fernet 32 字节 URL-safe Base64 密钥"
+            ) from exc
 
     def encrypt(self, plaintext: str) -> str:
         return self._fernet.encrypt(plaintext.encode("utf-8")).decode("ascii")

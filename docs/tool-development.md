@@ -17,7 +17,7 @@ class CharacterCountTool(ToolPlugin[CountInput, CountOutput]):
     def spec(self) -> ToolSpec:
         return ToolSpec(
             name="character_count", version="1.0.0", description="统计字符数",
-            capabilities=["text"], scenarios=["safe_demo"], risk="low",
+            capabilities=["text"], scenarios=["general"], risk="low",
             permissions=[], requires_network=False, allowed_target_types=[],
             timeout_seconds=2, error_codes=[], idempotent=True, artifact_types=[],
             input_schema=self.input_model.model_json_schema(),

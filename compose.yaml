@@ -1,5 +1,20 @@
 name: yuwang
 services:
+  data-init:
+    image: alpine:3.20
+    command: ["sh", "-c", "mkdir -p /data/artifacts && chown -R 10001:10001 /data"]
+    volumes:
+      - ${YUWANG_DATA_PATH:-./data}:/data
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+
   api:
     build:
       context: .
@@ -7,11 +22,18 @@ services:
     environment:
       YUWANG_DATABASE_PATH: /data/yuwang.db
       YUWANG_ARTIFACT_ROOT: /data/artifacts
-      YUWANG_CORS_ORIGINS: http://localhost:8080
+      YUWANG_CORS_ORIGINS: ${YUWANG_CORS_ORIGINS:-http://localhost:8080}
+      YUWANG_COOKIE_SECURE: ${YUWANG_COOKIE_SECURE:-false}
       YUWANG_ADMIN_TOKEN: ${YUWANG_ADMIN_TOKEN:?Set YUWANG_ADMIN_TOKEN in .env}
       YUWANG_MASTER_KEY: ${YUWANG_MASTER_KEY:?Set YUWANG_MASTER_KEY in .env}
     volumes:
-      - yuwang-data:/data
+      - ${YUWANG_DATA_PATH:-./data}:/data
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 3s
@@ -22,12 +44,17 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: ${YUWANG_API_CPUS:-1.0}
+          memory: ${YUWANG_API_MEMORY:-768M}
 
   web:
     build:
       context: apps/web
     ports:
-      - "8080:8080"
+      - "${YUWANG_WEB_PORT:-8080}:8080"
     depends_on:
       api:
         condition: service_healthy
@@ -37,6 +64,11 @@ services:
       timeout: 2s
       retries: 15
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=32m,noexec,nosuid,nodev
+      - /var/run:size=4m,noexec,nosuid,nodev
+      - /tmp:size=16m,noexec,nosuid,nodev
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -45,6 +77,8 @@ services:
       - CHOWN
       - SETGID
       - SETUID
-
-volumes:
-  yuwang-data:
+    deploy:
+      resources:
+        limits:
+          cpus: ${YUWANG_WEB_CPUS:-0.5}
+          memory: ${YUWANG_WEB_MEMORY:-192M}

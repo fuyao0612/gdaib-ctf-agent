@@ -16,6 +16,7 @@ T = TypeVar("T", bound=BaseModel)
 
 class FakeModelProvider:
     name = "test-provider"
+    fallback_on = ["rate_limit", "timeout", "service"]
 
     def __init__(self, scenario: str = "success") -> None:
         self.scenario = scenario
@@ -28,17 +29,18 @@ class FakeModelProvider:
         *,
         timeout: float | None = None,
         attempt: int = 1,
+        request_budget: int | None = None,
     ) -> T:
-        del attempt
+        del attempt, request_budget
         self.calls += 1
         if self.scenario == "timeout":
             await asyncio.sleep((timeout or 0.001) + 0.01)
             raise ProviderError(ProviderErrorCategory.TIMEOUT, "test timeout", True)
         if self.scenario == "refusal":
             raise ProviderError(ProviderErrorCategory.REFUSAL, "test refusal")
-        if self.scenario == "invalid" or (
-            self.scenario == "fail_then_success" and self.calls == 1
-        ):
+        if self.scenario == "service":
+            raise ProviderError(ProviderErrorCategory.SERVICE, "test service", True)
+        if self.scenario == "invalid" or (self.scenario == "fail_then_success" and self.calls == 1):
             try:
                 return output_type.model_validate({"kind": "unknown"})
             except ValidationError as exc:
@@ -54,7 +56,28 @@ class FakeModelProvider:
                 ).model_dump()
             )
         context = json.loads(prompt)
-        observations = context.get("observations", [])
+        observations = context.get("observations_untrusted", context.get("observations", []))
+        supplemental = context.get("supplemental_inputs", [])
+        if self.scenario == "request_input" and not supplemental:
+            return output_type.model_validate(
+                AgentAction(kind="request_input", summary="请补充目标受众").model_dump()
+            )
+        if self.scenario in {"request_input", "advisory"}:
+            return output_type.model_validate(
+                AgentAction(
+                    kind="finish",
+                    summary="生成建议回答",
+                    answer=f"建议：{supplemental[-1] if supplemental else '采用分阶段方案'}",
+                ).model_dump()
+            )
+        if self.scenario == "structured":
+            return output_type.model_validate(
+                AgentAction(
+                    kind="finish",
+                    summary="生成结构化结果",
+                    structured_output={"title": "validated", "priority": 1},
+                ).model_dump()
+            )
         if observations and observations[-1]["success"]:
             latest = observations[-1]
             value = AgentAction(

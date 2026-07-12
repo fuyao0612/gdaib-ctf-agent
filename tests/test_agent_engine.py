@@ -1,8 +1,11 @@
+import asyncio
 
+import httpx
 import pytest
 
 from tests.fakes import FakeEchoTool, FakeModelProvider
-from yuwang.agent import AgentEngine, AgentStateModel, BudgetExceeded
+from yuwang.agent import AgentEngine, AgentStateModel, BudgetExceeded, ComponentRegistry
+from yuwang.agent.engine import AgentDeclaredFailure
 from yuwang.domain.models import (
     AgentAction,
     AgentPlan,
@@ -16,7 +19,9 @@ from yuwang.domain.models import (
     Thread,
     ToolCall,
 )
+from yuwang.model_providers import OpenAICompatibleProvider
 from yuwang.policy import PolicyEngine
+from yuwang.settings import AgentProfileInput, AgentProfileVersion
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolRegistry, ToolSpec
 
@@ -29,13 +34,23 @@ class NonIdempotentFakeEchoTool(FakeEchoTool):
         return value
 
 
-def build_engine(tmp_path, scenario="success"):
+def build_engine(tmp_path, scenario="success", profile=None):
     repository = SQLiteRepository(tmp_path / "agent.db")
     registry = ToolRegistry()
     registry.register(FakeEchoTool())
     return repository, AgentEngine(
-        repository, FakeModelProvider(scenario), registry, PolicyEngine()
+        repository,
+        FakeModelProvider(scenario),
+        registry,
+        PolicyEngine(),
+        profile=profile,
+        artifact_root=tmp_path / "artifacts",
     )
+
+
+def profile_for(**overrides):
+    value = AgentProfileInput(name="test profile", **overrides)
+    return AgentProfileVersion(**value.model_dump(), version=1)
 
 
 @pytest.mark.asyncio
@@ -80,6 +95,154 @@ async def test_provider_failure_is_safe_and_reported(tmp_path):
     assert repository.get_report(run.id)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scenario", "profile", "expected_status", "expected_level"),
+    [
+        (
+            "advisory",
+            profile_for(completion_mode="advisory"),
+            "unverified",
+            "model",
+        ),
+        (
+            "structured",
+            profile_for(
+                completion_mode="structured",
+                validation_policy={
+                    "require_external_evidence": False,
+                    "json_schema": {
+                        "type": "object",
+                        "required": ["title", "priority"],
+                        "properties": {
+                            "title": {"type": "string"},
+                            "priority": {"type": "integer"},
+                        },
+                    },
+                },
+            ),
+            "validated",
+            "structured",
+        ),
+    ],
+)
+async def test_pure_model_completion_modes_keep_trust_distinct(
+    tmp_path, scenario, profile, expected_status, expected_level
+):
+    repository, engine = build_engine(tmp_path, scenario, profile)
+    thread = repository.save_thread(Thread(title=scenario))
+    run = repository.save_run(Run(thread_id=thread.id))
+    await engine.run(run.id, TaskSpec(body="generate an answer"))
+    finished = repository.get_run(run.id)
+    assert finished and finished.status == RunStatus.COMPLETED
+    assert finished.validation_status == expected_status
+    assert finished.evidence_level == expected_level
+    report = repository.get_report(run.id)
+    assert report and report[1]["evidence_level"] == expected_level
+    if scenario == "advisory":
+        assert "未经外部验证" in report[0]
+
+
+@pytest.mark.asyncio
+async def test_waiting_input_resumes_from_checkpoint_without_resetting_budget(tmp_path):
+    profile = profile_for(completion_mode="advisory")
+    repository, engine = build_engine(tmp_path, "request_input", profile)
+    thread = repository.save_thread(Thread(title="waiting"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    task = TaskSpec(body="ask for missing context")
+    await engine.run(run.id, task)
+    waiting = repository.get_run(run.id)
+    assert waiting and waiting.status == RunStatus.WAITING_INPUT
+    checkpoint = repository.latest_checkpoint(run.id)
+    assert checkpoint and checkpoint.node == "request_input"
+    state = AgentStateModel.model_validate(checkpoint.state)
+    consumed_steps = state.step
+    state.supplemental_inputs.append("面向技术团队")
+    state.action = None
+    repository.save_checkpoint(run.id, "input_received", state.model_dump(mode="json"))
+    waiting.transition(RunStatus.RUNNING)
+    repository.save_run(waiting)
+    resumed_engine = AgentEngine(
+        repository,
+        FakeModelProvider("request_input"),
+        engine.registry,
+        PolicyEngine(),
+        profile=profile,
+        artifact_root=tmp_path / "artifacts",
+    )
+    await resumed_engine.resume(run.id, task)
+    finished = repository.get_run(run.id)
+    assert finished and finished.status == RunStatus.COMPLETED
+    assert repository.latest_checkpoint(run.id).state["step"] > consumed_steps
+
+
+@pytest.mark.asyncio
+async def test_cancelling_inflight_model_request_marks_run_stopped(tmp_path):
+    repository, engine = build_engine(tmp_path, "timeout")
+    thread = repository.save_thread(Thread(title="cancel"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    handle = asyncio.create_task(engine.run(run.id, TaskSpec(body="slow request")))
+    await asyncio.sleep(0.02)
+    handle.cancel()
+    await handle
+    stopped = repository.get_run(run.id)
+    assert stopped and stopped.status == RunStatus.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_competition_request_input_fails_instead_of_fake_waiting(tmp_path):
+    profile = profile_for(completion_mode="advisory")
+    repository, engine = build_engine(tmp_path, "request_input", profile)
+    thread = repository.save_thread(Thread(title="competition", mode="competition"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    await engine.run(run.id, TaskSpec(body="no input", mode="competition"))
+    failed = repository.get_run(run.id)
+    assert failed and failed.status == RunStatus.FAILED
+    assert failed.status != RunStatus.WAITING_INPUT
+
+
+@pytest.mark.asyncio
+async def test_declarative_direct_workflow_can_omit_planning_nodes(tmp_path):
+    profile = profile_for(
+        completion_mode="advisory",
+        planning_strategy="direct",
+        workflow={
+            "nodes": ["normalize_task", "select_action", "verify", "generate_report"]
+        },
+    )
+    repository, engine = build_engine(tmp_path, "advisory", profile)
+    thread = repository.save_thread(Thread(title="direct"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    await engine.run(run.id, TaskSpec(body="direct answer"))
+    assert repository.get_run(run.id).status == RunStatus.COMPLETED
+    assert not any(event.type == EventType.PLAN_UPDATED for event in repository.list_events(run.id))
+
+
+def test_context_drift_plan_loop_and_component_registry_are_rejected(tmp_path):
+    repository, engine = build_engine(tmp_path)
+    thread = repository.save_thread(Thread(title="guards"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="original"))
+    engine._context(state, "first")
+    state.task = TaskSpec(body="changed")
+    with pytest.raises(AgentDeclaredFailure, match="漂移"):
+        engine._context(state, "second")
+
+    state.plan = AgentPlan(summary="same", steps=["one"], success_approach="same")
+    engine._track_plan_progress(state)
+    engine._track_plan_progress(state)
+    with pytest.raises(AgentDeclaredFailure, match="循环规划"):
+        engine._track_plan_progress(state)
+
+    registry = ComponentRegistry()
+    registry.register("planner", object())
+    assert registry.require("planner")
+    with pytest.raises(ValueError, match="已注册"):
+        registry.register("planner", object())
+    with pytest.raises(KeyError, match="未注册"):
+        registry.require("missing")
+
+
 def test_budget_guards_and_stop(tmp_path):
     repository, engine = build_engine(tmp_path)
     thread = repository.save_thread(Thread(title="budget"))
@@ -96,6 +259,7 @@ def test_budget_guards_and_stop(tmp_path):
         (Budget(max_model_calls=1), {"model_calls": 2}),
         (Budget(max_tool_calls=1), {"tool_calls": 2}),
         (Budget(max_tokens=10), {"tokens": 11}),
+        (Budget(max_model_cost=0.01), {"model_cost": 0.02}),
         (Budget(max_duration_seconds=1), {"elapsed_seconds": 2}),
     ],
 )
@@ -110,6 +274,48 @@ def test_each_budget_dimension_is_enforced(tmp_path, budget, state_update):
     )
     with pytest.raises(BudgetExceeded):
         engine._checkpoint("budget", state)
+
+
+@pytest.mark.asyncio
+async def test_engine_accounts_provider_reported_requests_and_tokens(tmp_path):
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"summary":"plan","steps":["one"],"success_approach":"verify"}'
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 31, "completion_tokens": 7, "total_tokens": 38},
+            },
+        )
+
+    repository = SQLiteRepository(tmp_path / "metering.db")
+    thread = repository.save_thread(Thread(title="metering"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    provider = OpenAICompatibleProvider(
+        name="metered",
+        base_url="https://provider.test/v1",
+        api_key="test-provider-key",
+        model="metered-model",
+        input_price_per_million=2,
+        output_price_per_million=4,
+        structured_mode="json_object",
+        transport=httpx.MockTransport(handler),
+    )
+    engine = AgentEngine(repository, provider, ToolRegistry(), PolicyEngine())
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="meter this call"))
+    result = await engine._model_call(state, AgentPlan, "metering test")
+    assert isinstance(result, AgentPlan)
+    assert state.model_calls == 1 and state.tokens == 38
+    assert state.model_cost == pytest.approx(0.00009)
+    recorded = repository.list_model_calls(run.id)[0]
+    assert (recorded.input_tokens, recorded.output_tokens) == (31, 7)
+    assert recorded.metadata["usage_reported"] is True
+    assert recorded.metadata["cost"] == pytest.approx(0.00009)
 
 
 @pytest.mark.asyncio

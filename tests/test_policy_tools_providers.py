@@ -56,6 +56,8 @@ def provider_with_transport(
         model="test-model",
         max_retries=retries,
         structured_mode=mode,
+        input_price_per_million=2,
+        output_price_per_million=4,
         transport=transport,
     )
 
@@ -71,18 +73,19 @@ async def test_compatible_provider_validates_schema_and_never_sends_key_in_url()
             200,
             json={
                 "choices": [
-                    {
-                        "message": {
-                            "content": '{"kind":"finish","summary":"done","tool_input":{}}'
-                        }
-                    }
-                ]
+                    {"message": {"content": '{"kind":"finish","summary":"done","tool_input":{}}'}}
+                ],
+                "usage": {"prompt_tokens": 17, "completion_tokens": 5, "total_tokens": 22},
             },
         )
 
     provider = provider_with_transport(httpx.MockTransport(handler))
     action = await provider.generate_structured("task", AgentAction)
     assert action.kind == "finish"
+    assert provider.last_call_metrics
+    assert provider.last_call_metrics.total_tokens == 22
+    assert provider.last_call_metrics.cost == pytest.approx(0.000054)
+    assert provider.last_call_metrics.usage_reported
 
 
 @pytest.mark.asyncio
@@ -126,6 +129,24 @@ async def test_provider_retries_only_transient_statuses(status, category):
 
 
 @pytest.mark.asyncio
+async def test_provider_request_budget_caps_configured_retries():
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    provider = provider_with_transport(httpx.MockTransport(handler), retries=8)
+    with pytest.raises(ProviderError) as caught:
+        await provider.generate_structured("task", AgentAction, request_budget=2)
+    assert calls == 2
+    assert caught.value.metrics
+    assert caught.value.metrics.request_count == 2
+    assert caught.value.metrics.retry_count == 1
+
+
+@pytest.mark.asyncio
 async def test_provider_invalid_output_and_refusal_are_classified():
     responses = iter(
         [
@@ -146,10 +167,15 @@ async def test_provider_invalid_output_and_refusal_are_classified():
 
 
 @pytest.mark.asyncio
-async def test_provider_chain_falls_back_without_agent_changes():
-    chain = ProviderChain([FakeModelProvider("refusal"), FakeModelProvider("success")])
+async def test_provider_chain_falls_back_only_for_configured_categories():
+    chain = ProviderChain(
+        [FakeModelProvider("service"), FakeModelProvider("success")], retry_budget=1
+    )
     action = await chain.generate_structured('{"observations":[]}', AgentAction, timeout=1)
     assert action.tool_name == "test_echo"
+    refusing = ProviderChain([FakeModelProvider("refusal"), FakeModelProvider("success")])
+    with pytest.raises(ProviderError, match="refusal"):
+        await refusing.generate_structured('{"observations":[]}', AgentAction, timeout=1)
 
 
 def test_provider_rejects_empty_key():
@@ -157,3 +183,28 @@ def test_provider_rejects_empty_key():
         OpenAICompatibleProvider(
             name="bad", base_url="https://provider.test", api_key="", model="x"
         )
+
+
+@pytest.mark.asyncio
+async def test_prompt_compatibility_mode_and_model_discovery():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": "model-b"}, {"id": "model-a"}]})
+        body = __import__("json").loads(request.content)
+        assert "response_format" not in body
+        assert "JSON Schema" in body["messages"][0]["content"]
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"kind":"finish","summary":"ok"}'}}],
+                "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            },
+        )
+
+    provider = provider_with_transport(httpx.MockTransport(handler), mode="prompt_json")
+    assert (await provider.generate_structured("task", AgentAction)).kind == "finish"
+    assert await provider.discover_models() == ["model-a", "model-b"]
+    assert [request.method for request in requests] == ["POST", "GET"]

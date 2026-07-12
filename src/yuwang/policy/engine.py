@@ -14,8 +14,12 @@ from yuwang.tooling.sdk import ToolSpec
 class SecurityConfig(BaseModel):
     max_upload_bytes: int = 5 * 1024 * 1024
     max_uploads_per_thread: int = 8
-    allowed_http_hosts: set[str] = Field(default_factory=lambda: {"localhost", "127.0.0.1", "::1", "api"})
-    allowed_extensions: set[str] = Field(default_factory=lambda: {".txt", ".json", ".md", ".log", ".bin"})
+    allowed_http_hosts: set[str] = Field(
+        default_factory=lambda: {"localhost", "127.0.0.1", "::1", "api"}
+    )
+    allowed_extensions: set[str] = Field(
+        default_factory=lambda: {".txt", ".json", ".md", ".log", ".bin"}
+    )
 
 
 class PolicyDecision(BaseModel):
@@ -57,7 +61,10 @@ class PolicyEngine:
                 return PolicyDecision(allowed=False, reason="网络工具缺少有效目标")
             if not task.authorized_targets:
                 return PolicyDecision(allowed=False, reason="任务未声明网络授权目标")
-            if hostname not in task.authorized_targets and raw_target not in task.authorized_targets:
+            if (
+                hostname not in task.authorized_targets
+                and raw_target not in task.authorized_targets
+            ):
                 return PolicyDecision(allowed=False, reason="目标不在任务授权范围")
             if "localhost" in tool.allowed_target_types and not self.is_local_address(hostname):
                 return PolicyDecision(allowed=False, reason="工具仅允许本地测试目标")

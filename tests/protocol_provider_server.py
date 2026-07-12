@@ -13,7 +13,9 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "YuwangProtocolTest/1.0"
 
     def do_GET(self) -> None:  # noqa: N802
-        self._json(200, {"status": "ok"}) if self.path == "/health" else self._json(404, {"error": "not found"})
+        self._json(200, {"status": "ok"}) if self.path == "/health" else self._json(
+            404, {"error": "not found"}
+        )
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path != "/v1/chat/completions":
@@ -24,24 +26,49 @@ class Handler(BaseHTTPRequestHandler):
         prompt = request["messages"][-1]["content"]
         schema_name = request.get("response_format", {}).get("json_schema", {}).get("name")
         content = self._completion(schema_name, prompt)
-        self._json(200, {"id": "protocol-test", "object": "chat.completion", "choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps(content)}}]})
+        self._json(
+            200,
+            {
+                "id": "protocol-test",
+                "object": "chat.completion",
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": json.dumps(content)}}
+                ],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28},
+            },
+        )
 
     @staticmethod
     def _completion(schema_name: str | None, prompt: str) -> dict[str, Any]:
-        if schema_name == "connectionprobe":
+        if schema_name == "connectionprobe" or '"status":"ok"' in prompt:
             return {"status": "ok"}
         context = json.loads(prompt)
         if "slow" in context.get("untrusted_task", "").lower():
             time.sleep(1.2)
-        if schema_name == "agentplan":
+        if schema_name == "agentplan" or "计划" in context.get("purpose", ""):
             return {
                 "summary": "Inspect the uploaded artifact metadata and verify its digest.",
                 "steps": ["Read controlled attachment metadata", "Return sourced digest evidence"],
                 "success_approach": "Bind the SHA-256 candidate to the successful tool call.",
             }
-        observations = context.get("observations", [])
+        observations = context.get("observations_untrusted", context.get("observations", []))
+        task = context.get("untrusted_task", "").lower()
+        if "human-input" in task:
+            if not context.get("supplemental_inputs"):
+                return {"kind": "request_input", "summary": "Please provide the missing scope."}
+            return {
+                "kind": "finish",
+                "summary": "Produce an advisory answer after human input.",
+                "answer": "A staged, reversible rollout is recommended.",
+            }
+        if "advisory-only" in task:
+            return {
+                "kind": "finish",
+                "summary": "Produce an advisory answer without external evidence.",
+                "answer": "Review the plan with the authorized operator before execution.",
+            }
         if not observations:
-            attachment = context["attachments"][0]
+            attachment = context.get("attachments_untrusted", context.get("attachments", []))[0]
             return {
                 "kind": "call_tool",
                 "summary": "Compute metadata for the controlled attachment.",
@@ -52,7 +79,11 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "kind": "finish",
             "summary": "Submit the tool-produced digest for deterministic verification.",
-            "candidate": {"value": latest["output"]["sha256"], "source_call_id": latest["call_id"], "location": "/sha256"},
+            "candidate": {
+                "value": latest["output"]["sha256"],
+                "source_call_id": latest["call_id"],
+                "location": "/sha256",
+            },
         }
 
     def _json(self, status: int, body: dict[str, Any]) -> None:
@@ -61,7 +92,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
-        self.wfile.write(encoded)
+        try:
+            self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionAbortedError):
+            return
 
     def log_message(self, format: str, *args: object) -> None:
         return

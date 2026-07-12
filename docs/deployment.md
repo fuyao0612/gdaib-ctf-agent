@@ -1,31 +1,56 @@
-# 生产部署、备份与故障排查
+# 部署、备份与故障排查
 
-## 部署前
+御网智元定位为单实例自托管服务，不是公网多租户 SaaS。生产环境必须在外层配置 HTTPS、身份访问控制、速率限制与定期备份；不要直接把 8080 端口暴露到公网。
 
-在独立密钥管理系统生成并保存 `YUWANG_MASTER_KEY` 和高熵 `YUWANG_ADMIN_TOKEN`，通过部署环境注入。不要把真实值写入 Compose 文件、镜像层、仓库或工单。限制 8080 入口的网络范围，在外层反向代理启用 HTTPS、访问日志脱敏、请求速率限制和身份认证。
+## 首次部署
 
-执行 `docker compose config --quiet` 和 `docker compose build` 后再 `docker compose up -d`。用 `/api/v1/health` 检查版本，应返回 `0.2.0`。进入设置中心录入 Provider 密钥并做连接测试。
-
-## 持久化与备份
-
-SQLite、附件、Provider 密文、检查点和报告都位于 `yuwang-data` 卷。备份时先暂停写入并复制整个 `/data`，确保数据库与附件一致：
+Windows PowerShell：
 
 ```powershell
-docker compose stop api
-docker run --rm -v yuwang_yuwang-data:/data -v ${PWD}:/backup alpine tar czf /backup/yuwang-data.tgz -C /data .
-docker compose start api
+.\scripts\first-setup.ps1 -Start
 ```
 
-恢复时先停服务，把备份解压到空卷，再使用备份时对应的 `YUWANG_MASTER_KEY` 启动。主密钥丢失时 Provider 密文无法恢复；数据备份和密钥备份必须分离保存并定期演练。
+Linux/macOS：
 
-## 升级与回滚
+```bash
+./scripts/first-setup.sh --start
+```
 
-升级前备份卷，记录镜像标签和健康状态。拉取新版本后执行构建、启动、健康检查、设置列表读取与历史报告读取。回滚应用镜像不会自动回滚数据库；必须使用升级前的一致性备份。
+脚本只在 `.env` 不存在时生成高熵管理员令牌和 Fernet 主密钥，绝不覆盖已有文件，也不会把密钥打印到日志。`.env` 权限应仅限服务账户，并与数据备份分开离线保管。首次打开 `http://localhost:8080` 会进入配置向导：管理员登录、添加 Provider、执行真实连接测试、确认默认 Agent，然后开始对话。Provider API Key 只在设置中心提交，并以主密钥加密后持久化。
+
+可通过 `.env` 调整 `YUWANG_WEB_PORT`、`YUWANG_DATA_PATH`、CORS、Cookie Secure 标志和 API/Web 的 CPU、内存上限。Compose 的一次性 `data-init` 服务只负责建立目录并把持久化数据交给固定 UID 10001，随后退出；长期运行的 API 仍是非 root 用户。API/Web 使用只读根文件系统、受限 tmpfs、最小 capabilities 且禁止提权。HTTPS 部署必须设置 `YUWANG_COOKIE_SECURE=true`，并把 `YUWANG_CORS_ORIGINS` 改为准确的 HTTPS 来源。
+
+## 健康与就绪
+
+- `/api/v1/health`：只表明进程存活并返回版本，供容器健康检查使用。
+- `/api/v1/readiness`：检查数据库、主密钥、管理员配置和至少一个启用的 Provider；首次配置前返回 503 是正常行为。
+- `/api/v1/setup/status`：供首次配置界面读取非敏感检查结果，不返回令牌、密钥或内部路径。
+
+## 备份、恢复和迁移
+
+备份会短暂停止 API，保证 SQLite、附件、检查点和报告一致：
+
+```powershell
+.\scripts\backup.ps1
+.\scripts\restore.ps1 -Backup .\yuwang-backup-20260712-120000.zip -Force
+.\scripts\preflight.ps1
+.\scripts\migrate.ps1
+```
+
+```bash
+./scripts/backup.sh
+./scripts/restore.sh ./yuwang-backup-20260712-120000.tgz ./data --force
+./scripts/preflight.sh
+./scripts/migrate.sh
+```
+
+恢复只允许项目目录内的数据路径，要求显式确认，并在恢复前停止容器。必须使用备份对应的 `YUWANG_MASTER_KEY`，否则 Provider 密文无法解密。升级顺序为：一致性备份 → `preflight` → 拉取代码/镜像 → `migrate` → 构建启动 → 检查 health/readiness → 抽查历史 Thread 与报告。应用回滚不会自动回滚数据库，必须使用升级前备份。
 
 ## 故障排查
 
-- 健康检查失败：查看 `docker compose ps` 和 `docker compose logs api web`，确认卷可写、端口未占用。
-- 设置服务返回 503：确认主密钥和管理员令牌已注入，Fernet 主密钥格式有效。
-- Provider 连接失败：按错误分类检查鉴权、额度、模型名、HTTPS 证书和厂商 Base URL；系统不会跟随重定向。
-- 运行恢复失败：查询 `/api/v1/runs/{id}/audit`。缺少检查点/快照或存在结果不确定的非幂等工具调用时，系统会安全失败而不是重放副作用。
-- SSE 断线：浏览器会携带 `Last-Event-ID` 重连；也可用事件查询 API 的 `after` 参数补取。
+- health 失败：检查 `docker compose ps`、API 日志、端口冲突和数据目录权限。
+- readiness 的 `master_key/admin` 失败：检查 `.env` 是否完整、Fernet 格式是否有效；不要把值贴到工单或聊天。
+- readiness 的 `provider` 失败：登录设置中心，启用默认 Provider 并运行连接测试。
+- Provider 连接失败：根据中文错误检查鉴权、额度、模型名、HTTPS 证书和 Base URL；测试协议服务不代表真实厂商联网成功。
+- 历史恢复失败：查看 `/api/v1/runs/{id}/audit`；结果不确定的非幂等调用会安全失败，不会自动重放。
+- SSE 断线：浏览器使用事件序号恢复，也可通过事件查询 API 的 `after` 参数补取。

@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
           docker compose up -d --wait
-          curl --fail --silent http://localhost:8080/api/v1/health | python -c "import json,sys; assert json.load(sys.stdin)['version'] == '0.2.0'"
+          curl --fail --silent http://localhost:8080/api/v1/health | python -c "import json,sys; assert json.load(sys.stdin)['version'] == '0.3.0'"
           THREAD_ID=$(curl --fail --silent -X POST -H 'Content-Type: application/json' -d '{"title":"ci-recovery","mode":"normal"}' http://localhost:8080/api/v1/threads | python -c "import json,sys; print(json.load(sys.stdin)['id'])")
           docker compose restart
           for attempt in {1..60}; do curl --fail --silent http://localhost:8080/api/v1/health >/dev/null && break; sleep 1; done

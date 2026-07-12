@@ -10,7 +10,7 @@ mypy
 python scripts/check_production_surface.py
 ```
 
-`pytest` 覆盖 Provider 协议与错误分类、设置加密、仓储并发事件序号、预算、策略、自主循环、确定性证据验证、检查点恢复、非幂等不确定调用拒绝恢复和 FastAPI 集成。全量后端覆盖率必须不低于 80%，Agent 核心必须不低于 90%。
+`pytest` 覆盖 Provider 协议与错误分类、设置加密、配置版本与迁移、上下文裁剪与记忆、纯模型完成、人工补充、仓储并发事件序号、预算、策略、自主循环、确定性证据验证、检查点恢复、非幂等不确定调用拒绝恢复和 FastAPI 集成。全量后端覆盖率必须不低于 85%，Agent 核心必须不低于 90%。
 
 真实厂商冒烟测试默认跳过。只有明确准备隔离测试账户后才运行：
 
@@ -35,7 +35,7 @@ npx playwright install chromium
 npm run e2e
 ```
 
-Playwright 启动隔离 FastAPI、SQLite 和独立 OpenAI 兼容协议测试服务，覆盖设置与连接测试、附件、真实生产工具、SSE、停止/重试、报告下载入口和刷新后恢复。协议服务只位于 `tests/`，不会进入生产镜像。
+Playwright 启动隔离 FastAPI、SQLite 和独立 OpenAI 兼容协议测试服务，覆盖首次配置、Agent 创建与版本回滚、建议回答、人工补充、设置与连接测试、附件、真实生产工具、SSE、停止/重试、报告下载入口和刷新后恢复。协议服务只位于 `tests/`，不会进入生产镜像，也不能作为真实厂商测试证据。
 
 ## Docker
 
