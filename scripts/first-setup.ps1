@@ -8,7 +8,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $envFile = Join-Path $root '.env'
 
 if (Test-Path -LiteralPath $envFile) {
-    Write-Host '.env already exists; no changes were made.'
+    Write-Host 'Existing .env detected; current configuration will be kept.'
 } else {
     $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     try {
@@ -32,6 +32,18 @@ if (Test-Path -LiteralPath $envFile) {
 
 & (Join-Path $PSScriptRoot 'preflight.ps1')
 if ($Start) {
+    Write-Host 'Building and starting services. The first run may take a few minutes...'
     Push-Location $root
-    try { docker compose up -d --build } finally { Pop-Location }
+    try {
+        docker compose up -d --build --wait
+        if ($LASTEXITCODE) { throw 'Docker Compose failed. Run docker compose logs to inspect the logs.' }
+    } finally {
+        Pop-Location
+    }
+    Write-Host ''
+    Write-Host 'Startup complete:' -ForegroundColor Green
+    Write-Host '  Open:   http://localhost:8080'
+    Write-Host '  Status: docker compose ps'
+    Write-Host '  Logs:   docker compose logs -f'
+    Write-Host '  Stop:   docker compose down'
 }
