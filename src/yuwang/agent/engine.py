@@ -14,13 +14,10 @@ from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, ConfigDict, Field
 
 from yuwang.agent.components import (
-    ComponentRegistry,
-    DefaultActionSelector,
-    DefaultContextBuilder,
-    DefaultPlanner,
-    DefaultReportRenderer,
-    DefaultVerifier,
+    AgentComponents,
+    default_components,
 )
+from yuwang.agent.repository import AgentRepository
 from yuwang.domain.models import (
     AgentAction,
     AgentPlan,
@@ -123,14 +120,14 @@ class AgentEngine:
 
     def __init__(
         self,
-        repository: Any,
+        repository: AgentRepository,
         provider: ModelProvider,
         registry: ToolRegistry,
         policy: PolicyEngine,
         *,
         profile: AgentProfileVersion | None = None,
         artifact_root: Path | None = None,
-        components: ComponentRegistry | None = None,
+        components: AgentComponents | None = None,
     ) -> None:
         self.repository = repository
         self.provider = provider
@@ -141,13 +138,14 @@ class AgentEngine:
         self.profile = profile or AgentProfileVersion(
             **AgentProfileInput(name="默认安全 Agent").model_dump(), version=1
         )
-        self.components = components or ComponentRegistry()
-        self.workflow_nodes = ComponentRegistry()
-        self.context_builder = DefaultContextBuilder(repository, artifact_root or Path("data/artifacts"))
-        self.planner = DefaultPlanner()
-        self.action_selector = DefaultActionSelector()
-        self.reporter = DefaultReportRenderer()
-        self.verifier = DefaultVerifier()
+        self.components = components or default_components(
+            repository, artifact_root or Path("data/artifacts")
+        )
+        self.context_builder = self.components.context_builder
+        self.planner = self.components.planner
+        self.action_selector = self.components.action_selector
+        self.reporter = self.components.report_renderer
+        self.verifier = self.components.verifier
         self._last_tick: dict[UUID, float] = {}
         self.graph = self._build_graph()
 
@@ -709,8 +707,6 @@ class AgentEngine:
         ]
         for name, function in node_functions:
             add_node(name, function)
-            if name not in {"ingest", "complete", "fail"} and name not in self.workflow_nodes:
-                self.workflow_nodes.register(name, function)
         graph.set_entry_point(entry_point)
         graph.add_edge("ingest", "normalize_task")
         graph.add_edge(

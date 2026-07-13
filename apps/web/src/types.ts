@@ -39,7 +39,7 @@ export interface AgentProfileInput {
   memory_policy: { enabled: boolean; persist_important_facts: boolean; max_facts: number }
   completion_mode: CompletionMode; validation_policy: { require_external_evidence: boolean; json_schema: Record<string, unknown> | null }
   intervention_policy: { normal_mode: 'wait' | 'fail'; competition_mode: 'replan' | 'fail'; max_requests: number }
-  workflow: { nodes: string[] }; report_template: string; enabled: boolean; is_default: boolean
+  workflow: { preset: 'direct' | 'planned' | 'verified' }; report_template: string; enabled: boolean; is_default: boolean
 }
 export interface AgentProfile extends AgentProfileInput { profile_id: string; version: number; schema_version: string; created_at: string }
 export interface MemoryRecord { id: string; thread_id: string; kind: string; content: string; enabled: boolean; source_run_id: string | null; created_at: string }

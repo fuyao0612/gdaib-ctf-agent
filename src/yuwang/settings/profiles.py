@@ -25,17 +25,17 @@ TEMPLATE_VARIABLES: dict[str, type[Any]] = {
     "observations": str,
     "remaining_budget": str,
 }
-WORKFLOW_NODES = {
-    "normalize_task",
-    "plan",
-    "select_action",
-    "policy_check",
-    "execute_tool",
-    "observe",
-    "verify",
-    "replan",
-    "request_input",
-    "generate_report",
+WorkflowPreset = Literal["direct", "planned", "verified"]
+WORKFLOW_PRESETS: dict[WorkflowPreset, tuple[str, ...]] = {
+    "direct": ("normalize_task", "select_action", "verify", "generate_report"),
+    "planned": (
+        "normalize_task", "plan", "select_action", "policy_check", "execute_tool",
+        "observe", "verify", "request_input", "generate_report",
+    ),
+    "verified": (
+        "normalize_task", "plan", "select_action", "policy_check", "execute_tool",
+        "observe", "verify", "replan", "request_input", "generate_report",
+    ),
 }
 
 
@@ -69,36 +69,32 @@ class HumanInterventionPolicy(BaseModel):
 
 
 class WorkflowDefinition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    nodes: list[str] = Field(
-        default_factory=lambda: [
-            "normalize_task",
-            "plan",
-            "select_action",
-            "policy_check",
-            "execute_tool",
-            "observe",
-            "verify",
-            "replan",
-            "request_input",
-            "generate_report",
-        ],
-        min_length=3,
-        max_length=20,
-    )
+    """安全工作流预设；不接受用户拼装任意节点或上传执行代码。"""
 
-    @field_validator("nodes")
+    model_config = ConfigDict(extra="forbid")
+    preset: WorkflowPreset = "verified"
+
+    @model_validator(mode="before")
     @classmethod
-    def validate_nodes(cls, value: list[str]) -> list[str]:
-        unknown = set(value) - WORKFLOW_NODES
-        if unknown:
-            raise ValueError(f"工作流包含未注册节点：{sorted(unknown)}")
-        if len(value) != len(set(value)):
-            raise ValueError("工作流节点不能重复")
-        required = {"normalize_task", "select_action", "verify", "generate_report"}
-        if not required.issubset(value):
-            raise ValueError(f"工作流缺少平台必需节点：{sorted(required - set(value))}")
-        return value
+    def migrate_v03_nodes(cls, value: Any) -> Any:
+        """把 v0.3 保存的节点列表映射为最接近的安全预设。"""
+
+        if not isinstance(value, dict) or "nodes" not in value:
+            return value
+        nodes = set(value["nodes"])
+        if nodes == set(WORKFLOW_PRESETS["direct"]):
+            return {"preset": "direct"}
+        if "replan" in nodes:
+            return {"preset": "verified"}
+        if "plan" in nodes:
+            return {"preset": "planned"}
+        raise ValueError("旧工作流节点无法映射到安全预设")
+
+    @property
+    def nodes(self) -> tuple[str, ...]:
+        """返回引擎使用的只读节点顺序。"""
+
+        return WORKFLOW_PRESETS[self.preset]
 
 
 class AgentProfileInput(BaseModel):

@@ -113,6 +113,24 @@ def test_profile_export_import_is_secretless_and_template_safe(tmp_path):
             SafeTemplateRenderer.validate(unsafe)
 
 
+def test_workflow_uses_three_safe_presets_and_migrates_v03_nodes():
+    assert AgentProfileInput(name="direct", workflow={"preset": "direct"}).workflow.nodes == (
+        "normalize_task", "select_action", "verify", "generate_report"
+    )
+    planned = AgentProfileInput(name="planned", workflow={"preset": "planned"})
+    assert "plan" in planned.workflow.nodes and "replan" not in planned.workflow.nodes
+    verified = AgentProfileInput(name="verified", workflow={"preset": "verified"})
+    assert "plan" in verified.workflow.nodes and "replan" in verified.workflow.nodes
+
+    migrated = AgentProfileInput(
+        name="v0.3",
+        workflow={"nodes": ["normalize_task", "select_action", "verify", "generate_report"]},
+    )
+    assert migrated.workflow.preset == "direct"
+    with pytest.raises(ValueError, match="安全预设"):
+        AgentProfileInput(name="unsafe", workflow={"nodes": ["custom_python"]})
+
+
 def test_v02_database_and_json_rows_migrate_without_profile_fields(tmp_path):
     path = tmp_path / "legacy.db"
     legacy_thread = Thread(title="v0.2 thread").model_dump(mode="json")

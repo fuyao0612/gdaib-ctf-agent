@@ -4,7 +4,8 @@ import httpx
 import pytest
 
 from tests.fakes import FakeEchoTool, FakeModelProvider
-from yuwang.agent import AgentEngine, AgentStateModel, BudgetExceeded, ComponentRegistry
+from yuwang.agent import AgentEngine, AgentStateModel, BudgetExceeded
+from yuwang.agent.components import AgentComponents, default_components
 from yuwang.agent.engine import AgentDeclaredFailure
 from yuwang.domain.models import (
     AgentAction,
@@ -34,7 +35,7 @@ class NonIdempotentFakeEchoTool(FakeEchoTool):
         return value
 
 
-def build_engine(tmp_path, scenario="success", profile=None):
+def build_engine(tmp_path, scenario="success", profile=None, components: AgentComponents | None = None):
     repository = SQLiteRepository(tmp_path / "agent.db")
     registry = ToolRegistry()
     registry.register(FakeEchoTool())
@@ -45,6 +46,7 @@ def build_engine(tmp_path, scenario="success", profile=None):
         PolicyEngine(),
         profile=profile,
         artifact_root=tmp_path / "artifacts",
+        components=components,
     )
 
 
@@ -218,7 +220,7 @@ async def test_declarative_direct_workflow_can_omit_planning_nodes(tmp_path):
     assert not any(event.type == EventType.PLAN_UPDATED for event in repository.list_events(run.id))
 
 
-def test_context_drift_plan_loop_and_component_registry_are_rejected(tmp_path):
+def test_context_drift_and_plan_loop_are_rejected(tmp_path):
     repository, engine = build_engine(tmp_path)
     thread = repository.save_thread(Thread(title="guards"))
     run = repository.save_run(Run(thread_id=thread.id))
@@ -234,13 +236,35 @@ def test_context_drift_plan_loop_and_component_registry_are_rejected(tmp_path):
     with pytest.raises(AgentDeclaredFailure, match="循环规划"):
         engine._track_plan_progress(state)
 
-    registry = ComponentRegistry()
-    registry.register("planner", object())
-    assert registry.require("planner")
-    with pytest.raises(ValueError, match="已注册"):
-        registry.register("planner", object())
-    with pytest.raises(KeyError, match="未注册"):
-        registry.require("missing")
+
+
+@pytest.mark.asyncio
+async def test_explicit_component_bundle_replaces_planner(tmp_path):
+    class SimplePlanner:
+        called = False
+
+        async def plan(self, state, invoke):
+            self.called = True
+            return AgentPlan(summary="custom", steps=["one"], success_approach="safe")
+
+    repository = SQLiteRepository(tmp_path / "components.db")
+    components = default_components(repository, tmp_path / "artifacts")
+    planner = SimplePlanner()
+    components.planner = planner
+    registry = ToolRegistry()
+    registry.register(FakeEchoTool())
+    engine = AgentEngine(
+        repository,
+        FakeModelProvider("advisory"),
+        registry,
+        PolicyEngine(),
+        profile=profile_for(completion_mode="advisory"),
+        components=components,
+    )
+    thread = repository.save_thread(Thread(title="components"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    await engine.run(run.id, TaskSpec(body="component injection"))
+    assert planner.called
 
 
 def test_budget_guards_and_stop(tmp_path):
