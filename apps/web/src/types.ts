@@ -1,3 +1,4 @@
+/** 与后端公开 JSON 契约一一对应的工作台类型。 */
 export type Mode = 'normal' | 'competition'
 export type RunStatus = 'queued' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'stopped'
 export interface Thread { id: string; title: string; mode: Mode; agent_profile_id: string | null; agent_profile_version: number | null; archived: boolean; created_at: string; updated_at: string }

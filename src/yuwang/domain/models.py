@@ -1,3 +1,5 @@
+"""跨层共享的领域模型与状态转换约束，不包含基础设施细节。"""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

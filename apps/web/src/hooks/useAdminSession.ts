@@ -1,3 +1,4 @@
+/** 恢复 HttpOnly 会话对应的 CSRF 令牌；管理员令牌本身从不持久化。 */
 import { useCallback, useEffect, useState } from 'react'
 import { api, setSessionCsrf } from '../api'
 

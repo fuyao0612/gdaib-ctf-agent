@@ -1,3 +1,4 @@
+# 启动前检查环境、Compose 配置、权限和必需密钥是否满足生产条件。
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $envFile = Join-Path $root '.env'

@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# 首次部署助手：仅在缺失时生成密钥，绝不把密钥打印到终端。
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 ENV_FILE="$ROOT/.env"

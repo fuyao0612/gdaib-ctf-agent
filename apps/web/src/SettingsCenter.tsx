@@ -1,3 +1,4 @@
+/** 设置中心：通过短期服务端会话管理 Provider 与版本化 Agent 配置。 */
 import { type FormEvent, useEffect, useState } from 'react'
 import { api } from './api'
 import AgentProfileCenter from './components/AgentProfileCenter'

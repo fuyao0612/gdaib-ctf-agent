@@ -1,3 +1,5 @@
+"""设置用例服务：协调校验、密钥加密、默认项和 fallback 顺序。"""
+
 from __future__ import annotations
 
 from typing import Protocol

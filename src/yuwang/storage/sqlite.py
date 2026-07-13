@@ -1,3 +1,5 @@
+"""SQLite 数据访问层：显式保存状态、检查点、快照和完整审计链。"""
+
 from __future__ import annotations
 
 import json

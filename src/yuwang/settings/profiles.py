@@ -1,3 +1,5 @@
+"""版本化 AgentProfile：保存行为策略快照，保证历史运行可复现。"""
+
 from __future__ import annotations
 
 import json

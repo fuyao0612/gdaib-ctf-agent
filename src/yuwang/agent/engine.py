@@ -1,3 +1,5 @@
+"""LangGraph Agent 编排核心：推进状态机并持久化每个可审计决策。"""
+
 from __future__ import annotations
 
 import asyncio

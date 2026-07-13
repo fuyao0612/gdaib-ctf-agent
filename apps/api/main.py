@@ -1,3 +1,5 @@
+"""御网智元 HTTP 适配层：负责鉴权、输入校验、运行调度和审计查询。"""
+
 from __future__ import annotations
 
 import asyncio

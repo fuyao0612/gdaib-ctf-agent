@@ -1,3 +1,4 @@
+/** 浏览器 API 边界：统一凭据、CSRF、错误结构和 JSON 编解码。 */
 import type { AgentDefaults, AgentProfile, AgentProfileInput, AgentProfileSummary, Artifact, Event, MemoryRecord, ProviderConfig, ProviderConfigInput, Report, Run, RunAudit, SetupStatus, Thread, ThreadDetail } from './types'
 
 const API = '/api/v1'

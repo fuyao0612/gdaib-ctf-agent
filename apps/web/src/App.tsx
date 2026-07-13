@@ -1,3 +1,4 @@
+/** 单页工作台协调器：组合对话、运行流、审计侧栏与设置中心。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { api } from './api'

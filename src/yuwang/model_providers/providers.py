@@ -1,3 +1,5 @@
+"""OpenAI 兼容模型适配器与受预算约束的故障转移链。"""
+
 from __future__ import annotations
 
 import asyncio

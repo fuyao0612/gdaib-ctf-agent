@@ -1,3 +1,5 @@
+"""工具调用前的确定性安全策略，默认拒绝未授权目标和高风险参数。"""
+
 from __future__ import annotations
 
 import ipaddress

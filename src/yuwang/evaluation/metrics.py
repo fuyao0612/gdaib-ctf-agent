@@ -1,3 +1,5 @@
+"""用于离线评估 Agent 运行质量的轻量指标。"""
+
 from pydantic import BaseModel, Field
 
 

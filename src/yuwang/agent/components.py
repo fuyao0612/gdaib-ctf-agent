@@ -1,3 +1,5 @@
+"""Agent 可替换组件：上下文、规划、验证与记忆均通过明确协议协作。"""
+
 from __future__ import annotations
 
 import json

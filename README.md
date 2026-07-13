@@ -69,4 +69,5 @@ npm run e2e
 - [升级指南](docs/upgrade.md)
 - [故障排查](docs/troubleshooting.md)
 - [工具开发](docs/tool-development.md)
+- [代码阅读与学习指南](docs/learning-guide.md)
 - [协作规范](CONTRIBUTING.md)

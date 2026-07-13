@@ -1,3 +1,5 @@
+"""Provider 与平台默认设置模型，集中承担校验和向后兼容。"""
+
 from __future__ import annotations
 
 from enum import StrEnum

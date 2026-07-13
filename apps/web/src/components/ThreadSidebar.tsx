@@ -1,3 +1,4 @@
+/** 可搜索的对话导航，包含归档、重命名与删除意图入口。 */
 import { useState } from 'react'
 import type { Thread } from '../types'
 

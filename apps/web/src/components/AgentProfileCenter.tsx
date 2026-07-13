@@ -1,3 +1,4 @@
+/** AgentProfile 编辑器：基础模式隐藏低频参数，专家模式暴露完整策略。 */
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import type { AgentProfile, AgentProfileInput, ProviderConfig } from '../types'

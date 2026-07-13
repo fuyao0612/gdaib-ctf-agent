@@ -1,3 +1,4 @@
+# 首次部署助手：仅在缺失时生成密钥，绝不覆盖既有 .env。
 [CmdletBinding()]
 param([switch]$Start)
 $ErrorActionPreference = 'Stop'
