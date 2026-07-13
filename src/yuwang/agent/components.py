@@ -24,6 +24,7 @@ from yuwang.settings.profiles import (
 
 T = TypeVar("T", bound=BaseModel)
 
+
 class AgentRuntimeState(Protocol):
     """组件可读取的运行状态视图；具体状态模型仍由引擎负责校验。"""
 
@@ -58,7 +59,9 @@ class ContextBuilder(Protocol):
 
 
 class Planner(Protocol):
-    async def plan(self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentPlan]) -> AgentPlan: ...
+    async def plan(
+        self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentPlan]
+    ) -> AgentPlan: ...
 
 
 class ActionSelector(Protocol):
@@ -83,7 +86,9 @@ class Verifier(Protocol):
 
 
 class ReportRenderer(Protocol):
-    def generate(self, run: Any, task: TaskSpec, events: list[Any], metrics: dict[str, Any]) -> Any: ...
+    def generate(
+        self, run: Any, task: TaskSpec, events: list[Any], metrics: dict[str, Any]
+    ) -> Any: ...
 
 
 class WorkflowNode(Protocol):
@@ -129,9 +134,10 @@ class DefaultContextBuilder:
 
         if truncated and run and policy.include_thread_summary:
             older = messages[: -policy.recent_message_limit]
-            summary = "较早对话摘要（因消息窗口限制生成）：\n" + "\n".join(
-                f"{item.role}: {item.content[:1000]}" for item in older
-            )[:10_000]
+            summary = (
+                "较早对话摘要（因消息窗口限制生成）：\n"
+                + "\n".join(f"{item.role}: {item.content[:1000]}" for item in older)[:10_000]
+            )
             previous = [
                 item
                 for item in self.repository.list_memories(run.thread_id, enabled_only=False)
@@ -264,14 +270,6 @@ class DefaultContextBuilder:
         return result
 
 
-class DefaultVerifier(SuccessVerifier):
-    pass
-
-
-class DefaultReportRenderer(ReportGenerator):
-    pass
-
-
 @dataclass(slots=True)
 class AgentComponents:
     """一次运行使用的可替换组件，字段名称就是完整装配说明。"""
@@ -292,6 +290,7 @@ def default_components(repository: AgentRepository, artifact_root: Path) -> Agen
         action_selector=DefaultActionSelector(),
         context_builder=DefaultContextBuilder(repository, artifact_root),
         memory=repository,
-        verifier=DefaultVerifier(),
-        report_renderer=DefaultReportRenderer(),
+        # 默认实现本身已是完整、无状态组件，无需再包一层空子类。
+        verifier=SuccessVerifier(),
+        report_renderer=ReportGenerator(),
     )

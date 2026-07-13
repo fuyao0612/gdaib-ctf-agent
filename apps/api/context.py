@@ -93,9 +93,7 @@ class ApiContext:
         if not self.config.admin_token:
             raise HTTPException(503, "管理员鉴权未配置")
         scheme, _, token = (authorization or "").partition(" ")
-        if scheme.lower() == "bearer" and secrets.compare_digest(
-            token, self.config.admin_token
-        ):
+        if scheme.lower() == "bearer" and secrets.compare_digest(token, self.config.admin_token):
             return None
         session_id = request.cookies.get("yuwang_admin_session", "")
         session = self.admin_sessions.get(session_id)
@@ -260,7 +258,8 @@ class ApiContext:
                 SecretCipher(self.config.master_key)
                 master_key_ok = True
             except ValueError:
-                pass
+                # 就绪端点只公开布尔状态，避免把密钥格式或内部异常泄露给调用方。
+                master_key_ok = False
         providers = self.repository.list_provider_configs()
         try:
             default_profile = self.profile_service.resolve(None)
@@ -272,9 +271,7 @@ class ApiContext:
                 if default_profile.default_provider_id
                 else next((item for item in providers if item.is_default), None)
             )
-            provider_ok = bool(
-                selected and selected.enabled and selected.connection_status == "ok"
-            )
+            provider_ok = bool(selected and selected.enabled and selected.connection_status == "ok")
         except (KeyError, ValueError):
             provider_ok = False
         return {

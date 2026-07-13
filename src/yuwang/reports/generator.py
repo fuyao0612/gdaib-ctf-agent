@@ -9,6 +9,8 @@ from yuwang.policy import redact
 
 
 class ReportGenerator:
+    """把运行、事件和计量快照渲染成可下载的 Markdown/JSON 报告。"""
+
     def generate(
         self, run: Run, task: TaskSpec, events: list[Event], metrics: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:

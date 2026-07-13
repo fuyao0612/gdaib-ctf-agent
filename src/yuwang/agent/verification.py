@@ -18,7 +18,7 @@ class VerificationResult(BaseModel):
 
 
 class SuccessVerifier:
-    """Deterministic verifier. Model output is only a candidate, never authority."""
+    """确定性验证候选答案；模型输出永远不能充当成功结论。"""
 
     def verify(
         self,
