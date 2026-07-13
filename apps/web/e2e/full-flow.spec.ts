@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 
 const desktopViewports = [
   { width: 1024, height: 768 },
@@ -15,6 +15,21 @@ async function expectNoHorizontalOverflow(
     () => document.documentElement.scrollWidth - window.innerWidth,
   );
   expect(overflow, "页面不应出现非预期横向滚动").toBeLessThanOrEqual(1);
+}
+
+async function expectNoOverlap(
+  first: Locator,
+  second: Locator,
+  message: string,
+) {
+  const [a, b] = await Promise.all([first.boundingBox(), second.boundingBox()]);
+  expect(a, `${message}：第一个元素必须可见`).not.toBeNull();
+  expect(b, `${message}：第二个元素必须可见`).not.toBeNull();
+  const horizontal =
+    a!.x < b!.x + b!.width - 0.5 && b!.x < a!.x + a!.width - 0.5;
+  const vertical =
+    a!.y < b!.y + b!.height - 0.5 && b!.y < a!.y + a!.height - 0.5;
+  expect(horizontal && vertical, message).toBe(false);
 }
 
 async function configureProtocolProvider(
@@ -154,6 +169,11 @@ test("responsive layouts keep setup, settings, composer and audit accessible", a
     expect(panelBox!.y).toBeGreaterThanOrEqual(0);
     expect(panelBox!.x + panelBox!.width).toBeLessThanOrEqual(viewport.width);
     expect(panelBox!.y + panelBox!.height).toBeLessThanOrEqual(viewport.height);
+    await expectNoOverlap(
+      settings.locator("header > div").first(),
+      settings.locator(".settings-header-actions"),
+      "设置标题与操作按钮不能重叠",
+    );
     await expectNoHorizontalOverflow(page);
 
     await page.getByRole("button", { name: "关闭", exact: true }).click();
@@ -184,6 +204,28 @@ test("responsive layouts keep setup, settings, composer and audit accessible", a
     await expect(page.locator(".attachments")).toContainText(
       "very-long-evidence",
     );
+    const heading = page.getByTestId("thread-heading");
+    const topbarActions = page.locator(".topbar-actions");
+    await expectNoOverlap(
+      heading,
+      topbarActions,
+      "长标题不能覆盖状态和操作区",
+    );
+    await expect(page.locator(".topbar h2")).toHaveCSS(
+      "text-overflow",
+      "ellipsis",
+    );
+    const selectedThread = page.locator(".thread-row.selected");
+    await expectNoOverlap(
+      selectedThread.locator(".thread-item"),
+      selectedThread.locator(".thread-actions"),
+      "侧栏长标题不能覆盖线程按钮",
+    );
+    await expectNoOverlap(
+      page.locator(".provider-select"),
+      page.locator(".run-actions"),
+      "模型选择区与运行按钮不能重叠",
+    );
     await expectNoHorizontalOverflow(page);
 
     const auditToggle = page.getByRole("button", {
@@ -193,12 +235,22 @@ test("responsive layouts keep setup, settings, composer and audit accessible", a
     if (viewport.width <= 1180) {
       await expect(auditToggle).toBeVisible();
       expect((await auditToggle.boundingBox())!.width).toBeGreaterThan(70);
+      await expectNoOverlap(
+        page.getByTestId("thread-status"),
+        auditToggle,
+        "运行模式标签与审计按钮不能重叠",
+      );
       await auditToggle.click();
       await expect(page.locator(".inspector.open")).toBeVisible();
       await page.waitForTimeout(250);
       const inspectorBox = await page.locator(".inspector.open").boundingBox();
       expect(inspectorBox!.x + inspectorBox!.width).toBeLessThanOrEqual(
         viewport.width,
+      );
+      await expectNoOverlap(
+        page.locator(".inspector-head > span"),
+        page.locator(".inspector-head > div"),
+        "审计抽屉标题与关闭按钮不能重叠",
       );
       await page.screenshot({
         path: testInfo.outputPath(

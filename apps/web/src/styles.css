@@ -132,6 +132,7 @@ button:hover,
   flex-direction: column;
   gap: 4px;
   padding: 11px;
+  min-width: 0;
 }
 .thread-item span {
   white-space: nowrap;
@@ -173,14 +174,14 @@ button:hover,
 .topbar {
   border-bottom: 1px solid var(--line);
   padding: 12px 24px;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   background: #091522cc;
   gap: 12px;
   min-width: 0;
 }
-.topbar > div:first-child {
+.topbar-title {
   min-width: 0;
 }
 .topbar h2 {
@@ -205,8 +206,15 @@ button:hover,
   display: flex;
   gap: 10px;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
+}
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
 }
 .mode,
 .badge {
@@ -215,6 +223,8 @@ button:hover,
   border: 1px solid #294256;
   border-radius: 20px;
   color: #8eabc1;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .badge-running,
 .badge-queued {
@@ -1035,6 +1045,10 @@ button:hover,
   .topbar,
   .composer {
     padding-inline: 14px;
+  }
+
+  .topbar-actions {
+    gap: 6px;
   }
 
   .conversation {

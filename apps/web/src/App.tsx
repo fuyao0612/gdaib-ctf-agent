@@ -378,7 +378,7 @@ export default function App() {
 
       <main className="workspace">
         <header className="topbar">
-          <div>
+          <div className="topbar-title" data-testid="thread-heading">
             <span className="eyebrow">THREAD</span>
             <h2>{detail?.title ?? "选择或创建一个任务"}</h2>
             {detail && (
@@ -389,26 +389,28 @@ export default function App() {
               </small>
             )}
           </div>
-          {detail && (
-            <div className="top-meta">
-              <span className="mode">{detail.mode}</span>
-              {activeRun && (
-                <>
-                  <span className="mode">{activeRun.provider}</span>
-                  <span className="mode">{activeRun.evidence_level}</span>
-                  <StatusBadge status={activeRun.status} />
-                </>
-              )}
-            </div>
-          )}
-          <button
-            className="inspector-toggle"
-            aria-expanded={inspectorOpen}
-            aria-controls="run-inspector"
-            onClick={() => setInspectorOpen((value) => !value)}
-          >
-            运行审计
-          </button>
+          <div className="topbar-actions">
+            {detail && (
+              <div className="top-meta" data-testid="thread-status">
+                <span className="mode">{detail.mode}</span>
+                {activeRun && (
+                  <>
+                    <span className="mode">{activeRun.provider}</span>
+                    <span className="mode">{activeRun.evidence_level}</span>
+                    <StatusBadge status={activeRun.status} />
+                  </>
+                )}
+              </div>
+            )}
+            <button
+              className="inspector-toggle"
+              aria-expanded={inspectorOpen}
+              aria-controls="run-inspector"
+              onClick={() => setInspectorOpen((value) => !value)}
+            >
+              运行审计
+            </button>
+          </div>
         </header>
         {!detail ? (
           <section className="empty">
