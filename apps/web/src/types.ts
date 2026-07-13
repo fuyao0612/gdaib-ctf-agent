@@ -17,6 +17,8 @@ export interface ProviderConfig {
   input_price_per_million: number; output_price_per_million: number
   resolved_structured_mode: string; fallback_on: FallbackCategory[]
   has_api_key: boolean; created_at: string; updated_at: string
+  connection_status: 'untested' | 'ok' | 'failed'; last_tested_at: string | null
+  last_test_error: string | null; actual_model: string | null
 }
 export interface ProviderConfigInput {
   name: string; preset: ProviderPreset; base_url: string; model: string; api_key?: string | null

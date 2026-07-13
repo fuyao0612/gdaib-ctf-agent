@@ -38,7 +38,7 @@ async function configureProtocolProvider(page: import('@playwright/test').Page) 
   await profileRow.getByRole('button', { name: '版本' }).click()
   await center.locator('.version-history details').filter({ hasText: 'v1' }).getByRole('button', { name: '回滚到此版本' }).click()
   await expect(center.locator('.provider-row').filter({ hasText: profileName })).toContainText('v3')
-  await page.locator('.settings-panel > header button').click()
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
   return profileName
 }
 

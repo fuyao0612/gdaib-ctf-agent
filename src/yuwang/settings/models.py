@@ -137,6 +137,10 @@ class ProviderConfig(BaseModel):
     fallback_on: list[FallbackCategory] = Field(
         default_factory=lambda: list(DEFAULT_FALLBACK_CATEGORIES)
     )
+    connection_status: Literal["untested", "ok", "failed"] = "untested"
+    last_tested_at: str | None = None
+    last_test_error: str | None = None
+    actual_model: str | None = None
     created_at: str = Field(default_factory=lambda: utcnow().isoformat())
     updated_at: str = Field(default_factory=lambda: utcnow().isoformat())
 
@@ -158,6 +162,10 @@ class ProviderConfig(BaseModel):
             resolved_structured_mode=resolve_structured_mode(self.preset, self.structured_mode),
             fallback_on=self.fallback_on,
             has_api_key=bool(self.encrypted_api_key),
+            connection_status=self.connection_status,
+            last_tested_at=self.last_tested_at,
+            last_test_error=self.last_test_error,
+            actual_model=self.actual_model,
             created_at=self.created_at,
             updated_at=self.updated_at,
         )
@@ -181,6 +189,10 @@ class ProviderConfigView(BaseModel):
     resolved_structured_mode: str
     fallback_on: list[FallbackCategory]
     has_api_key: bool
+    connection_status: Literal["untested", "ok", "failed"]
+    last_tested_at: str | None
+    last_test_error: str | None
+    actual_model: str | None
     created_at: str
     updated_at: str
 

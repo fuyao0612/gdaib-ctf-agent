@@ -2,12 +2,16 @@ import type { AgentDefaults, AgentProfile, AgentProfileInput, AgentProfileSummar
 
 const API = '/api/v1'
 const adminHeaders = (csrf: string) => ({ 'X-CSRF-Token': csrf })
+let sessionCsrf = ''
+export const setSessionCsrf = (value: string) => { sessionCsrf = value }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? 'GET'
+  const csrfHeaders = !['GET', 'HEAD', 'OPTIONS'].includes(method) && sessionCsrf ? adminHeaders(sessionCsrf) : {}
   const response = await fetch(`${API}${path}`, {
     ...init,
     credentials: 'same-origin',
-    headers: { ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...init?.headers },
+    headers: { ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...csrfHeaders, ...init?.headers },
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: { message: '请求失败' } }))
@@ -43,7 +47,14 @@ export const api = {
   providerPresets: () => request<Record<string, { base_url: string; model: string; models?: string[]; structured_modes?: string[] }>>('/provider-presets'),
 
   createAdminSession: (token: string) => request<{ csrf_token: string; expires_at: number }>('/admin/session', { method: 'POST', body: JSON.stringify({ token }) }),
+  adminSession: async () => {
+    const value = await request<{ authenticated: boolean; csrf_token: string; expires_at: number | null }>('/admin/session')
+    setSessionCsrf(value.csrf_token)
+    return value
+  },
   deleteAdminSession: (csrf: string) => request<void>('/admin/session', { method: 'DELETE', headers: adminHeaders(csrf) }),
+  updateThread: (id: string, value: { title?: string; archived?: boolean }) => request<Thread>(`/threads/${id}`, { method: 'PATCH', body: JSON.stringify(value) }),
+  deleteThread: (id: string) => request<void>(`/threads/${id}`, { method: 'DELETE' }),
   adminProviders: (csrf: string) => request<ProviderConfig[]>('/admin/settings/providers', { headers: adminHeaders(csrf) }),
   createProvider: (csrf: string, value: ProviderConfigInput) => request<ProviderConfig>('/admin/settings/providers', { method: 'POST', headers: adminHeaders(csrf), body: JSON.stringify(value) }),
   updateProvider: (csrf: string, id: string, value: ProviderConfigInput) => request<ProviderConfig>(`/admin/settings/providers/${id}`, { method: 'PUT', headers: adminHeaders(csrf), body: JSON.stringify(value) }),

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { api } from './api'
 import SettingsCenter from './SettingsCenter'
+import ThreadSidebar from './components/ThreadSidebar'
 import type { AgentProfileSummary, Artifact, Event, MemoryRecord, Mode, ProviderConfig, Report, Run, RunAudit, Thread, ThreadDetail } from './types'
 import './styles.css'
+import './thread-management.css'
 
 const terminal = new Set(['completed', 'failed', 'stopped'])
 
@@ -62,10 +64,13 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    void Promise.all([loadThreads(), loadProviders(), loadProfiles()])
-    void api.setupStatus().then(status => {
-      if (!status.configured) { setInitialSetup(true); setSettingsOpen(true) }
-    }).catch(() => undefined)
+    void api.setupStatus().then(async status => {
+      setInitialSetup(!status.configured)
+      try {
+        await api.adminSession()
+        await Promise.all([loadThreads(), loadProviders(), loadProfiles()])
+      } catch { setSettingsOpen(true) }
+    }).catch(() => setError('无法连接后端服务，请检查部署状态。'))
   }, [loadThreads, loadProviders, loadProfiles])
 
   const connect = useCallback((run: Run) => {
@@ -113,6 +118,21 @@ export default function App() {
   async function toggleMemory(enabled: boolean) { if (!detail) return; await api.toggleMemories(detail.id, enabled); setMemories(await api.memories(detail.id)) }
   async function removeMemory(id: string) { if (!detail) return; await api.deleteMemory(detail.id, id); setMemories(await api.memories(detail.id)) }
   async function clearMemory() { if (!detail) return; await api.clearMemories(detail.id); setMemories([]) }
+  async function renameThread(thread: Thread) {
+    const title = window.prompt('输入新的对话名称', thread.title)?.trim()
+    if (!title || title === thread.title) return
+    await api.updateThread(thread.id, { title }); await loadThreads()
+    if (detail?.id === thread.id) setDetail({ ...detail, title })
+  }
+  async function toggleArchive(thread: Thread) {
+    await api.updateThread(thread.id, { archived: !thread.archived }); await loadThreads()
+    if (detail?.id === thread.id) setDetail(null)
+  }
+  async function removeThread(thread: Thread) {
+    if (!window.confirm(`永久删除“${thread.title}”及其消息、运行和审计记录？此操作无法撤销。`)) return
+    await api.deleteThread(thread.id); await loadThreads()
+    if (detail?.id === thread.id) setDetail(null)
+  }
 
   const running = activeRun?.status === 'queued' || activeRun?.status === 'running'
   const inputLocked = detail?.mode === 'competition' && running
@@ -126,7 +146,7 @@ export default function App() {
       <button className="primary full" onClick={() => setCreateOpen(true)}>＋ 新建任务</button>
       <button className="settings-button full" onClick={() => setSettingsOpen(true)}>⚙ 设置中心</button>
       <div className="section-label">任务线程</div>
-      <nav className="thread-list">{threads.filter(item => !item.archived).map(thread => <button key={thread.id} className={`thread-item ${detail?.id === thread.id ? 'selected' : ''}`} onClick={() => void selectThread(thread.id)}><span>{thread.title}</span><small>{thread.mode}</small></button>)}</nav>
+      <ThreadSidebar threads={threads} selectedId={detail?.id} onSelect={id => void selectThread(id)} onRename={thread => void renameThread(thread)} onToggleArchive={thread => void toggleArchive(thread)} onDelete={thread => void removeThread(thread)} />
       <div className="security-note"><span>●</span><div><strong>安全边界已启用</strong><p>公网默认拒绝 · 凭据自动脱敏</p></div></div>
     </aside>
 
