@@ -4,6 +4,6 @@ pydantic==2.13.4
 pydantic-settings==2.13.1
 httpx==0.28.1
 python-multipart==0.0.27
-langgraph==0.6.11
-cryptography==46.0.3
+langgraph==1.2.9
+cryptography==46.0.7
 jsonschema==4.26.0

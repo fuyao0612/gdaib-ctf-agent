@@ -17,7 +17,8 @@ Windows PowerShell：
 不使用 Docker 的 Windows 开发环境可运行：
 
 ```powershell
-python -m pip install -e ".[dev]"
+python -m pip install -r requirements.lock
+python -m pip install --no-deps -e .
 Push-Location apps/web
 npm ci
 Pop-Location

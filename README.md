@@ -381,11 +381,14 @@ API 路由按 `health`、`session`、`threads`、`runs`、`reports`、`providers
 在项目根目录安装 Python 依赖，再安装锁定版本的前端依赖：
 
 ```powershell
-python -m pip install -e ".[dev]"
+python -m pip install -r requirements.lock
+python -m pip install --no-deps -e .
 cd apps/web
 npm ci
 cd ../..
 ```
+
+`requirements.lock` 固定 Python 直接依赖版本，`package-lock.json` 固定完整前端依赖树；请保留 `npm ci`，不要改成会重新解析版本的 `npm install`。
 
 如果还没有 `.env`，先生成本机管理员令牌和主密钥：
 
@@ -447,10 +450,16 @@ npm run dev -- --port 5173
 ### 一键检查
 
 ```powershell
-powershell -File scripts/check.ps1
+.\scripts\full-check.ps1
 ```
 
-该脚本依次运行 Ruff、mypy、pytest、前端 lint、TypeScript typecheck、Vitest 和生产构建。
+完整入口依次运行：Ruff、mypy、pytest、前端 lint/typecheck/Vitest/build、生产表面检查、Playwright、Docker Compose 配置校验，以及 Windows 启动安全验收。Compose 校验使用当前进程内的临时高熵值，自动化测试使用隔离协议服务，因此默认不要求真实 Provider API Key。
+
+只需要快速检查静态质量、单元/集成测试和前端构建时运行：
+
+```powershell
+.\scripts\check.ps1
+```
 
 ### 后端
 
@@ -494,7 +503,7 @@ curl http://localhost:8080/api/v1/health
 .\scripts\check-startup.ps1
 ```
 
-该脚本使用 Windows PowerShell 5.1 子进程执行检查，确认启动输出不包含管理员令牌或主密钥、8000 端口冲突会被拒绝，并真实启动本地 API/Web 后验证端口和子进程均被清理。它使用本机生成的 `.env`，不要求真实 Provider API Key。
+该脚本使用 Windows PowerShell 5.1 子进程执行检查，确认启动输出不包含管理员令牌或主密钥、8000 端口冲突会被拒绝，并真实启动本地 API/Web 后验证端口和子进程均被清理。它使用本机生成的 `.env`，不要求真实 Provider API Key。完整检查入口已经包含此项，通常无需重复运行。
 
 ## 部署、备份与升级
 
@@ -671,11 +680,11 @@ Get-Content data/logs/web.stderr.log -Tail 80
 稳定分支为 `main`，日常集成分支为 `develop`。功能分支使用 `feature/<topic>`，修复分支使用 `fix/<topic>`。提交前至少运行：
 
 ```powershell
-powershell -File scripts/check.ps1
+.\scripts\check.ps1
 git status --short
 ```
 
-涉及完整交互闭环、响应式布局或部署行为时，还应运行 Playwright 和 Docker 验收。详细流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+准备合并或涉及完整交互、响应式布局、依赖、部署和启动行为时运行 `.\scripts\full-check.ps1`，它已包含 Playwright、生产表面、Compose 配置和启动安全验收。详细流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

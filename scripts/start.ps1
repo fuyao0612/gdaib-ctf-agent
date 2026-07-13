@@ -101,7 +101,7 @@ function Assert-DevelopmentDependencies {
 
     & $python.Source -c 'import fastapi, uvicorn, pydantic, langgraph, cryptography' *> $null
     if ($LASTEXITCODE) {
-        throw 'Python 依赖未安装。请在项目根目录运行：python -m pip install -e ".[dev]"'
+        throw 'Python 依赖未安装。请依次运行：python -m pip install -r requirements.lock；python -m pip install --no-deps -e .'
     }
     if (-not (Test-Path -LiteralPath (Join-Path $root 'apps\web\node_modules\vite'))) {
         throw '前端依赖未安装。请运行：cd apps\web；npm ci'
