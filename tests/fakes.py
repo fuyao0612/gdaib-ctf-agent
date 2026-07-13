@@ -6,7 +6,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
 
-from yuwang.domain.models import AgentAction, AgentPlan
+from yuwang.domain.models import AgentAction, AgentPlan, ImportantFacts
 from yuwang.model_providers import ProviderError
 from yuwang.model_providers.providers import ProviderErrorCategory
 from yuwang.tooling.sdk import ToolPlugin, ToolSpec
@@ -54,6 +54,10 @@ class FakeModelProvider:
                     steps=["执行测试工具", "核对候选证据", "提交验证"],
                     success_approach="从工具输出提取候选并交由确定性验证器",
                 ).model_dump()
+            )
+        if output_type is ImportantFacts:
+            return output_type.model_validate(
+                {"facts": ["用户希望获得中文回答", "用户希望获得中文回答"]}
             )
         context = json.loads(prompt)
         observations = context.get("observations_untrusted", context.get("observations", []))

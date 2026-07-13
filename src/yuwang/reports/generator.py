@@ -1,3 +1,5 @@
+"""从不可变审计数据生成 Markdown 与 JSON 双格式运行报告。"""
+
 from __future__ import annotations
 
 from typing import Any

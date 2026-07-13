@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# 停止 API 后制作一致性数据备份；退出或中断时务必恢复服务。
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 DATA=${2:-"$ROOT/data"}; DEST=${1:-"$PWD/yuwang-backup-$(date +%Y%m%d-%H%M%S).tgz"}

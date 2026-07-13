@@ -1,3 +1,4 @@
+# 单机生产拓扑：初始化数据权限后启动 API，并由 Web 反向代理统一暴露。
 name: yuwang
 services:
   data-init:

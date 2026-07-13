@@ -35,7 +35,7 @@ npx playwright install chromium
 npm run e2e
 ```
 
-Playwright 启动隔离 FastAPI、SQLite 和独立 OpenAI 兼容协议测试服务，覆盖首次配置、Agent 创建与版本回滚、建议回答、人工补充、设置与连接测试、附件、真实生产工具、SSE、停止/重试、报告下载入口和刷新后恢复。协议服务只位于 `tests/`，不会进入生产镜像，也不能作为真实厂商测试证据。
+Playwright 启动隔离 FastAPI、SQLite 和独立 OpenAI 兼容协议测试服务，覆盖首次配置、Agent 创建与版本回滚、dynamic/direct/hybrid 三种规划策略、连续对话、建议回答、人工补充、记忆删除、配置审计、附件、真实生产工具、SSE、停止/重试、错误提示、报告下载入口和刷新自动恢复当前对话。协议服务只位于 `tests/`，不会进入生产镜像，也不能作为真实厂商测试证据。
 
 ## Docker
 

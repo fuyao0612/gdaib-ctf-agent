@@ -1,12 +1,17 @@
+"""Agent 可替换组件：上下文、规划、验证与记忆均通过明确协议协作。"""
+
 from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, TypeVar, cast
+from typing import Any, Protocol, TypeVar
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from yuwang.agent.repository import AgentRepository
 from yuwang.agent.verification import SuccessVerifier, VerificationResult
 from yuwang.domain.models import AgentAction, AgentPlan, MemoryRecord, Observation, TaskSpec
 from yuwang.reports import ReportGenerator
@@ -18,7 +23,20 @@ from yuwang.settings.profiles import (
 )
 
 T = TypeVar("T", bound=BaseModel)
-StructuredInvoker = Callable[[Any, type[T], str], Awaitable[T]]
+
+class AgentRuntimeState(Protocol):
+    """组件可读取的运行状态视图；具体状态模型仍由引擎负责校验。"""
+
+    run_id: UUID
+    task: TaskSpec
+    observations: list[Observation]
+    supplemental_inputs: list[str]
+    tool_schemas: list[dict[str, Any]]
+    plan: AgentPlan | None
+    remaining_budget: dict[str, float | int]
+
+
+StructuredInvoker = Callable[[AgentRuntimeState, type[T], str], Awaitable[T]]
 
 
 class ContextBuildResult(BaseModel):
@@ -27,32 +45,35 @@ class ContextBuildResult(BaseModel):
     observation_chars: int = Field(ge=0)
     truncated: bool = False
     reasons: list[str] = Field(default_factory=list)
-
-
-class ContextRepository(Protocol):
-    def get_run(self, run_id: Any) -> Any | None: ...
-    def list_messages(self, thread_id: Any) -> list[Any]: ...
-    def get_artifact(self, artifact_id: Any) -> Any | None: ...
-    def list_memories(self, thread_id: Any, enabled_only: bool = True) -> list[MemoryRecord]: ...
-    def get_agent_defaults(self) -> Any: ...
+    original_message_count: int = Field(default=0, ge=0)
+    kept_message_count: int = Field(default=0, ge=0)
+    original_memory_count: int = Field(default=0, ge=0)
+    kept_memory_count: int = Field(default=0, ge=0)
 
 
 class ContextBuilder(Protocol):
-    def build(self, state: Any, profile: AgentProfileVersion, purpose: str) -> ContextBuildResult: ...
+    def build(
+        self, state: AgentRuntimeState, profile: AgentProfileVersion, purpose: str
+    ) -> ContextBuildResult: ...
 
 
 class Planner(Protocol):
-    async def plan(self, state: Any, invoke: StructuredInvoker[Any]) -> AgentPlan: ...
+    async def plan(self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentPlan]) -> AgentPlan: ...
 
 
 class ActionSelector(Protocol):
-    async def select(self, state: Any, invoke: StructuredInvoker[Any]) -> AgentAction: ...
+    async def select(
+        self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentAction]
+    ) -> AgentAction: ...
 
 
 class Memory(Protocol):
-    def list_memories(self, thread_id: Any, enabled_only: bool = True) -> list[MemoryRecord]: ...
+    def list_memories(
+        self, thread_id: UUID | str, enabled_only: bool = True
+    ) -> list[MemoryRecord]: ...
     def save_memory(self, value: MemoryRecord) -> MemoryRecord: ...
-    def clear_memories(self, thread_id: Any) -> None: ...
+    def clear_memories(self, thread_id: UUID | str) -> None: ...
+    def delete_memory(self, memory_id: UUID | str) -> None: ...
 
 
 class Verifier(Protocol):
@@ -71,54 +92,32 @@ class WorkflowNode(Protocol):
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]: ...
 
 
-class ComponentRegistry:
-    def __init__(self) -> None:
-        self._values: dict[str, Any] = {}
-
-    def register(self, name: str, value: Any) -> None:
-        if name in self._values:
-            raise ValueError(f"组件已注册：{name}")
-        self._values[name] = value
-
-    def require(self, name: str, expected: type[T] | None = None) -> Any:
-        try:
-            value = self._values[name]
-        except KeyError as exc:
-            raise KeyError(f"组件未注册：{name}") from exc
-        if expected and not isinstance(value, expected):
-            raise TypeError(f"组件类型不匹配：{name}")
-        return value
-
-    def __contains__(self, name: str) -> bool:
-        return name in self._values
-
-
 class DefaultPlanner:
-    async def plan(self, state: Any, invoke: StructuredInvoker[Any]) -> AgentPlan:
-        return cast(
-            AgentPlan,
-            await invoke(state, AgentPlan, "根据任务、上下文和可用能力生成动态计划"),
-        )
+    async def plan(
+        self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentPlan]
+    ) -> AgentPlan:
+        return await invoke(state, AgentPlan, "根据任务、上下文和可用能力生成动态计划")
 
 
 class DefaultActionSelector:
-    async def select(self, state: Any, invoke: StructuredInvoker[Any]) -> AgentAction:
-        return cast(
+    async def select(
+        self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentAction]
+    ) -> AgentAction:
+        return await invoke(
+            state,
             AgentAction,
-            await invoke(
-                state,
-                AgentAction,
-                "选择下一动作：call_tool、replan、finish、fail 或 request_input",
-            ),
+            "选择下一动作：call_tool、replan、finish、fail 或 request_input",
         )
 
 
 class DefaultContextBuilder:
-    def __init__(self, repository: ContextRepository, artifact_root: Path) -> None:
+    def __init__(self, repository: AgentRepository, artifact_root: Path) -> None:
         self.repository = repository
         self.artifact_root = artifact_root.resolve()
 
-    def build(self, state: Any, profile: AgentProfileVersion, purpose: str) -> ContextBuildResult:
+    def build(
+        self, state: AgentRuntimeState, profile: AgentProfileVersion, purpose: str
+    ) -> ContextBuildResult:
         run = self.repository.get_run(state.run_id)
         messages = self.repository.list_messages(run.thread_id) if run else []
         policy = profile.context_policy
@@ -128,11 +127,32 @@ class DefaultContextBuilder:
         if truncated:
             reasons.append("recent_message_limit")
 
+        if truncated and run and policy.include_thread_summary:
+            older = messages[: -policy.recent_message_limit]
+            summary = "较早对话摘要（因消息窗口限制生成）：\n" + "\n".join(
+                f"{item.role}: {item.content[:1000]}" for item in older
+            )[:10_000]
+            previous = [
+                item
+                for item in self.repository.list_memories(run.thread_id, enabled_only=False)
+                if item.kind == "thread_summary"
+            ]
+            if not previous or previous[-1].content != summary:
+                for previous_memory in previous:
+                    self.repository.delete_memory(previous_memory.id)
+                self.repository.save_memory(
+                    MemoryRecord(
+                        thread_id=run.thread_id,
+                        kind="thread_summary",
+                        content=summary,
+                    )
+                )
+
         observations: list[dict[str, Any]] = []
         observation_chars = 0
         observation_limit = self.repository.get_agent_defaults().observation_char_budget
-        for item in reversed(state.observations):
-            value = item.model_dump(mode="json")
+        for observation in reversed(state.observations):
+            value = observation.model_dump(mode="json")
             encoded = json.dumps(value, ensure_ascii=False, default=str)
             if observation_chars + len(encoded) > observation_limit:
                 truncated = True
@@ -141,11 +161,18 @@ class DefaultContextBuilder:
             observations.insert(0, value)
             observation_chars += len(encoded)
 
-        memories = (
+        all_memories = (
             self.repository.list_memories(run.thread_id)
-            if run and profile.memory_policy.enabled and policy.include_memories
+            if run and profile.memory_policy.enabled
             else []
         )
+        memories = [
+            item
+            for item in all_memories
+            if (item.kind == "thread_summary" and policy.include_thread_summary)
+            or (item.kind == "run_summary" and policy.include_run_summaries)
+            or (item.kind in {"important_fact", "user_input"} and policy.include_memories)
+        ]
         attachment_context = [
             self._attachment_context(artifact_id, policy.text_attachment_char_limit)
             for artifact_id in state.task.artifact_ids
@@ -206,9 +233,13 @@ class DefaultContextBuilder:
             observation_chars=observation_chars,
             truncated=truncated,
             reasons=sorted(set(reasons)),
+            original_message_count=len(messages),
+            kept_message_count=len(selected_messages),
+            original_memory_count=len(all_memories),
+            kept_memory_count=len(memories),
         )
 
-    def _attachment_context(self, artifact_id: Any, char_limit: int) -> dict[str, Any]:
+    def _attachment_context(self, artifact_id: UUID, char_limit: int) -> dict[str, Any]:
         artifact = self.repository.get_artifact(artifact_id)
         if not artifact:
             return {"id": str(artifact_id), "error": "missing"}
@@ -239,3 +270,28 @@ class DefaultVerifier(SuccessVerifier):
 
 class DefaultReportRenderer(ReportGenerator):
     pass
+
+
+@dataclass(slots=True)
+class AgentComponents:
+    """一次运行使用的可替换组件，字段名称就是完整装配说明。"""
+
+    planner: Planner
+    action_selector: ActionSelector
+    context_builder: ContextBuilder
+    memory: Memory
+    verifier: Verifier
+    report_renderer: ReportRenderer
+
+
+def default_components(repository: AgentRepository, artifact_root: Path) -> AgentComponents:
+    """创建默认组件集合；测试或扩展只需替换其中一个字段。"""
+
+    return AgentComponents(
+        planner=DefaultPlanner(),
+        action_selector=DefaultActionSelector(),
+        context_builder=DefaultContextBuilder(repository, artifact_root),
+        memory=repository,
+        verifier=DefaultVerifier(),
+        report_renderer=DefaultReportRenderer(),
+    )

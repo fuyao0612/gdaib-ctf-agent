@@ -1,3 +1,5 @@
+"""设置用例服务：协调校验、密钥加密、默认项和 fallback 顺序。"""
+
 from __future__ import annotations
 
 from typing import Protocol
@@ -107,6 +109,24 @@ class SettingsService:
 
     def decrypt_api_key(self, provider_id: UUID) -> str:
         return self.cipher.decrypt(self.get_provider(provider_id).encrypted_api_key)
+
+    def record_connection_test(
+        self,
+        provider_id: UUID,
+        *,
+        succeeded: bool,
+        actual_model: str | None = None,
+        error: str | None = None,
+    ) -> ProviderConfigView:
+        """保存最近一次真实连接测试，供设置页和就绪探针共同判断。"""
+        current = self.get_provider(provider_id)
+        current.connection_status = "ok" if succeeded else "failed"
+        current.last_tested_at = utcnow().isoformat()
+        current.last_test_error = None if succeeded else (error or "连接测试失败")[:500]
+        current.actual_model = actual_model if succeeded else None
+        current.updated_at = utcnow().isoformat()
+        self.repository.save_provider_config(current)
+        return current.public_view()
 
     def resolve_chain(
         self, selected_id: UUID | None = None, fallback_ids: list[UUID] | None = None

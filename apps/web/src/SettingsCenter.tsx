@@ -1,3 +1,4 @@
+/** 设置中心：通过短期服务端会话管理 Provider 与版本化 Agent 配置。 */
 import { type FormEvent, useEffect, useState } from 'react'
 import { api } from './api'
 import AgentProfileCenter from './components/AgentProfileCenter'
@@ -81,7 +82,7 @@ export default function SettingsCenter({ onClose, onChanged, initialSetup = fals
 
   async function testProvider(id: string) {
     setBusy(true); setError(''); setNotice('正在调用模型进行真实连接测试…')
-    try { const result = await api.testProvider(session.csrf, id); setNotice(`连接测试成功：${result.model} · ${result.structured_mode} · ${result.latency_ms} ms`) } catch (cause) { setError(String(cause)); setNotice('') } finally { setBusy(false) }
+    try { const result = await api.testProvider(session.csrf, id); await load(); await onChanged(); setNotice(`连接测试成功：${result.model} · ${result.structured_mode} · ${result.latency_ms} ms`) } catch (cause) { await load().catch(() => undefined); setError(String(cause)); setNotice('') } finally { setBusy(false) }
   }
 
   async function discoverModels(id: string) {
@@ -96,7 +97,7 @@ export default function SettingsCenter({ onClose, onChanged, initialSetup = fals
 
   return <div className="settings-backdrop" role="dialog" aria-label="设置中心">
     <section className="settings-panel">
-      <header><div><span className="eyebrow">ADMIN SETTINGS</span><h2>设置中心</h2></div><button onClick={() => { void session.logout().finally(onClose) }}>关闭</button></header>
+      <header><div><span className="eyebrow">ADMIN SETTINGS</span><h2>设置中心</h2></div><div><button onClick={onClose}>关闭</button><button onClick={() => void session.logout().finally(onClose)}>退出登录</button></div></header>
       {initialSetup && <div className="setup-progress"><strong>首次配置向导</strong><span>1 管理员登录 → 2 配置 Provider → 3 连接测试 → 4 确认默认 Agent → 5 开始对话</span><small>管理员令牌只用于建立服务端会话，不会保存到浏览器。</small></div>}
       {!session.authenticated ? <form className="admin-login" onSubmit={authenticate}>
         <h3>管理员验证</h3><p>令牌仅保存在当前页面内存中，关闭或刷新后即清除。</p>
@@ -105,7 +106,7 @@ export default function SettingsCenter({ onClose, onChanged, initialSetup = fals
       </form> : <div className="settings-content">
         <section><div className="settings-title"><h3>模型 Provider</h3><button onClick={resetForm}>新增配置</button></div>
           <div className="provider-table">{providers.map(value => <article key={value.id} className={value.is_default ? 'provider-row default' : 'provider-row'}>
-            <div><strong>{value.name}</strong><small>{value.preset} · {value.model}</small><small>{value.base_url}</small></div>
+            <div><strong>{value.name}</strong><small>{value.preset} · {value.model}</small><small>{value.base_url}</small><small>连接：{value.connection_status === 'ok' ? `成功 · ${value.actual_model ?? value.model}` : value.connection_status === 'failed' ? `失败 · ${value.last_test_error}` : '尚未测试'}{value.last_tested_at ? ` · ${new Date(value.last_tested_at).toLocaleString()}` : ''}</small></div>
             <div className="provider-flags"><span>{value.has_api_key ? '密钥已保存' : '缺少密钥'}</span>{value.is_default && <span>默认</span>}{!value.enabled && <span>已停用</span>}</div>
             <div><button onClick={() => void testProvider(value.id)}>连接测试</button><button onClick={() => void discoverModels(value.id)}>发现模型</button><button onClick={() => edit(value)}>编辑</button><button className="danger" disabled={value.is_default} onClick={() => void removeProvider(value.id)}>删除</button></div>
           </article>)}</div>

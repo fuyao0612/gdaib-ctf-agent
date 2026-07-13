@@ -1,3 +1,4 @@
+# 在停服窗口恢复备份；先校验目标路径，避免覆盖项目外文件。
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact='High')]
 param([Parameter(Mandatory)][string]$Backup, [string]$DataPath = (Join-Path $PSScriptRoot '..\data'), [switch]$Force)
 $ErrorActionPreference = 'Stop'

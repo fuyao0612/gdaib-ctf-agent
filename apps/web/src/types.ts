@@ -1,7 +1,8 @@
+/** 与后端公开 JSON 契约一一对应的工作台类型。 */
 export type Mode = 'normal' | 'competition'
 export type RunStatus = 'queued' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'stopped'
 export interface Thread { id: string; title: string; mode: Mode; agent_profile_id: string | null; agent_profile_version: number | null; archived: boolean; created_at: string; updated_at: string }
-export interface Message { id: string; role: 'user' | 'agent' | 'system'; content: string; artifact_ids: string[]; created_at: string }
+export interface Message { id: string; role: 'user' | 'agent' | 'assistant' | 'system'; content: string; artifact_ids: string[]; created_at: string }
 export interface Run { id: string; thread_id: string; status: RunStatus; provider: string; agent_profile_id: string | null; agent_profile_version: number | null; completion_mode: CompletionMode; validation_status: 'pending' | 'unverified' | 'validated' | 'failed'; evidence_level: 'none' | 'model' | 'structured' | 'external'; attempt: number; stop_requested: boolean; error?: string }
 export interface Artifact { id: string; filename: string; size: number; mime_type: string; sha256: string; kind: string }
 export interface Event { event_id: string; run_id: string; sequence: number; type: string; timestamp: string; summary: string; payload: Record<string, unknown> }
@@ -17,6 +18,8 @@ export interface ProviderConfig {
   input_price_per_million: number; output_price_per_million: number
   resolved_structured_mode: string; fallback_on: FallbackCategory[]
   has_api_key: boolean; created_at: string; updated_at: string
+  connection_status: 'untested' | 'ok' | 'failed'; last_tested_at: string | null
+  last_test_error: string | null; actual_model: string | null
 }
 export interface ProviderConfigInput {
   name: string; preset: ProviderPreset; base_url: string; model: string; api_key?: string | null
@@ -39,8 +42,8 @@ export interface AgentProfileInput {
   memory_policy: { enabled: boolean; persist_important_facts: boolean; max_facts: number }
   completion_mode: CompletionMode; validation_policy: { require_external_evidence: boolean; json_schema: Record<string, unknown> | null }
   intervention_policy: { normal_mode: 'wait' | 'fail'; competition_mode: 'replan' | 'fail'; max_requests: number }
-  workflow: { nodes: string[] }; report_template: string; enabled: boolean; is_default: boolean
+  workflow: { preset: 'direct' | 'planned' | 'verified' }; report_template: string; enabled: boolean; is_default: boolean
 }
 export interface AgentProfile extends AgentProfileInput { profile_id: string; version: number; schema_version: string; created_at: string }
 export interface MemoryRecord { id: string; thread_id: string; kind: string; content: string; enabled: boolean; source_run_id: string | null; created_at: string }
-export interface RunAudit { run: { provider: string; agent_profile_id: string | null; agent_profile_version: number | null; validation_status: string; evidence_level: string }; usage: Record<string, number>; limits: Record<string, number>; profile: { name: string; version: number; completion_mode: CompletionMode } | null }
+export interface RunAudit { run: { provider: string; agent_profile_id: string | null; agent_profile_version: number | null; validation_status: string; evidence_level: string }; usage: Record<string, number>; limits: Record<string, number>; profile: ({ name: string; version: number; completion_mode: CompletionMode; planning_strategy: AgentProfileInput['planning_strategy']; workflow_preset: AgentProfileInput['workflow']['preset']; default_provider_id: string | null; fallback_provider_ids: string[]; context_policy: AgentProfileInput['context_policy']; memory_policy: AgentProfileInput['memory_policy']; intervention_policy: AgentProfileInput['intervention_policy'] }) | null }

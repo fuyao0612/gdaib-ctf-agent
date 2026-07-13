@@ -26,6 +26,7 @@ async function configureProtocolProvider(page: import('@playwright/test').Page) 
   const center = page.getByTestId('agent-profile-center')
   await center.getByRole('button', { name: '专家模式' }).click()
   await center.getByLabel('Agent 名称').fill(profileName)
+  await center.getByLabel('规划策略').selectOption('direct')
   await center.getByLabel('完成模式').selectOption('advisory')
   await center.getByRole('button', { name: '创建 Agent 配置' }).click()
   let profileRow = center.locator('.provider-row').filter({ hasText: profileName })
@@ -38,8 +39,15 @@ async function configureProtocolProvider(page: import('@playwright/test').Page) 
   await profileRow.getByRole('button', { name: '版本' }).click()
   await center.locator('.version-history details').filter({ hasText: 'v1' }).getByRole('button', { name: '回滚到此版本' }).click()
   await expect(center.locator('.provider-row').filter({ hasText: profileName })).toContainText('v3')
-  await page.locator('.settings-panel > header button').click()
-  return profileName
+  const hybridName = `Hybrid Agent ${Date.now()}`
+  await center.getByRole('button', { name: '新建配置' }).click()
+  await center.getByLabel('Agent 名称').fill(hybridName)
+  await center.getByLabel('规划策略').selectOption('hybrid')
+  await center.getByLabel('完成模式').selectOption('advisory')
+  await center.getByRole('button', { name: '创建 Agent 配置' }).click()
+  await expect(center.locator('.provider-row').filter({ hasText: hybridName })).toContainText('v1')
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
+  return { profileName, hybridName }
 }
 
 async function uploadAndRun(page: import('@playwright/test').Page, message: string, file: string) {
@@ -56,7 +64,7 @@ async function uploadAndRun(page: import('@playwright/test').Page, message: stri
 
 test('production browser flow covers settings, SSE, stop/retry, reports and refresh recovery', async ({ page }) => {
   await page.goto('/')
-  const advisoryProfile = await configureProtocolProvider(page)
+  const { profileName: advisoryProfile, hybridName } = await configureProtocolProvider(page)
 
   await page.locator('.sidebar .primary.full').click()
   await page.locator('.modal input').fill(`E2E-${Date.now()}`)
@@ -66,10 +74,10 @@ test('production browser flow covers settings, SSE, stop/retry, reports and refr
   await expect(page.getByTestId('event-tool_finished')).toBeVisible({ timeout: 20_000 })
   await expect(page.getByTestId('final-report')).toBeVisible({ timeout: 20_000 })
   await expect(page.locator('.badge-completed')).toBeVisible()
+  await expect(page.getByTestId('budget-audit')).toContainText('策略：dynamic')
   await expect(page.getByTestId('final-report').locator('a')).toHaveCount(2)
 
   await page.reload()
-  await page.locator('.thread-item').first().click()
   await expect(page.getByTestId('final-report')).toBeVisible()
 
   await uploadAndRun(page, 'slow: verify stop and retry recovery', 'retry.txt')
@@ -89,6 +97,12 @@ test('production browser flow covers settings, SSE, stop/retry, reports and refr
   await page.getByLabel('任务消息').fill('advisory-only: explain a safe rollout')
   await page.locator('.run-actions .primary').click()
   await expect(page.getByTestId('final-report')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.message.assistant')).toContainText('Review the plan')
+  await expect(page.getByTestId('budget-audit')).toContainText('策略：direct')
+  await expect(page.locator('.memory-list article').first()).toBeVisible()
+  const memoryCount = await page.locator('.memory-list article').count()
+  await page.locator('.memory-list article').first().getByRole('button', { name: /删除/ }).click()
+  await expect(page.locator('.memory-list article')).toHaveCount(memoryCount - 1)
 
   await page.getByLabel('任务消息').fill('human-input: complete this plan')
   await page.locator('.run-actions .primary').click()
@@ -96,5 +110,24 @@ test('production browser flow covers settings, SSE, stop/retry, reports and refr
   await page.getByLabel('补充信息').fill('Scope is the isolated staging environment.')
   await page.getByRole('button', { name: '提交并继续' }).click()
   await expect(page.locator('.badge-completed')).toBeVisible({ timeout: 20_000 })
+
+  await page.locator('.sidebar .primary.full').click()
+  await page.getByLabel('任务名称').fill(`Hybrid-${Date.now()}`)
+  const hybridOption = page.getByLabel('Agent 配置').getByRole('option', { name: new RegExp(hybridName) })
+  await page.getByLabel('Agent 配置').selectOption((await hybridOption.getAttribute('value'))!)
+  await page.getByRole('button', { name: '创建', exact: true }).click()
+  await page.getByLabel('任务消息').fill('advisory-only: summarize this configuration')
+  await page.locator('.run-actions .primary').click()
+  await expect(page.locator('.badge-completed')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('budget-audit')).toContainText('策略：hybrid')
+
+  await page.route('**/api/v1/threads/*/turns', route => route.fulfill({
+    status: 429,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'quota_exceeded', message: '模型额度不足，请检查 Provider 配置' } }),
+  }))
+  await page.getByLabel('任务消息').fill('verify visible quota error')
+  await page.locator('.run-actions .primary').click()
+  await expect(page.getByRole('alert')).toContainText('模型额度不足')
 
 })

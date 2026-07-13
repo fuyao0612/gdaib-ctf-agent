@@ -1,9 +1,12 @@
+/** 单页工作台协调器：组合对话、运行流、审计侧栏与设置中心。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { api } from './api'
 import SettingsCenter from './SettingsCenter'
-import type { AgentProfileSummary, Artifact, Event, Mode, ProviderConfig, Report, Run, RunAudit, Thread, ThreadDetail } from './types'
+import ThreadSidebar from './components/ThreadSidebar'
+import type { AgentProfileSummary, Artifact, Event, MemoryRecord, Mode, ProviderConfig, Report, Run, RunAudit, Thread, ThreadDetail } from './types'
 import './styles.css'
+import './thread-management.css'
 
 const terminal = new Set(['completed', 'failed', 'stopped'])
 
@@ -40,9 +43,12 @@ export default function App() {
   const [initialSetup, setInitialSetup] = useState(false)
   const [audit, setAudit] = useState<RunAudit | null>(null)
   const [supplementalInput, setSupplementalInput] = useState('')
+  const [memories, setMemories] = useState<MemoryRecord[]>([])
   const sourceRef = useRef<EventSource | null>(null)
 
-  const loadThreads = useCallback(async () => setThreads(await api.listThreads()), [])
+  const loadThreads = useCallback(async () => {
+    const values = await api.listThreads(); setThreads(values); return values
+  }, [])
   const loadProviders = useCallback(async () => {
     const values = await api.listProviders(); setProviders(values)
     setSelectedProviderId(current => current && values.some(value => value.id === current) ? current : (values.find(value => value.is_default)?.id ?? values[0]?.id ?? ''))
@@ -54,18 +60,24 @@ export default function App() {
   const refreshSettings = useCallback(async () => { await Promise.all([loadProviders(), loadProfiles()]) }, [loadProviders, loadProfiles])
   const selectThread = useCallback(async (id: string) => {
     sourceRef.current?.close(); setError(''); setReport(null)
-    const value = await api.detail(id); setDetail(value); setPendingArtifacts([])
+    window.localStorage?.setItem('yuwang.currentThreadId', id)
+    const value = await api.detail(id); setDetail(value); setPendingArtifacts([]); setMemories(await api.memories(id))
     const run = value.runs.at(-1) ?? null; setActiveRun(run)
     if (run) { setEvents(await api.events(run.id)); setAudit(await api.audit(run.id)); if (run.status === 'completed') setReport(await api.report(run.id)) }
     else { setEvents([]); setAudit(null) }
   }, [])
 
   useEffect(() => {
-    void Promise.all([loadThreads(), loadProviders(), loadProfiles()])
-    void api.setupStatus().then(status => {
-      if (!status.configured) { setInitialSetup(true); setSettingsOpen(true) }
-    }).catch(() => undefined)
-  }, [loadThreads, loadProviders, loadProfiles])
+    void api.setupStatus().then(async status => {
+      setInitialSetup(!status.configured)
+      try {
+        await api.adminSession()
+        const [values] = await Promise.all([loadThreads(), loadProviders(), loadProfiles()])
+        const remembered = window.localStorage?.getItem('yuwang.currentThreadId')
+        if (remembered && values.some(item => item.id === remembered)) await selectThread(remembered)
+      } catch { setSettingsOpen(true) }
+    }).catch(() => setError('无法连接后端服务，请检查部署状态。'))
+  }, [loadThreads, loadProviders, loadProfiles, selectThread])
 
   const connect = useCallback((run: Run) => {
     sourceRef.current?.close()
@@ -82,7 +94,7 @@ export default function App() {
       }
       if (terminal.has(event.type.replace('run_', ''))) {
         source.close()
-        void api.detail(run.thread_id).then(value => { const latest = value.runs.find(item => item.id === run.id) ?? run; setDetail(value); setActiveRun(latest); void loadThreads(); if (event.type === 'run_completed') void api.report(run.id).then(setReport) })
+        void api.detail(run.thread_id).then(value => { const latest = value.runs.find(item => item.id === run.id) ?? run; setDetail(value); setActiveRun(latest); void loadThreads(); void api.memories(run.thread_id).then(setMemories); if (event.type === 'run_completed') void api.report(run.id).then(setReport) })
       }
     }
     source.onerror = () => { if (source.readyState === EventSource.CLOSED) source.close() }
@@ -102,14 +114,31 @@ export default function App() {
     if (!detail || !message.trim() || !selectedProviderId || (needsEvidencePattern && !successPattern.trim())) return
     setBusy(true); setError(''); setEvents([]); setReport(null)
     try {
-      await api.message(detail.id, message, pendingArtifacts.map(item => item.id))
-      const run = await api.start(detail.id, selectedProviderId, successPattern); setActiveRun(run); setPendingArtifacts([]); connect(run)
+      const run = await api.turn(detail.id, message, pendingArtifacts.map(item => item.id), selectedProviderId, successPattern); setActiveRun(run); setMessage(''); setPendingArtifacts([]); connect(run)
       const updated = await api.detail(detail.id); setDetail(updated)
     } catch (cause) { setError(String(cause)) } finally { setBusy(false) }
   }
   async function stop() { if (activeRun) { await api.stop(activeRun.id); setActiveRun({ ...activeRun, stop_requested: true }) } }
   async function retry() { if (activeRun) { const run = await api.retry(activeRun.id); setEvents([]); setReport(null); setActiveRun(run); connect(run) } }
   async function submitSupplement() { if (!activeRun || !supplementalInput.trim()) return; const run = await api.submitInput(activeRun.id, supplementalInput); setSupplementalInput(''); setActiveRun(run); connect(run) }
+  async function toggleMemory(enabled: boolean) { if (!detail) return; await api.toggleMemories(detail.id, enabled); setMemories(await api.memories(detail.id)) }
+  async function removeMemory(id: string) { if (!detail) return; await api.deleteMemory(detail.id, id); setMemories(await api.memories(detail.id)) }
+  async function clearMemory() { if (!detail) return; await api.clearMemories(detail.id); setMemories([]) }
+  async function renameThread(thread: Thread) {
+    const title = window.prompt('输入新的对话名称', thread.title)?.trim()
+    if (!title || title === thread.title) return
+    await api.updateThread(thread.id, { title }); await loadThreads()
+    if (detail?.id === thread.id) setDetail({ ...detail, title })
+  }
+  async function toggleArchive(thread: Thread) {
+    await api.updateThread(thread.id, { archived: !thread.archived }); await loadThreads()
+    if (detail?.id === thread.id) setDetail(null)
+  }
+  async function removeThread(thread: Thread) {
+    if (!window.confirm(`永久删除“${thread.title}”及其消息、运行和审计记录？此操作无法撤销。`)) return
+    await api.deleteThread(thread.id); await loadThreads()
+    if (detail?.id === thread.id) { window.localStorage?.removeItem('yuwang.currentThreadId'); setDetail(null) }
+  }
 
   const running = activeRun?.status === 'queued' || activeRun?.status === 'running'
   const inputLocked = detail?.mode === 'competition' && running
@@ -123,7 +152,7 @@ export default function App() {
       <button className="primary full" onClick={() => setCreateOpen(true)}>＋ 新建任务</button>
       <button className="settings-button full" onClick={() => setSettingsOpen(true)}>⚙ 设置中心</button>
       <div className="section-label">任务线程</div>
-      <nav className="thread-list">{threads.filter(item => !item.archived).map(thread => <button key={thread.id} className={`thread-item ${detail?.id === thread.id ? 'selected' : ''}`} onClick={() => void selectThread(thread.id)}><span>{thread.title}</span><small>{thread.mode}</small></button>)}</nav>
+      <ThreadSidebar threads={threads} selectedId={detail?.id} onSelect={id => void selectThread(id)} onRename={thread => void renameThread(thread)} onToggleArchive={thread => void toggleArchive(thread)} onDelete={thread => void removeThread(thread)} />
       <div className="security-note"><span>●</span><div><strong>安全边界已启用</strong><p>公网默认拒绝 · 凭据自动脱敏</p></div></div>
     </aside>
 
@@ -140,9 +169,9 @@ export default function App() {
             <div className="attachments">{pendingArtifacts.map(file => <span key={file.id}>📎 {file.filename} · {file.size} B</span>)}</div>
             {inputLocked && <div className="lock-note">竞赛模式运行中：已锁定补充提示，仅可观察或停止。</div>}
             {providers.length === 0 && <div className="model-required">需要配置模型：请先进入设置中心添加、测试并启用 Provider。</div>}
-            <textarea aria-label="任务消息" value={message} onChange={event => setMessage(event.target.value)} disabled={inputLocked || busy} placeholder="描述任务、期望输出与必要上下文…" />
+            <textarea aria-label="任务消息" value={message} onChange={event => setMessage(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendAndRun() } }} disabled={inputLocked || busy} placeholder="描述任务、期望输出与必要上下文…" />
             {needsEvidencePattern ? <div className="verification-row"><label>成功答案正则<input aria-label="成功答案正则" value={successPattern} onChange={event => setSuccessPattern(event.target.value)} placeholder="例如 FLAG\{[A-Za-z0-9_-]+\}" disabled={running} /></label><small>证据验证模式：候选必须绑定外部证据并通过此规则。</small></div> : <div className="trust-level">{currentProfile?.completion_mode === 'advisory' ? '建议回答：模型生成，未经外部验证' : '结构化输出：按 Agent 配置的 JSON Schema 验证'}</div>}
-            <div className="composer-actions"><label className="file-button">＋ 附件<input aria-label="上传附件" type="file" accept=".txt,.json,.md,.log,.bin" onChange={event => void upload(event.target.files?.[0])} /></label><label className="provider-select">模型<select aria-label="运行模型" value={selectedProviderId} onChange={event => setSelectedProviderId(event.target.value)} disabled={running || providers.length === 0}><option value="">未配置</option>{providers.map(value => <option key={value.id} value={value.id}>{value.name} · {value.model}</option>)}</select></label><span className="authorization">盾 已授权范围内执行</span><div className="run-actions">{running ? <button className="danger" onClick={() => void stop()}>停止</button> : activeRun && ['failed', 'stopped'].includes(activeRun.status) ? <button onClick={() => void retry()}>重试</button> : null}<button className="primary" disabled={busy || inputLocked || running || !message.trim() || !selectedProviderId || (needsEvidencePattern && !successPattern.trim())} onClick={() => void sendAndRun()}>{busy ? '处理中…' : '启动运行 ↗'}</button></div></div>
+            <div className="composer-actions"><label className="file-button">＋ 附件<input aria-label="上传附件" type="file" accept=".txt,.json,.md,.log,.bin" onChange={event => void upload(event.target.files?.[0])} /></label><label className="provider-select">模型<select aria-label="运行模型" value={selectedProviderId} onChange={event => setSelectedProviderId(event.target.value)} disabled={running || providers.length === 0}><option value="">未配置</option>{providers.map(value => <option key={value.id} value={value.id}>{value.name} · {value.model}</option>)}</select></label><span className="authorization">Enter 发送 · Shift+Enter 换行</span><div className="run-actions">{running ? <button className="danger" onClick={() => void stop()}>停止</button> : activeRun && ['failed', 'stopped'].includes(activeRun.status) ? <button onClick={() => void retry()}>重试</button> : null}<button className="primary" disabled={busy || inputLocked || running || !message.trim() || !selectedProviderId || (needsEvidencePattern && !successPattern.trim())} onClick={() => void sendAndRun()}>{busy ? '正在发送…' : '发送'}</button></div></div>
           </>}
         </footer>
       </>}
@@ -152,9 +181,10 @@ export default function App() {
     <aside className="inspector">
       <div className="inspector-head"><span>运行审计</span><small>LIVE</small></div>
       <div className="metrics"><div><strong>{metrics.events}</strong><span>事件</span></div><div><strong>{metrics.tools}</strong><span>工具调用</span></div><div><strong>{metrics.replans}</strong><span>重规划</span></div></div>
-      {audit && <section className="budget-audit" data-testid="budget-audit"><div className="section-label">配置与剩余预算</div><p>{audit.profile?.name} · v{audit.profile?.version} · {audit.profile?.completion_mode}</p><p>Provider：{audit.run.provider}</p><p>验证：{audit.run.validation_status} · 证据：{audit.run.evidence_level}</p><dl><dt>步骤</dt><dd>{audit.usage.steps ?? 0} / {audit.limits.max_steps ?? '-'}</dd><dt>模型调用</dt><dd>{audit.usage.model_calls ?? 0} / {audit.limits.max_model_calls ?? '-'}</dd><dt>Token</dt><dd>{audit.usage.tokens ?? 0} / {audit.limits.max_tokens ?? '-'}</dd><dt>上下文</dt><dd>{audit.usage.context_tokens ?? 0} Token</dd><dt>观察</dt><dd>{audit.usage.observation_chars ?? 0} 字符</dd><dt>裁剪</dt><dd>{audit.usage.context_truncations ?? 0} 次</dd></dl></section>}
+      {audit && <section className="budget-audit" data-testid="budget-audit"><div className="section-label">配置与剩余预算</div><p>{audit.profile?.name} · v{audit.profile?.version} · {audit.profile?.completion_mode}</p><p>策略：{audit.profile?.planning_strategy} · 工作流：{audit.profile?.workflow_preset}</p><p>Provider：{audit.run.provider}</p><p>验证：{audit.run.validation_status} · 证据：{audit.run.evidence_level}</p><dl><dt>步骤</dt><dd>{audit.usage.steps ?? 0} / {audit.limits.max_steps ?? '-'}</dd><dt>模型调用</dt><dd>{audit.usage.model_calls ?? 0} / {audit.limits.max_model_calls ?? '-'}</dd><dt>Token</dt><dd>{audit.usage.tokens ?? 0} / {audit.limits.max_tokens ?? '-'}</dd><dt>上下文</dt><dd>{audit.usage.context_tokens ?? 0} Token</dd><dt>观察</dt><dd>{audit.usage.observation_chars ?? 0} 字符</dd><dt>裁剪</dt><dd>{audit.usage.context_truncations ?? 0} 次</dd></dl></section>}
       <div className="section-label">工具与证据</div><div className="tool-list">{events.filter(item => item.type.startsWith('tool_')).map(event => <EventCard key={event.event_id} event={event} />)}{!events.some(item => item.type.startsWith('tool_')) && <p className="muted">运行后将在此展示折叠的工具审计卡片。</p>}</div>
       <div className="section-label">附件</div>{detail?.artifacts.map(item => <a className="artifact" key={item.id} href={api.artifactUrl(item.id)}><span>TXT</span><div><strong>{item.filename}</strong><small>{item.sha256.slice(0, 12)}… · {item.size} B</small></div></a>)}
+      {detail && <section className="memory-panel"><div className="section-label">对话记忆</div><div className="memory-controls"><button onClick={() => void toggleMemory(true)}>启用</button><button onClick={() => void toggleMemory(false)}>停用</button><button className="danger" onClick={() => void clearMemory()}>全部清除</button></div><div className="memory-list">{memories.map(item => <article key={item.id} className={item.enabled ? '' : 'disabled'}><strong>{item.kind}</strong><p>{item.content}</p><button aria-label={`删除记忆 ${item.content.slice(0, 20)}`} onClick={() => void removeMemory(item.id)}>删除</button></article>)}{memories.length === 0 && <p className="muted">暂无已保存记忆。</p>}</div></section>}
     </aside>
 
     {createOpen && <div className="modal-backdrop"><form className="modal" onSubmit={event => { event.preventDefault(); void createThread() }}><h2>创建 Agent 对话</h2><label>任务名称<input aria-label="任务名称" value={newTitle} onChange={event => setNewTitle(event.target.value)} /></label><label>Agent 配置<select aria-label="Agent 配置" value={selectedProfileId} onChange={event => { const value = agentProfiles.find(item => item.profile_id === event.target.value); setSelectedProfileId(event.target.value); if (value) setNewMode(value.run_mode) }}><option value="">请选择</option>{agentProfiles.map(value => <option key={value.profile_id} value={value.profile_id}>{value.name} · v{value.version} · {value.completion_mode}</option>)}</select></label><label>运行模式<select aria-label="运行模式" value={newMode} onChange={event => setNewMode(event.target.value as Mode)}><option value="normal">normal · 可继续交流</option><option value="competition">competition · 运行中锁定输入</option></select></label><p>Thread 将绑定当前 Agent 配置版本；后续编辑不会改变历史运行。</p><div><button type="button" onClick={() => setCreateOpen(false)}>取消</button><button className="primary" type="submit" disabled={busy || !selectedProfileId}>创建</button></div></form></div>}

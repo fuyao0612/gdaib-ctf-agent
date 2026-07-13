@@ -1,3 +1,5 @@
+"""跨层共享的领域模型与状态转换约束，不包含基础设施细节。"""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -37,6 +39,7 @@ ACTIVE_RUN_STATUSES = {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_IN
 class MessageRole(StrEnum):
     USER = "user"
     AGENT = "agent"
+    ASSISTANT = "assistant"
     SYSTEM = "system"
 
 
@@ -252,6 +255,23 @@ class MemoryRecord(DomainModel):
     enabled: bool = True
     source_run_id: UUID | None = None
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class ImportantFacts(BaseModel):
+    """模型从一次运行中提取的少量、可复用事实。"""
+
+    model_config = ConfigDict(extra="forbid")
+    facts: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("facts")
+    @classmethod
+    def clean_facts(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            fact = " ".join(value.split()).strip()[:1000]
+            if fact and fact.casefold() not in {item.casefold() for item in cleaned}:
+                cleaned.append(fact)
+        return cleaned
 
 
 class VerificationRule(BaseModel):

@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# 显式运行幂等数据库迁移，并在失败时立即停止。
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 "$ROOT/scripts/preflight.sh"

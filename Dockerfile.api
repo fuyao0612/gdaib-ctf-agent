@@ -1,3 +1,4 @@
+# API 运行镜像只安装锁定依赖，并使用无特权用户访问持久卷。
 FROM python:3.11-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app

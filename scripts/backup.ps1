@@ -1,3 +1,4 @@
+# 停止 API 后制作一致性数据备份；.env 必须由运维人员分离保管。
 [CmdletBinding()]
 param([string]$Destination = (Join-Path (Get-Location) ("yuwang-backup-{0}.zip" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))), [string]$DataPath = (Join-Path $PSScriptRoot '..\data'))
 $ErrorActionPreference = 'Stop'

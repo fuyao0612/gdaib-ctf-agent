@@ -1,3 +1,5 @@
+"""配置密钥加密边界，明文只在发起模型请求前短暂存在。"""
+
 from __future__ import annotations
 
 from cryptography.fernet import Fernet, InvalidToken
