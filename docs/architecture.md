@@ -2,6 +2,8 @@
 
 御网智元采用模块化单体。核心不导入 FastAPI、SQLite 厂商 SDK、具体模型 SDK 或具体工具实现；启动层负责注入。
 
+API 装配入口 `apps/api/main.py` 只安装中间件和路由；`context.py` 管理仓储、Provider 链、后台任务和恢复生命周期，`routes/` 按会话、线程、运行、报告、Provider 与 Agent 配置拆分。Agent 的 `engine.py` 是稳定运行门面，`state.py` 定义图状态和控制异常，`nodes.py` 实现单步业务节点，`runner.py` 负责 LangGraph 装配、恢复与停止协调，`progress.py` 集中处理循环/无进展判定。
+
 ```mermaid
 flowchart LR
   Web["React 工作台"] -->|REST + SSE| API["FastAPI 适配层"]
@@ -21,10 +23,12 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  A["ingest"] --> B["normalize_task"] --> C["plan"] --> D["policy_check"]
-  D --> E["select_tool"] --> F["execute_tool"] --> G["observe"] --> H["verify"]
-  H -->|失败| I["replan"] --> E
-  H -->|成功| J["complete"] --> K["generate_report"]
+  A["ingest"] --> B["normalize_task"] --> C["plan / select_action"]
+  C --> D["policy_check"]
+  D --> E["execute_tool"] --> F["observe"] --> G["verify"]
+  G -->|失败且可继续| H["replan"] --> C
+  G -->|需要信息| I["request_input / resume"]
+  G -->|成功| J["complete"] --> K["generate_report"]
 ```
 
 每个节点通过 `AgentStateModel` 验证输入输出并写 SQLite 检查点。状态机只理解 `AgentAction`，不解析自然语言控制指令。进程重启时，已完成历史完整读取；未完成运行标为明确的可重试失败，避免不确定地重放副作用。

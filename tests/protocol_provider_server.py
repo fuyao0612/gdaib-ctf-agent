@@ -46,8 +46,13 @@ class Handler(BaseHTTPRequestHandler):
         if "slow" in context.get("untrusted_task", "").lower():
             time.sleep(1.2)
         if schema_name == "agentplan" or "计划" in context.get("purpose", ""):
+            task = context.get("untrusted_task", "").lower()
             return {
-                "summary": "Inspect the uploaded artifact metadata and verify its digest.",
+                "summary": (
+                    "超长事件内容用于验证工作台在连续中文、路径和摘要混排时仍会正确换行。" * 8
+                    if "long-event" in task
+                    else "Inspect the uploaded artifact metadata and verify its digest."
+                ),
                 "steps": ["Read controlled attachment metadata", "Return sourced digest evidence"],
                 "success_approach": "Bind the SHA-256 candidate to the successful tool call.",
             }

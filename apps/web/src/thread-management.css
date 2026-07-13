@@ -1,6 +1,15 @@
 .thread-search {
   width: 100%;
   margin: 8px 0;
+  padding: 8px 9px;
+  border: 1px solid #2a4053;
+  border-radius: 6px;
+  color: #d9e5ef;
+  background: #0c1b29;
+}
+
+.thread-search::placeholder {
+  color: #658096;
 }
 
 .archive-toggle {
@@ -45,4 +54,11 @@
   border: 0;
   background: transparent;
   color: var(--muted);
+}
+
+.thread-empty {
+  margin: 10px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
 }
