@@ -37,6 +37,14 @@ npm run e2e
 
 Playwright 启动隔离 FastAPI、SQLite 和独立 OpenAI 兼容协议测试服务，覆盖首次配置、Agent 创建与版本回滚、dynamic/direct/hybrid 三种规划策略、连续对话、建议回答、人工补充、记忆删除、配置审计、附件、真实生产工具、SSE、停止/重试、错误提示、报告下载入口和刷新自动恢复当前对话。响应式用例固定检查 1024×768、1280×720、1366×768、1440×900、1920×1080，并验证设置滚动区、长标题、长文件名、长事件内容、Composer 和窄屏审计抽屉不会产生横向溢出。协议服务只位于 `tests/`，不会进入生产镜像，也不能作为真实厂商测试证据。
 
+## Windows 启动安全验收
+
+```powershell
+.\scripts\check-startup.ps1
+```
+
+检查会通过 PowerShell 5.1 子进程验证开发依赖和环境变量，确认敏感值不进入启动输出、端口冲突被明确拒绝，并真实启动 API/Web 三秒后验证递归清理。默认不调用 Provider，不需要真实 API Key。
+
 ## Docker
 
 ```powershell

@@ -1,4 +1,4 @@
-# 御网智元 v0.4.0
+# 御网智元 v0.4.1
 
 御网智元是一个面向网络安全学习、授权测试和可审计自动化场景的对话式 Agent 工作台。它提供接近 Codex 的任务体验：在一个持续对话中配置 Agent、发送任务、上传安全文本附件、实时观察计划和工具事件、停止或重试运行，并下载完整报告。
 
@@ -103,10 +103,10 @@ flowchart LR
 
 ### 环境要求
 
-- Git
-- Docker Desktop，或 Docker Engine + Compose v2
-- Windows 10/11 PowerShell 5.1 及以上，或 Linux/macOS Shell
-- 建议至少 2 GB 可用内存
+- 所有方式：Git，建议至少 2 GB 可用内存。
+- Docker 方式（推荐给首次使用者）：Docker Desktop，或 Docker Engine + Compose v2。
+- Windows 本地开发：Windows 10/11、PowerShell 5.1 及以上、Python 3.11+、Node.js 20+ 和 npm。
+- Linux/macOS：可使用 Docker，也可参考“本地开发”分别启动后端和前端。
 
 确认 Docker 可用：
 
@@ -124,7 +124,7 @@ cd gdaib-ctf-agent
 
 如果已经在项目目录中，可直接进入下一步。
 
-### Windows 一键启动
+### Windows 一键启动（Docker，推荐）
 
 ```powershell
 .\scripts\start.ps1
@@ -133,9 +133,15 @@ cd gdaib-ctf-agent
 首次执行会：
 
 1. 在项目根目录缺少 `.env` 时生成高熵管理员令牌和主密钥。
-2. 执行启动前检查。
-3. 构建并启动 API 与 Web 容器。
+2. 检查 Docker、Compose、必要环境变量、Compose 配置和 Web 端口。
+3. 启动 API 与 Web 容器；镜像不存在时由 Compose 自动构建。
 4. 等待容器健康后返回访问地址。
+
+只检查环境、不启动或重启容器：
+
+```powershell
+.\scripts\start.ps1 -CheckOnly
+```
 
 日常启动不会强制重建镜像。拉取代码或依赖发生变化后使用：
 
@@ -144,6 +150,13 @@ cd gdaib-ctf-agent
 ```
 
 脚本兼容 Windows PowerShell 5.1，不依赖 `RandomNumberGenerator.Fill()` 或 `Convert.ToHexString()`。
+启动成功后会列出 Web、API、健康检查、日志位置和停止命令。重复执行时会复用当前项目容器；停止服务使用：
+
+```powershell
+docker compose down
+```
+
+如果本机未安装 Docker，但需要修改代码，请使用“[本地开发](#本地开发)”中的 `-Development` 模式。
 
 ### Linux / macOS 一键启动
 
@@ -363,37 +376,71 @@ API 路由按 `health`、`session`、`threads`、`runs`、`reports`、`providers
 
 ## 本地开发
 
-### 后端
+### 首次安装依赖
 
-要求 Python 3.11 及以上：
+在项目根目录安装 Python 依赖，再安装锁定版本的前端依赖：
 
 ```powershell
 python -m pip install -e ".[dev]"
-```
-
-直接启动开发 API 前，需要为当前终端设置独立的开发凭据。不要对已有数据库随意更换主密钥：
-
-```powershell
-$env:YUWANG_ADMIN_TOKEN = [guid]::NewGuid().ToString("N")
-$env:YUWANG_MASTER_KEY = python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-$env:YUWANG_DATABASE_PATH = "data/dev.db"
-$env:YUWANG_ARTIFACT_ROOT = "data/dev-artifacts"
-python -m uvicorn apps.api.main:app --reload --port 8000
-```
-
-### 前端
-
-另开一个终端：
-
-```powershell
 cd apps/web
 npm ci
-npm run dev
+cd ../..
 ```
 
-访问 <http://localhost:5173>。Vite 会把 `/api` 代理到 <http://127.0.0.1:8000>。
+如果还没有 `.env`，先生成本机管理员令牌和主密钥：
 
-开发环境生成的数据仍位于被 Git 忽略的 `data/`。如果需要保留 Provider 配置，必须持久保存对应的主密钥；否则下一次使用新主密钥时无法解密旧密文。
+```powershell
+.\scripts\first-setup.ps1 -SkipPreflight
+```
+
+该命令只在文件不存在时创建 `.env`，不会覆盖现有密钥，也不会把密钥打印到终端。
+
+### Windows 一条命令启动前后端
+
+先做只读检查，确认 Python、Node.js、npm、依赖、环境变量、端口和重复进程均正常：
+
+```powershell
+.\scripts\start.ps1 -Development -CheckOnly
+```
+
+检查通过后启动：
+
+```powershell
+.\scripts\start.ps1 -Development
+```
+
+脚本会在同一窗口管理两个子进程：
+
+- Web：<http://localhost:5173>
+- API：<http://localhost:8000>
+- 健康检查：<http://localhost:8000/api/v1/health>
+- 日志：`data/logs/api.*.log` 与 `data/logs/web.*.log`
+- 停止：在当前窗口按 `Ctrl+C`
+
+本地模式固定使用 `data/development/` 下的 SQLite 和 Artifact 目录，避免与正在运行的 Docker 数据争用。脚本会拒绝占用 5173/8000 端口或重复启动同一项目，并在中止时递归清理本次创建的进程。
+
+### 需要单独调试时手动启动
+
+通常优先使用统一脚本。需要给 Uvicorn 加参数或单独观察前端输出时，可先让 `.env` 中的 `YUWANG_*` 变量进入当前终端，再分别运行：
+
+```powershell
+# 终端 1（项目根目录）
+Get-Content .env | Where-Object { $_ -match '^[^#][^=]+=' } | ForEach-Object {
+    $name, $value = $_ -split '=', 2
+    Set-Item -Path "Env:$name" -Value $value
+}
+$env:YUWANG_DATABASE_PATH = "data/development/yuwang.db"
+$env:YUWANG_ARTIFACT_ROOT = "data/development/artifacts"
+python -m uvicorn apps.api.main:app --reload --port 8000
+
+# 终端 2
+cd apps/web
+npm run dev -- --port 5173
+```
+
+手动方式不会替你加载 `.env` 或管理子进程，适合已经理解配置加载过程的开发者。Vite 会把 `/api` 代理到 <http://127.0.0.1:8000>。
+
+开发数据、日志、`.env`、构建产物和依赖目录均应保持在 Git 之外。提交前运行 `git status --short --ignored`，确认没有密钥、数据库、附件或日志进入暂存区。
 
 ## 测试与质量门禁
 
@@ -440,6 +487,14 @@ docker compose build
 docker compose up -d --wait
 curl http://localhost:8080/api/v1/health
 ```
+
+### Windows 启动安全验收
+
+```powershell
+.\scripts\check-startup.ps1
+```
+
+该脚本使用 Windows PowerShell 5.1 子进程执行检查，确认启动输出不包含管理员令牌或主密钥、8000 端口冲突会被拒绝，并真实启动本地 API/Web 后验证端口和子进程均被清理。它使用本机生成的 `.env`，不要求真实 Provider API Key。
 
 ## 部署、备份与升级
 
@@ -523,6 +578,25 @@ git pull
 ```
 
 如果仍出现旧错误，检查 `scripts/first-setup.ps1` 是否为当前分支版本。当前脚本使用兼容 PowerShell 5.1 的 `GetBytes()`。
+
+### 启动脚本提示端口已占用或已有开发进程
+
+- Docker 默认占用 8080；可先执行 `docker compose down`，或在 `.env` 中修改 `YUWANG_WEB_PORT`。
+- 本地开发固定占用 5173 和 8000；回到原启动窗口按 `Ctrl+C`，等待“正在清理”完成后再启动。
+- 如果原终端已异常关闭且确认服务不存在，可再次执行 `-Development -CheckOnly`；脚本会自动清除失效的进程记录。
+- 需要定位占用者时运行 `Get-NetTCPConnection -LocalPort 5173,8000,8080 -State Listen`，再根据返回的 `OwningProcess` 检查进程。
+
+### 本地开发启动后浏览器打不开
+
+先检查当前启动窗口是否已经显示“本地开发服务启动成功”，再查看：
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8000/api/v1/health
+Get-Content data/logs/api.stderr.log -Tail 80
+Get-Content data/logs/web.stderr.log -Tail 80
+```
+
+如果 `health` 可用但 5173 不可用，通常是前端依赖未完整安装，回到 `apps/web` 运行 `npm ci`。如果 API 不可用，先运行 `.\scripts\start.ps1 -Development -CheckOnly` 获取明确的版本、依赖或环境变量错误。
 
 ### 页面提示“管理员鉴权失败”
 

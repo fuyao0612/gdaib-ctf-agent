@@ -1,21 +1,37 @@
-# 启动前检查环境、Compose 配置、权限和必需密钥是否满足生产条件。
+﻿# Docker 部署前检查：验证配置和运行环境，任何输出都不得包含密钥值。
+
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $envFile = Join-Path $root '.env'
-if (-not (Test-Path -LiteralPath $envFile)) { throw 'Missing .env. Run .\scripts\first-setup.ps1 first.' }
+
+if (-not (Test-Path -LiteralPath $envFile)) {
+    throw '项目缺少 .env。请先运行 .\scripts\first-setup.ps1。'
+}
 $raw = Get-Content -Raw -LiteralPath $envFile
 foreach ($name in 'YUWANG_ADMIN_TOKEN','YUWANG_MASTER_KEY') {
-    # Windows 的 CRLF 会把 \r 留在行尾，因此显式允许它而不放宽值中的空白。
-    if ($raw -notmatch "(?m)^$name=(?!<)[^\r\n]+\r?$") { throw "$name is missing or still a placeholder." }
+    # Windows CRLF 会在行尾留下 \r，只允许行尾 \r，不允许值中出现空白。
+    if ($raw -notmatch "(?m)^$name=(?!<)[^\r\n]+\r?$") {
+        throw "$name 缺失或仍是占位值。请安全填写后重试，不要把值发到聊天或日志。"
+    }
 }
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    throw 'Docker was not found. Install and start Docker Desktop, then retry.'
+    throw '未找到 Docker。请安装并启动 Docker Desktop，然后重新打开 PowerShell。'
 }
 docker info *> $null
-if ($LASTEXITCODE) { throw 'Docker is not running. Start Docker Desktop, then retry.' }
+if ($LASTEXITCODE) {
+    throw 'Docker 服务未运行。请启动 Docker Desktop，等待状态正常后重试。'
+}
 docker compose version *> $null
-if ($LASTEXITCODE) { throw 'Docker Compose v2 was not found. Update Docker Desktop.' }
+if ($LASTEXITCODE) {
+    throw '未找到 Docker Compose v2。请更新 Docker Desktop。'
+}
 Push-Location $root
-try { docker compose config --quiet; if ($LASTEXITCODE) { throw 'Invalid Docker Compose configuration.' } }
-finally { Pop-Location }
-Write-Host 'Preflight passed. No secrets were printed.'
+try {
+    docker compose config --quiet
+    if ($LASTEXITCODE) {
+        throw 'compose.yaml 或 .env 配置无效，请运行 docker compose config 查看具体错误。'
+    }
+} finally {
+    Pop-Location
+}
+Write-Host 'Docker 启动前检查通过，未输出任何密钥。' -ForegroundColor Green

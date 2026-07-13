@@ -7,11 +7,25 @@
 Windows PowerShell：
 
 ```powershell
+.\scripts\start.ps1 -CheckOnly
 .\scripts\start.ps1
 ```
 
-日常启动不会强制重建镜像；拉取代码更新后可运行 `.\scripts\start.ps1 -Build` 重新构建并启动。
+`-CheckOnly` 只检查 Docker、Compose、必要环境变量、Compose 配置和端口，不创建或重启容器。日常启动不会强制重建镜像；拉取代码更新后可运行 `.\scripts\start.ps1 -Build` 重新构建并启动。成功后脚本会打印访问地址、健康检查、日志命令和停止方法。
 脚本兼容 Windows PowerShell 5.1，不依赖 `RandomNumberGenerator.Fill()` 或 `Convert.ToHexString()`。已有 `.env` 时只做检查，不会重新生成或覆盖密钥。
+
+不使用 Docker 的 Windows 开发环境可运行：
+
+```powershell
+python -m pip install -e ".[dev]"
+Push-Location apps/web
+npm ci
+Pop-Location
+.\scripts\start.ps1 -Development -CheckOnly
+.\scripts\start.ps1 -Development
+```
+
+本地模式把数据隔离在 `data/development/`，日志写入 `data/logs/`，固定使用 8000/5173 端口，并在 `Ctrl+C` 后清理本次创建的进程。它用于开发，不替代生产 Docker 部署。
 
 Linux/macOS：
 
@@ -21,7 +35,7 @@ Linux/macOS：
 
 脚本只在 `.env` 不存在时生成高熵管理员令牌和 Fernet 主密钥，绝不覆盖已有文件，也不会把密钥打印到日志。管理员本人可在服务器本机打开 `.env`，读取 `YUWANG_ADMIN_TOKEN` 后粘贴到登录框；不要把它发送到聊天、工单或截图中。`.env` 权限应仅限服务账户，并与数据备份分开离线保管。首次打开 `http://localhost:8080` 会进入配置向导：管理员登录、添加 Provider、执行真实连接测试、确认默认 Agent，然后开始对话。Provider API Key 只在设置中心提交，并以主密钥加密后持久化。
 
-Windows 上可运行 `notepad .env`，只复制 `YUWANG_ADMIN_TOKEN=` 等号后的完整值。若页面提示“管理员令牌不正确”，先确认没有复制变量名、引号或首尾空格；若刚手动修改 `.env`，执行 `docker compose restart api` 让 API 重新读取配置。不要在终端历史中打印令牌。
+Windows 上可运行 `notepad .env`，只复制 `YUWANG_ADMIN_TOKEN=` 等号后的完整值。若页面提示“管理员令牌不正确”，先确认没有复制变量名、引号或首尾空格；若刚手动修改 `.env`，执行 `docker compose up -d --force-recreate api` 让 API 读取新环境变量。不要在终端历史中打印令牌。
 
 国内模型可直接选择 DeepSeek、阿里云百炼/千问或智谱 GLM 预设，核对控制台提供的 API Key 与模型名后执行“连接测试”。若使用其他 OpenAI 兼容服务，选择“自定义”，填写该服务的 HTTPS Base URL 和模型名；只有明确启用本机协议测试时才允许 HTTP localhost。
 

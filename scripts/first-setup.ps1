@@ -1,14 +1,17 @@
-# 首次部署助手：仅在缺失时生成密钥，绝不覆盖既有 .env。
+﻿# 首次部署助手：仅在缺失时生成密钥，绝不覆盖既有 .env。
 
 [CmdletBinding()]
-param([switch]$Start)
+param(
+    [switch]$Start,
+    [switch]$SkipPreflight
+)
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $envFile = Join-Path $root '.env'
 
 if (Test-Path -LiteralPath $envFile) {
-    Write-Host 'Existing .env detected; current configuration will be kept.'
+    Write-Host '检测到已有 .env，将保留现有配置，不会覆盖密钥。'
 } else {
     $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     try {
@@ -22,28 +25,19 @@ if (Test-Path -LiteralPath $envFile) {
         if ($null -ne $generator) { $generator.Dispose() }
     }
     if ([string]::IsNullOrWhiteSpace($firstValue) -or [string]::IsNullOrWhiteSpace($secondValue)) {
-        throw 'System random generator returned an empty value.'
+        throw '系统随机数生成失败，未写入 .env。请重试或检查系统加密服务。'
     }
     $newline = [Environment]::NewLine
     $content = "YUWANG_ADMIN_TOKEN=$firstValue${newline}YUWANG_MASTER_KEY=$secondValue${newline}YUWANG_CORS_ORIGINS=http://localhost:8080${newline}YUWANG_COOKIE_SECURE=false${newline}YUWANG_WEB_PORT=8080${newline}YUWANG_DATA_PATH=./data${newline}YUWANG_API_CPUS=1.0${newline}YUWANG_API_MEMORY=768M${newline}YUWANG_WEB_CPUS=0.5${newline}YUWANG_WEB_MEMORY=192M"
     [IO.File]::WriteAllText($envFile, $content, (New-Object Text.UTF8Encoding($false)))
-    Write-Host '.env created. Secrets were not printed; store them securely offline.'
+    Write-Host '已创建 .env。密钥未输出到终端，请在本机安全保存。'
 }
 
-& (Join-Path $PSScriptRoot 'preflight.ps1')
 if ($Start) {
-    Write-Host 'Building and starting services. The first run may take a few minutes...'
-    Push-Location $root
-    try {
-        docker compose up -d --build --wait
-        if ($LASTEXITCODE) { throw 'Docker Compose failed. Run docker compose logs to inspect the logs.' }
-    } finally {
-        Pop-Location
-    }
-    Write-Host ''
-    Write-Host 'Startup complete:' -ForegroundColor Green
-    Write-Host '  Open:   http://localhost:8080'
-    Write-Host '  Status: docker compose ps'
-    Write-Host '  Logs:   docker compose logs -f'
-    Write-Host '  Stop:   docker compose down'
+    # 旧入口保留兼容，但所有检查、端口处理和输出都交给统一启动脚本。
+    & (Join-Path $PSScriptRoot 'start.ps1') -Build
+    return
+}
+if (-not $SkipPreflight) {
+    & (Join-Path $PSScriptRoot 'preflight.ps1')
 }
