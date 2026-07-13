@@ -217,6 +217,8 @@ class AgentProfileRepository(Protocol):
 
 
 class AgentProfileService:
+    """维护不可变 AgentProfile 版本；更新和回滚都追加版本而不改历史。"""
+
     def __init__(self, repository: AgentProfileRepository) -> None:
         self.repository = repository
 

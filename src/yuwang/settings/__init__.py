@@ -1,3 +1,5 @@
+"""Provider、AgentProfile 与密钥设置的公共数据契约。"""
+
 from .models import (
     AgentDefaults,
     ProviderConfig,

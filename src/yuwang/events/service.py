@@ -10,6 +10,8 @@ from yuwang.policy import redact
 
 
 class EventService:
+    """事件写入边界：先递归脱敏，再交给仓储分配严格递增序号。"""
+
     def __init__(self, repository: Any) -> None:
         self.repository = repository
 
@@ -20,6 +22,8 @@ class EventService:
         summary: str,
         payload: dict[str, Any] | None = None,
     ) -> Event:
+        """输入公开摘要和载荷，输出已持久化、可安全推送给浏览器的 `Event`。"""
+
         clean_summary = redact(summary)
         clean_payload = self._redact_value(payload or {})
         return cast(

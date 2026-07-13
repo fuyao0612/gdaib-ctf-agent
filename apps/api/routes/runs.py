@@ -268,6 +268,8 @@ def create_run_router(context: ApiContext) -> APIRouter:
         last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
         after: int = Query(0, ge=0),
     ) -> StreamingResponse:
+        """从持久化游标之后持续发送事件；返回流本身不保存业务状态。"""
+
         context.require_run(run_id)
         cursor = max(after, int(last_event_id or 0))
 

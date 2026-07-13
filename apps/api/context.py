@@ -204,6 +204,8 @@ class ApiContext:
         create: RunCreate,
         profile: AgentProfileVersion,
     ) -> TaskSpec:
+        """把 HTTP 输入和 Thread/Profile 快照归一化为 Agent 唯一接受的 `TaskSpec`。"""
+
         messages = self.repository.list_messages(thread.id)
         user_messages = [item for item in messages if item.role == MessageRole.USER]
         if not user_messages:
@@ -227,6 +229,8 @@ class ApiContext:
         profile: AgentProfileVersion,
         initial_state: AgentStateModel | None = None,
     ) -> None:
+        """组装一次真实 Agent 运行并等待结束；结果、事件和报告由 Engine 持久化。"""
+
         engine = AgentEngine(
             self.repository,
             provider,

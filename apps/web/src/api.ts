@@ -25,6 +25,8 @@ export const setSessionCsrf = (value: string) => {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // 所有页面都经过此函数访问后端：输入是相对 API 路径和 fetch 参数，
+  // 输出是后端契约类型 T。新增页面应复用这里，避免漏掉 Cookie、CSRF 或统一错误。
   const method = init?.method ?? "GET";
   const csrfHeaders =
     !["GET", "HEAD", "OPTIONS"].includes(method) && sessionCsrf

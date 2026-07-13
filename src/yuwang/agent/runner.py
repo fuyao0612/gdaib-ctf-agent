@@ -100,6 +100,8 @@ class AgentRunCoordinator:
         task: TaskSpec,
         initial_state: AgentStateModel | None = None,
     ) -> None:
+        """启动新 Run；`initial_state` 仅用于兼容安全重试，不会覆盖已持久化事实。"""
+
         """把队列中的 Run 转为运行中，并从图入口开始推进。"""
 
         engine = self.engine
@@ -170,6 +172,8 @@ class AgentRunCoordinator:
         initial: AgentStateModel,
         graph: Any,
     ) -> None:
+        """执行编译后的图，将控制异常转换为明确 Run 状态并始终清理计时状态。"""
+
         """统一收口停止、取消和失败，保证每种退出都有持久化结果。"""
 
         engine = self.engine

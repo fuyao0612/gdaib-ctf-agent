@@ -28,6 +28,8 @@ class SettingsRepository(Protocol):
 
 
 class SettingsService:
+    """设置用例边界：负责密钥加密、URL 校验、默认项和 Provider 链解析。"""
+
     def __init__(
         self,
         repository: SettingsRepository,

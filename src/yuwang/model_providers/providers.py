@@ -53,6 +53,8 @@ class ProviderError(RuntimeError):
 
 
 class ModelProvider(Protocol):
+    """Agent 需要的最小模型能力：把提示词转换为通过 Pydantic 校验的对象。"""
+
     name: str
 
     async def generate_structured(
@@ -67,7 +69,7 @@ class ModelProvider(Protocol):
 
 
 class ProviderChain:
-    """Ordered fallback chain with explicit category and retry-budget controls."""
+    """按顺序尝试 Provider，并同时限制错误类别和整条链的重试预算。"""
 
     name = "provider-chain"
     model = "provider-chain"
@@ -158,6 +160,12 @@ class ConnectionProbe(BaseModel):
 
 
 class OpenAICompatibleProvider:
+    """真实 OpenAI 兼容 HTTP 客户端。
+
+    输入为已校验配置和目标 Pydantic 类型，输出为结构化对象；新增兼容厂商
+    通常只需增加预设，只有 HTTP 协议不兼容时才新增实现。
+    """
+
     def __init__(
         self,
         *,

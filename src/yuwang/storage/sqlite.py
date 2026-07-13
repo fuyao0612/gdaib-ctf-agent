@@ -33,7 +33,11 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class SQLiteRepository:
-    """Small explicit data access layer; callers never depend on SQLite details."""
+    """显式 SQLite 数据访问层。
+
+    输入和输出均为领域模型，调用方看不到 SQL 行。未来替换数据库时实现
+    `AgentRepository` 与设置仓储协议即可，不应修改 Agent 节点。
+    """
 
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
@@ -42,6 +46,8 @@ class SQLiteRepository:
         self.migrate()
 
     def connect(self) -> sqlite3.Connection:
+        """创建短生命周期连接，并统一启用外键、WAL 和 Row 访问。"""
+
         connection = sqlite3.connect(self.path, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
@@ -49,6 +55,8 @@ class SQLiteRepository:
         return connection
 
     def migrate(self) -> None:
+        """幂等创建当前 Schema；复杂版本迁移应继续记录到 `schema_migrations`。"""
+
         with self.connect() as db:
             db.executescript(
                 """

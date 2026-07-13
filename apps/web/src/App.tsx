@@ -134,6 +134,8 @@ export default function App() {
 
   const connect = useCallback(
     (run: Run) => {
+      // 每次只保留一个 EventSource。服务端用事件 sequence 作为 SSE id，
+      // 浏览器断线重连时会自动携带 Last-Event-ID，最终仍以持久化详情为准。
       sourceRef.current?.close();
       const source = new EventSource(`/api/v1/runs/${run.id}/events/stream`);
       sourceRef.current = source;
@@ -218,6 +220,8 @@ export default function App() {
   }
 
   async function sendAndRun() {
+    // turn 接口在一个后端用例中保存用户消息并创建 Run；拿到 202 后再订阅 SSE，
+    // 避免“消息已显示但运行未创建”这类前后端中间状态。
     if (
       !detail ||
       !message.trim() ||
