@@ -1,0 +1,32 @@
+"""API 进程配置。
+
+环境变量只在这里读取，避免路由模块各自解释配置。测试可以直接构造
+``Settings``，生产环境则使用默认值读取 Docker 注入的变量。
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+
+
+class Settings(BaseModel):
+    """FastAPI 适配层所需的最小运行配置。"""
+
+    database_path: Path = Path(os.getenv("YUWANG_DATABASE_PATH", "data/yuwang.db"))
+    artifact_root: Path = Path(os.getenv("YUWANG_ARTIFACT_ROOT", "data/artifacts"))
+    cors_origins: list[str] = Field(
+        default_factory=lambda: os.getenv(
+            "YUWANG_CORS_ORIGINS", "http://localhost:5173,http://localhost:8080"
+        ).split(",")
+    )
+    max_request_bytes: int = 6 * 1024 * 1024
+    admin_token: str = os.getenv("YUWANG_ADMIN_TOKEN", "")
+    master_key: str = os.getenv("YUWANG_MASTER_KEY", "")
+    allow_insecure_local_provider: bool = (
+        os.getenv("YUWANG_ALLOW_INSECURE_LOCAL_PROVIDER", "false").lower() == "true"
+    )
+    admin_session_ttl_seconds: int = 8 * 60 * 60
+    cookie_secure: bool = os.getenv("YUWANG_COOKIE_SECURE", "false").lower() == "true"

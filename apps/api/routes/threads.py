@@ -1,0 +1,178 @@
+"""对话、消息、附件与线程记忆路由。"""
+
+from __future__ import annotations
+
+import hashlib
+import mimetypes
+from pathlib import Path
+from typing import Annotated, Any
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+
+from apps.api.context import ApiContext
+from apps.api.schemas import MemoryToggle, MessageCreate, ThreadCreate, ThreadUpdate
+from yuwang.domain.models import (
+    Artifact,
+    MemoryRecord,
+    Message,
+    RunStatus,
+    Thread,
+    utcnow,
+)
+
+
+def create_thread_router(context: ApiContext) -> APIRouter:
+    """创建围绕 Thread 聚合根的 HTTP 路由。"""
+
+    router = APIRouter(prefix="/api/v1", tags=["threads"])
+    repository = context.repository
+
+    @router.post("/threads", response_model=Thread, status_code=201)
+    async def create_thread(body: ThreadCreate) -> Thread:
+        profile = context.profile_service.resolve(body.agent_profile_id)
+        return repository.save_thread(
+            Thread(
+                title=body.title,
+                mode=body.mode,
+                agent_profile_id=profile.profile_id,
+                agent_profile_version=profile.version,
+            )
+        )
+
+    @router.get("/threads", response_model=list[Thread])
+    async def list_threads() -> list[Thread]:
+        return repository.list_threads()
+
+    @router.get("/threads/{thread_id}")
+    async def get_thread(thread_id: UUID) -> dict[str, Any]:
+        thread = context.require_thread(thread_id)
+        return {
+            **thread.model_dump(mode="json"),
+            "messages": [
+                item.model_dump(mode="json") for item in repository.list_messages(thread.id)
+            ],
+            "runs": [
+                item.model_dump(mode="json") for item in repository.list_runs(thread.id)
+            ],
+            "artifacts": [
+                item.model_dump(mode="json") for item in repository.list_artifacts(thread.id)
+            ],
+        }
+
+    @router.patch("/threads/{thread_id}/archive", response_model=Thread)
+    async def archive_thread(thread_id: UUID) -> Thread:
+        thread = context.require_thread(thread_id)
+        thread.archived = True
+        thread.updated_at = utcnow()
+        return repository.save_thread(thread)
+
+    @router.patch("/threads/{thread_id}", response_model=Thread)
+    async def update_thread(thread_id: UUID, body: ThreadUpdate) -> Thread:
+        thread = context.require_thread(thread_id)
+        if body.title is not None:
+            thread.title = body.title.strip()
+        if body.archived is not None:
+            thread.archived = body.archived
+        thread.updated_at = utcnow()
+        return repository.save_thread(thread)
+
+    @router.delete("/threads/{thread_id}", status_code=204)
+    async def delete_thread(thread_id: UUID) -> None:
+        context.require_thread(thread_id)
+        active = any(
+            run.status in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}
+            for run in repository.list_runs(thread_id)
+        )
+        if active:
+            raise HTTPException(409, "请先停止正在运行的任务")
+        repository.delete_thread(thread_id)
+
+    @router.post("/threads/{thread_id}/messages", response_model=Message, status_code=201)
+    async def send_message(thread_id: UUID, body: MessageCreate) -> Message:
+        return context.save_user_message(thread_id, body)
+
+    @router.post("/threads/{thread_id}/artifacts", response_model=Artifact, status_code=201)
+    async def upload_artifact(
+        thread_id: UUID,
+        upload: Annotated[UploadFile, File()],
+    ) -> Artifact:
+        context.require_thread(thread_id)
+        content = await upload.read(context.config.max_request_bytes + 1)
+        filename = Path(upload.filename or "").name
+        try:
+            context.policy.validate_upload(
+                filename,
+                len(content),
+                len(repository.list_artifacts(thread_id)),
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        artifact_id = uuid4()
+        storage_ref = f"{thread_id}/{artifact_id}.blob"
+        destination = context.config.artifact_root / storage_ref
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+        artifact = Artifact(
+            id=artifact_id,
+            thread_id=thread_id,
+            filename=filename,
+            kind="upload",
+            sha256=hashlib.sha256(content).hexdigest(),
+            size=len(content),
+            mime_type=(
+                upload.content_type
+                or mimetypes.guess_type(filename)[0]
+                or "application/octet-stream"
+            ),
+            storage_ref=storage_ref,
+        )
+        return repository.save_artifact(artifact)
+
+    @router.get("/threads/{thread_id}/artifacts", response_model=list[Artifact])
+    async def list_artifacts(thread_id: UUID) -> list[Artifact]:
+        context.require_thread(thread_id)
+        return repository.list_artifacts(thread_id)
+
+    @router.get("/artifacts/{artifact_id}/download")
+    async def download_artifact(artifact_id: UUID) -> FileResponse:
+        artifact = repository.get_artifact(artifact_id)
+        if not artifact:
+            raise HTTPException(404, "产物不存在")
+        path = (context.config.artifact_root / artifact.storage_ref).resolve()
+        if context.config.artifact_root.resolve() not in path.parents or not path.is_file():
+            raise HTTPException(404, "产物数据不存在")
+        return FileResponse(path, filename=artifact.filename, media_type=artifact.mime_type)
+
+    @router.get("/threads/{thread_id}/memories", response_model=list[MemoryRecord])
+    async def list_thread_memories(thread_id: UUID) -> list[MemoryRecord]:
+        context.require_thread(thread_id)
+        return repository.list_memories(thread_id, enabled_only=False)
+
+    @router.delete("/threads/{thread_id}/memories", status_code=204)
+    async def clear_thread_memories(thread_id: UUID) -> None:
+        context.require_thread(thread_id)
+        repository.clear_memories(thread_id)
+
+    @router.delete("/threads/{thread_id}/memories/{memory_id}", status_code=204)
+    async def delete_thread_memory(thread_id: UUID, memory_id: UUID) -> None:
+        context.require_thread(thread_id)
+        memory = next(
+            (
+                item
+                for item in repository.list_memories(thread_id, enabled_only=False)
+                if item.id == memory_id
+            ),
+            None,
+        )
+        if not memory:
+            raise HTTPException(404, "记忆不存在")
+        repository.delete_memory(memory_id)
+
+    @router.patch("/threads/{thread_id}/memories", status_code=204)
+    async def toggle_thread_memories(thread_id: UUID, body: MemoryToggle) -> None:
+        context.require_thread(thread_id)
+        repository.set_memories_enabled(thread_id, body.enabled)
+
+    return router
