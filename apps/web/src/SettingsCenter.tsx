@@ -5,6 +5,7 @@ import AgentProfileCenter from "./components/AgentProfileCenter";
 import ProviderSettings from "./components/ProviderSettings";
 import { useAdminSession } from "./hooks/useAdminSession";
 import type { AgentDefaults, ProviderConfig } from "./types";
+import "./settings.css";
 
 interface Props {
   onClose: () => void;
