@@ -14,6 +14,8 @@ from yuwang.domain.models import (
     CallStatus,
     EventType,
     MemoryRecord,
+    Message,
+    MessageRole,
     Observation,
     Run,
     RunStatus,
@@ -329,6 +331,37 @@ async def test_disabling_important_fact_extraction_skips_extra_model_call(tmp_pa
     await engine.run(run.id, TaskSpec(body="do not remember facts"))
     assert [item.kind for item in repository.list_memories(thread.id)] == ["run_summary"]
     assert len(repository.list_model_calls(run.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_context_truncation_event_explains_original_and_kept_counts(tmp_path):
+    profile = profile_for(
+        planning_strategy="direct",
+        completion_mode="advisory",
+        workflow={"preset": "direct"},
+        context_policy={"recent_message_limit": 1},
+        memory_policy={"enabled": True, "persist_important_facts": False, "max_facts": 10},
+    )
+    repository, engine = build_engine(tmp_path, "advisory", profile)
+    thread = repository.save_thread(Thread(title="truncation"))
+    for content in ["first", "assistant before", "follow-up"]:
+        repository.save_message(
+            Message(
+                thread_id=thread.id,
+                role=MessageRole.ASSISTANT if "assistant" in content else MessageRole.USER,
+                content=content,
+            )
+        )
+    run = repository.save_run(Run(thread_id=thread.id))
+    await engine.run(run.id, TaskSpec(body="follow-up"))
+    event = next(
+        item for item in repository.list_events(run.id) if item.type == EventType.CONTEXT_TRUNCATED
+    )
+    assert event.payload["messages"] == {"original": 3, "kept": 1}
+    summary = next(
+        item for item in repository.list_memories(thread.id) if item.kind == "thread_summary"
+    )
+    assert "first" in summary.content and "assistant before" in summary.content
 
 
 def test_budget_guards_and_stop(tmp_path):

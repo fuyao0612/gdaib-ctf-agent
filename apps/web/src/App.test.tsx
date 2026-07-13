@@ -10,6 +10,7 @@ describe('App', () => {
     if (input.endsWith('/threads') && !init?.method) return Response.json([])
     if (input.endsWith('/providers') && !init?.method) return Response.json([])
     if (input.endsWith('/agent-profiles') && !input.includes('/admin/')) return Response.json([{ profile_id: 'a1', version: 1, name: '默认 Agent', description: '', run_mode: 'normal', completion_mode: 'advisory', is_default: true }])
+    if (input.endsWith('/threads/t1/memories')) return Response.json([])
     if (input.endsWith('/provider-presets')) return Response.json({})
     if (input.endsWith('/threads') && init?.method === 'POST') return Response.json({ id: 't1', title: '测试任务', mode: 'competition', agent_profile_id: 'a1', agent_profile_version: 1, archived: false, created_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     if (input.endsWith('/threads/t1')) return Response.json({ id: 't1', title: '测试任务', mode: 'competition', agent_profile_id: 'a1', agent_profile_version: 1, archived: false, messages: [], runs: [], artifacts: [], created_at: '', updated_at: '' })

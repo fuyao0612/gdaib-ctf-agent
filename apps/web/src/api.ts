@@ -26,6 +26,7 @@ export const api = {
   message: (id: string, content: string, artifactIds: string[]) => request(`/threads/${id}/messages`, { method: 'POST', body: JSON.stringify({ content, artifact_ids: artifactIds }) }),
   upload: async (id: string, file: File) => { const form = new FormData(); form.append('upload', file); return request<Artifact>(`/threads/${id}/artifacts`, { method: 'POST', body: form }) },
   start: (id: string, providerConfigId: string, successPattern: string) => request<Run>(`/threads/${id}/runs`, { method: 'POST', body: JSON.stringify({ provider_config_id: providerConfigId || null, verification_rules: successPattern ? [{ kind: 'regex', value: successPattern }] : [] }) }),
+  turn: (id: string, content: string, artifactIds: string[], providerConfigId: string, successPattern: string) => request<Run>(`/threads/${id}/turns`, { method: 'POST', body: JSON.stringify({ content, artifact_ids: artifactIds, provider_config_id: providerConfigId || null, verification_rules: successPattern ? [{ kind: 'regex', value: successPattern }] : [] }) }),
   stop: (id: string) => request<Run>(`/runs/${id}/stop`, { method: 'POST' }),
   retry: (id: string) => request<Run>(`/runs/${id}/retry`, { method: 'POST' }),
   submitInput: (id: string, content: string) => request<Run>(`/runs/${id}/input`, { method: 'POST', body: JSON.stringify({ content }) }),
@@ -37,6 +38,7 @@ export const api = {
   memories: (id: string) => request<MemoryRecord[]>(`/threads/${id}/memories`),
   toggleMemories: (id: string, enabled: boolean) => request<void>(`/threads/${id}/memories`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
   clearMemories: (id: string) => request<void>(`/threads/${id}/memories`, { method: 'DELETE' }),
+  deleteMemory: (threadId: string, memoryId: string) => request<void>(`/threads/${threadId}/memories/${memoryId}`, { method: 'DELETE' }),
   listProviders: () => request<ProviderConfig[]>('/providers'),
   providerPresets: () => request<Record<string, { base_url: string; model: string; models?: string[]; structured_modes?: string[] }>>('/provider-presets'),
 

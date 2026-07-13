@@ -43,6 +43,10 @@ class ContextBuildResult(BaseModel):
     observation_chars: int = Field(ge=0)
     truncated: bool = False
     reasons: list[str] = Field(default_factory=list)
+    original_message_count: int = Field(default=0, ge=0)
+    kept_message_count: int = Field(default=0, ge=0)
+    original_memory_count: int = Field(default=0, ge=0)
+    kept_memory_count: int = Field(default=0, ge=0)
 
 
 class ContextBuilder(Protocol):
@@ -121,11 +125,32 @@ class DefaultContextBuilder:
         if truncated:
             reasons.append("recent_message_limit")
 
+        if truncated and run and policy.include_thread_summary:
+            older = messages[: -policy.recent_message_limit]
+            summary = "较早对话摘要（因消息窗口限制生成）：\n" + "\n".join(
+                f"{item.role}: {item.content[:1000]}" for item in older
+            )[:10_000]
+            previous = [
+                item
+                for item in self.repository.list_memories(run.thread_id, enabled_only=False)
+                if item.kind == "thread_summary"
+            ]
+            if not previous or previous[-1].content != summary:
+                for previous_memory in previous:
+                    self.repository.delete_memory(previous_memory.id)
+                self.repository.save_memory(
+                    MemoryRecord(
+                        thread_id=run.thread_id,
+                        kind="thread_summary",
+                        content=summary,
+                    )
+                )
+
         observations: list[dict[str, Any]] = []
         observation_chars = 0
         observation_limit = self.repository.get_agent_defaults().observation_char_budget
-        for item in reversed(state.observations):
-            value = item.model_dump(mode="json")
+        for observation in reversed(state.observations):
+            value = observation.model_dump(mode="json")
             encoded = json.dumps(value, ensure_ascii=False, default=str)
             if observation_chars + len(encoded) > observation_limit:
                 truncated = True
@@ -206,6 +231,10 @@ class DefaultContextBuilder:
             observation_chars=observation_chars,
             truncated=truncated,
             reasons=sorted(set(reasons)),
+            original_message_count=len(messages),
+            kept_message_count=len(selected_messages),
+            original_memory_count=len(all_memories),
+            kept_memory_count=len(memories),
         )
 
     def _attachment_context(self, artifact_id: UUID, char_limit: int) -> dict[str, Any]:

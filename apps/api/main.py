@@ -114,6 +114,10 @@ class RunInput(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
 
 
+class TurnCreate(MessageCreate, RunCreate):
+    """用户一次发送所需的消息与运行选项。"""
+
+
 class MemoryToggle(BaseModel):
     enabled: bool
 
@@ -559,6 +563,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         task_handle.add_done_callback(cleanup_callback(run.id))
         return run
 
+    @application.post("/api/v1/threads/{thread_id}/turns", response_model=Run, status_code=202)
+    async def send_turn(thread_id: UUID, body: TurnCreate) -> Run:
+        """保存用户消息并自动创建 Run，让调用方只理解“发送一轮对话”。"""
+
+        await send_message(
+            thread_id,
+            MessageCreate(content=body.content, artifact_ids=body.artifact_ids),
+        )
+        return await start_run(
+            thread_id,
+            RunCreate(
+                provider_config_id=body.provider_config_id,
+                authorized_targets=body.authorized_targets,
+                success_conditions=body.success_conditions,
+                verification_rules=body.verification_rules,
+            ),
+        )
+
     @application.get("/api/v1/runs/{run_id}", response_model=Run)
     async def get_run(run_id: UUID) -> Run:
         return require_run(run_id)
@@ -638,6 +660,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def clear_thread_memories(thread_id: UUID) -> None:
         require_thread(thread_id)
         repository.clear_memories(thread_id)
+
+    @application.delete(
+        "/api/v1/threads/{thread_id}/memories/{memory_id}", status_code=204
+    )
+    async def delete_thread_memory(thread_id: UUID, memory_id: UUID) -> None:
+        require_thread(thread_id)
+        memory = next(
+            (
+                item
+                for item in repository.list_memories(thread_id, enabled_only=False)
+                if item.id == memory_id
+            ),
+            None,
+        )
+        if not memory:
+            raise HTTPException(404, "记忆不存在")
+        repository.delete_memory(memory_id)
 
     @application.patch("/api/v1/threads/{thread_id}/memories", status_code=204)
     async def toggle_thread_memories(thread_id: UUID, body: MemoryToggle) -> None:

@@ -89,6 +89,11 @@ test('production browser flow covers settings, SSE, stop/retry, reports and refr
   await page.getByLabel('任务消息').fill('advisory-only: explain a safe rollout')
   await page.locator('.run-actions .primary').click()
   await expect(page.getByTestId('final-report')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('.message.assistant')).toContainText('Review the plan')
+  await expect(page.locator('.memory-list article').first()).toBeVisible()
+  const memoryCount = await page.locator('.memory-list article').count()
+  await page.locator('.memory-list article').first().getByRole('button', { name: /删除/ }).click()
+  await expect(page.locator('.memory-list article')).toHaveCount(memoryCount - 1)
 
   await page.getByLabel('任务消息').fill('human-input: complete this plan')
   await page.locator('.run-actions .primary').click()

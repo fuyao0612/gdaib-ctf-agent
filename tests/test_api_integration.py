@@ -167,14 +167,11 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
             files={"upload": ("sample.txt", b"evidence", "text/plain")},
         )
         artifact = uploaded.json()
-        message = client.post(
-            f"/api/v1/threads/{thread['id']}/messages",
-            json={"content": "执行协议集成任务", "artifact_ids": [artifact["id"]]},
-        )
-        assert message.status_code == 201
         started = client.post(
-            f"/api/v1/threads/{thread['id']}/runs",
+            f"/api/v1/threads/{thread['id']}/turns",
             json={
+                "content": "执行协议集成任务",
+                "artifact_ids": [artifact["id"]],
                 "provider_config_id": provider["id"],
                 "verification_rules": [{"kind": "regex", "value": "verified"}],
             },
@@ -206,6 +203,7 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
     with TestClient(app) as reopened:
         detail = reopened.get(f"/api/v1/threads/{thread['id']}").json()
         assert detail["messages"] and detail["runs"] and detail["artifacts"]
+        assert detail["messages"][-1]["role"] == "assistant"
 
 
 def test_unconfigured_provider_and_admin_auth_are_explicit(tmp_path):
@@ -398,6 +396,10 @@ def test_waiting_input_api_persists_memory_and_resumes(tmp_path, provider_server
         memories = client.get(f"/api/v1/threads/{thread['id']}/memories").json()
         assert any(item["kind"] == "user_input" for item in memories)
         assert any(item["kind"] == "run_summary" for item in memories)
+        user_memory = next(item for item in memories if item["kind"] == "user_input")
+        assert client.delete(
+            f"/api/v1/threads/{thread['id']}/memories/{user_memory['id']}"
+        ).status_code == 204
         assert client.patch(
             f"/api/v1/threads/{thread['id']}/memories", json={"enabled": False}
         ).status_code == 204

@@ -26,6 +26,8 @@ from yuwang.domain.models import (
     EvidenceRecord,
     ImportantFacts,
     MemoryRecord,
+    Message,
+    MessageRole,
     ModelCall,
     Observation,
     Run,
@@ -213,7 +215,18 @@ class AgentEngine:
                 state.run_id,
                 EventType.CONTEXT_TRUNCATED,
                 "上下文已按配置预算进行可审计裁剪",
-                {"reasons": result.reasons, "estimated_tokens": result.estimated_tokens},
+                {
+                    "reasons": result.reasons,
+                    "estimated_tokens": result.estimated_tokens,
+                    "messages": {
+                        "original": result.original_message_count,
+                        "kept": result.kept_message_count,
+                    },
+                    "memories": {
+                        "original": result.original_memory_count,
+                        "kept": result.kept_memory_count,
+                    },
+                },
             )
         return result.prompt
 
@@ -625,6 +638,21 @@ class AgentEngine:
             },
         )
         self.repository.save_report(run.id, markdown, data)
+        if state.final_answer:
+            assistant_content = state.final_answer
+        elif state.structured_output is not None:
+            assistant_content = json.dumps(state.structured_output, ensure_ascii=False, indent=2)
+        elif state.action and state.action.candidate:
+            assistant_content = f"已验证结果：{state.action.candidate.value}"
+        else:
+            assistant_content = state.verification_summary
+        self.repository.save_message(
+            Message(
+                thread_id=run.thread_id,
+                role=MessageRole.ASSISTANT,
+                content=assistant_content,
+            )
+        )
         self.events.emit(
             run.id,
             EventType.RUN_COMPLETED,

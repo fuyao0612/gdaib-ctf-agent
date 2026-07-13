@@ -37,6 +37,7 @@ ACTIVE_RUN_STATUSES = {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_IN
 class MessageRole(StrEnum):
     USER = "user"
     AGENT = "agent"
+    ASSISTANT = "assistant"
     SYSTEM = "system"
 
 
