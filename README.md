@@ -7,8 +7,10 @@
 ## Docker 启动
 
 ```powershell
-.\scripts\first-setup.ps1 -Start
+.\scripts\start.ps1
 ```
+
+日常启动不会强制重建镜像；拉取代码更新后可运行 `.\scripts\start.ps1 -Build` 重新构建并启动。
 
 脚本只在 `.env` 缺失时生成密钥，且不会输出或覆盖密钥。也可检查配置并手工启动：
 

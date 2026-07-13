@@ -7,8 +7,10 @@
 Windows PowerShell：
 
 ```powershell
-.\scripts\first-setup.ps1 -Start
+.\scripts\start.ps1
 ```
+
+日常启动不会强制重建镜像；拉取代码更新后可运行 `.\scripts\start.ps1 -Build` 重新构建并启动。
 
 Linux/macOS：
 
