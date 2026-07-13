@@ -67,6 +67,7 @@ class Memory(Protocol):
     ) -> list[MemoryRecord]: ...
     def save_memory(self, value: MemoryRecord) -> MemoryRecord: ...
     def clear_memories(self, thread_id: UUID | str) -> None: ...
+    def delete_memory(self, memory_id: UUID | str) -> None: ...
 
 
 class Verifier(Protocol):
@@ -133,11 +134,18 @@ class DefaultContextBuilder:
             observations.insert(0, value)
             observation_chars += len(encoded)
 
-        memories = (
+        all_memories = (
             self.repository.list_memories(run.thread_id)
-            if run and profile.memory_policy.enabled and policy.include_memories
+            if run and profile.memory_policy.enabled
             else []
         )
+        memories = [
+            item
+            for item in all_memories
+            if (item.kind == "thread_summary" and policy.include_thread_summary)
+            or (item.kind == "run_summary" and policy.include_run_summaries)
+            or (item.kind in {"important_fact", "user_input"} and policy.include_memories)
+        ]
         attachment_context = [
             self._attachment_context(artifact_id, policy.text_attachment_char_limit)
             for artifact_id in state.task.artifact_ids

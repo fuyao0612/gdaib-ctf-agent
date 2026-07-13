@@ -114,8 +114,11 @@ def test_profile_export_import_is_secretless_and_template_safe(tmp_path):
 
 
 def test_workflow_uses_three_safe_presets_and_migrates_v03_nodes():
-    assert AgentProfileInput(name="direct", workflow={"preset": "direct"}).workflow.nodes == (
-        "normalize_task", "select_action", "verify", "generate_report"
+    assert AgentProfileInput(
+        name="direct", planning_strategy="direct", completion_mode="advisory",
+        workflow={"preset": "direct"},
+    ).workflow.nodes == (
+        "normalize_task", "select_action", "verify", "request_input", "generate_report"
     )
     planned = AgentProfileInput(name="planned", workflow={"preset": "planned"})
     assert "plan" in planned.workflow.nodes and "replan" not in planned.workflow.nodes
@@ -124,11 +127,19 @@ def test_workflow_uses_three_safe_presets_and_migrates_v03_nodes():
 
     migrated = AgentProfileInput(
         name="v0.3",
+        planning_strategy="direct",
+        completion_mode="advisory",
         workflow={"nodes": ["normalize_task", "select_action", "verify", "generate_report"]},
     )
     assert migrated.workflow.preset == "direct"
     with pytest.raises(ValueError, match="安全预设"):
         AgentProfileInput(name="unsafe", workflow={"nodes": ["custom_python"]})
+    with pytest.raises(ValueError, match="直接策略"):
+        AgentProfileInput(name="conflict", planning_strategy="direct")
+    with pytest.raises(ValueError, match="证据验证"):
+        AgentProfileInput(
+            name="conflict", planning_strategy="direct", workflow={"preset": "direct"}
+        )
 
 
 def test_v02_database_and_json_rows_migrate_without_profile_fields(tmp_path):

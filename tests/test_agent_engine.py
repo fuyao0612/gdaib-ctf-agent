@@ -13,6 +13,7 @@ from yuwang.domain.models import (
     Budget,
     CallStatus,
     EventType,
+    MemoryRecord,
     Observation,
     Run,
     RunStatus,
@@ -74,7 +75,7 @@ async def test_complete_failure_replan_success_report(tmp_path):
     tool_events = [event for event in events if event.type == EventType.TOOL_FINISHED]
     assert [event.payload["success"] for event in tool_events] == [False, True]
     assert repository.get_report(run.id)[1]["tool_metrics"] == {"calls": 2, "failures": 1}
-    assert len(repository.list_model_calls(run.id)) == 5
+    assert len(repository.list_model_calls(run.id)) == 6
     assert [call.status for call in repository.list_tool_calls(run.id)] == [
         CallStatus.FAILED,
         CallStatus.SUCCEEDED,
@@ -220,6 +221,32 @@ async def test_declarative_direct_workflow_can_omit_planning_nodes(tmp_path):
     assert not any(event.type == EventType.PLAN_UPDATED for event in repository.list_events(run.id))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("strategy", "completion_mode", "expects_plan"),
+    [("dynamic", "advisory", True), ("hybrid", "advisory", False), ("hybrid", "evidence", True)],
+)
+async def test_planning_strategy_has_deterministic_runtime_behavior(
+    tmp_path, strategy, completion_mode, expects_plan
+):
+    profile = profile_for(
+        planning_strategy=strategy,
+        completion_mode=completion_mode,
+        workflow={"preset": "verified"},
+    )
+    scenario = "advisory" if completion_mode == "advisory" else "success"
+    repository, engine = build_engine(tmp_path, scenario, profile)
+    thread = repository.save_thread(Thread(title=f"{strategy}-{completion_mode}"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    task = TaskSpec(
+        body="strategy behavior",
+        verification_rules=[{"kind": "regex", "value": "verified"}],
+    )
+    await engine.run(run.id, task)
+    has_plan = any(event.type == EventType.PLAN_UPDATED for event in repository.list_events(run.id))
+    assert has_plan is expects_plan
+
+
 def test_context_drift_and_plan_loop_are_rejected(tmp_path):
     repository, engine = build_engine(tmp_path)
     thread = repository.save_thread(Thread(title="guards"))
@@ -265,6 +292,43 @@ async def test_explicit_component_bundle_replaces_planner(tmp_path):
     run = repository.save_run(Run(thread_id=thread.id))
     await engine.run(run.id, TaskSpec(body="component injection"))
     assert planner.called
+
+
+@pytest.mark.asyncio
+async def test_important_fact_setting_deduplicates_and_enforces_max_facts(tmp_path):
+    profile = profile_for(
+        planning_strategy="direct",
+        completion_mode="advisory",
+        workflow={"preset": "direct"},
+        memory_policy={"enabled": True, "persist_important_facts": True, "max_facts": 1},
+    )
+    repository, engine = build_engine(tmp_path, "advisory", profile)
+    thread = repository.save_thread(Thread(title="facts"))
+    repository.save_memory(MemoryRecord(thread_id=thread.id, kind="important_fact", content="old"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    await engine.run(run.id, TaskSpec(body="remember preference"))
+    memories = repository.list_memories(thread.id, enabled_only=False)
+    facts = [item.content for item in memories if item.kind == "important_fact"]
+    assert facts == ["用户希望获得中文回答"]
+    assert any(item.kind == "run_summary" for item in memories)
+    eviction = [event for event in repository.list_events(run.id) if event.type == EventType.WARNING]
+    assert any(event.payload.get("reason") == "max_facts" for event in eviction)
+
+
+@pytest.mark.asyncio
+async def test_disabling_important_fact_extraction_skips_extra_model_call(tmp_path):
+    profile = profile_for(
+        planning_strategy="direct",
+        completion_mode="advisory",
+        workflow={"preset": "direct"},
+        memory_policy={"enabled": True, "persist_important_facts": False, "max_facts": 10},
+    )
+    repository, engine = build_engine(tmp_path, "advisory", profile)
+    thread = repository.save_thread(Thread(title="no facts"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    await engine.run(run.id, TaskSpec(body="do not remember facts"))
+    assert [item.kind for item in repository.list_memories(thread.id)] == ["run_summary"]
+    assert len(repository.list_model_calls(run.id)) == 1
 
 
 def test_budget_guards_and_stop(tmp_path):

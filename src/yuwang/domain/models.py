@@ -254,6 +254,23 @@ class MemoryRecord(DomainModel):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class ImportantFacts(BaseModel):
+    """模型从一次运行中提取的少量、可复用事实。"""
+
+    model_config = ConfigDict(extra="forbid")
+    facts: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("facts")
+    @classmethod
+    def clean_facts(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            fact = " ".join(value.split()).strip()[:1000]
+            if fact and fact.casefold() not in {item.casefold() for item in cleaned}:
+                cleaned.append(fact)
+        return cleaned
+
+
 class VerificationRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["regex", "sha256"]

@@ -716,7 +716,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "limits": budget.model_dump(mode="json") if budget else {},
             "profile": (
-                {"name": profile.name, "version": profile.version, "completion_mode": profile.completion_mode}
+                {
+                    "name": profile.name,
+                    "version": profile.version,
+                    "completion_mode": profile.completion_mode,
+                    "planning_strategy": profile.planning_strategy,
+                    "workflow_preset": profile.workflow.preset,
+                    "default_provider_id": (
+                        str(profile.default_provider_id) if profile.default_provider_id else None
+                    ),
+                    "fallback_provider_ids": [str(value) for value in profile.fallback_provider_ids],
+                    "context_policy": profile.context_policy.model_dump(mode="json"),
+                    "memory_policy": profile.memory_policy.model_dump(mode="json"),
+                    "intervention_policy": profile.intervention_policy.model_dump(mode="json"),
+                }
                 if profile
                 else None
             ),

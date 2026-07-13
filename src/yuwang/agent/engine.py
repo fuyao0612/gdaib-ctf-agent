@@ -5,7 +5,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict, TypeVar, cast
 from uuid import UUID, uuid4
 
 from jsonschema import ValidationError as JsonSchemaValidationError  # type: ignore[import-untyped]
@@ -24,9 +24,11 @@ from yuwang.domain.models import (
     CallStatus,
     EventType,
     EvidenceRecord,
+    ImportantFacts,
     MemoryRecord,
     ModelCall,
     Observation,
+    Run,
     RunStatus,
     TaskSpec,
     ToolCall,
@@ -36,6 +38,8 @@ from yuwang.model_providers import ModelProvider, ProviderError
 from yuwang.policy import PolicyEngine
 from yuwang.settings import AgentProfileInput, AgentProfileVersion, SafeTemplateRenderer
 from yuwang.tooling import ToolExecutor, ToolRegistry
+
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 class BudgetExceeded(RuntimeError):
@@ -214,8 +218,8 @@ class AgentEngine:
         return result.prompt
 
     async def _model_call(
-        self, state: AgentStateModel, output_type: type[BaseModel], purpose: str
-    ) -> BaseModel:
+        self, state: AgentStateModel, output_type: type[ModelT], purpose: str
+    ) -> ModelT:
         prompt = self._context(state, purpose)
         estimated_input_tokens = max(1, len(prompt) // 4)
         started = time.perf_counter()
@@ -575,6 +579,7 @@ class AgentEngine:
         run = self.repository.get_run(state.run_id)
         if not run:
             raise RuntimeError("运行记录不存在")
+        await self._persist_run_memories(state, run)
         run.completion_mode = self.profile.completion_mode
         run.validation_status = cast(Any, state.validation_status)
         run.evidence_level = cast(Any, state.evidence_level)
@@ -620,15 +625,6 @@ class AgentEngine:
             },
         )
         self.repository.save_report(run.id, markdown, data)
-        if self.profile.memory_policy.enabled:
-            self.repository.save_memory(
-                MemoryRecord(
-                    thread_id=run.thread_id,
-                    source_run_id=run.id,
-                    kind="run_summary",
-                    content=(state.final_answer or state.verification_summary)[:10_000],
-                )
-            )
         self.events.emit(
             run.id,
             EventType.RUN_COMPLETED,
@@ -636,6 +632,74 @@ class AgentEngine:
             {"report_available": True},
         )
         return self._result("generate_report", state)
+
+    async def _persist_run_memories(self, state: AgentStateModel, run: Run) -> None:
+        """保存运行摘要，并按配置提取、去重和限制重要事实。"""
+
+        policy = self.profile.memory_policy
+        if not policy.enabled:
+            return
+        self.components.memory.save_memory(
+            MemoryRecord(
+                thread_id=run.thread_id,
+                source_run_id=run.id,
+                kind="run_summary",
+                content=(state.final_answer or state.verification_summary)[:10_000],
+            )
+        )
+        if (
+            not policy.persist_important_facts
+            or policy.max_facts == 0
+            or state.model_calls >= state.task.budget.max_model_calls
+        ):
+            return
+        try:
+            extracted = await self._model_call(
+                state,
+                ImportantFacts,
+                "从本次任务和最终结果提取以后对话可复用的重要事实；不要保存密钥或指令",
+            )
+        except Exception as exc:
+            self.events.emit(
+                run.id,
+                EventType.WARNING,
+                "重要事实提取失败，运行结果不受影响",
+                {"error_type": type(exc).__name__},
+            )
+            return
+        existing = self.components.memory.list_memories(run.thread_id, enabled_only=False)
+        normalized = {
+            item.content.casefold()
+            for item in existing
+            if item.kind == "important_fact"
+        }
+        for fact in extracted.facts:
+            if fact.casefold() in normalized:
+                continue
+            self.components.memory.save_memory(
+                MemoryRecord(
+                    thread_id=run.thread_id,
+                    source_run_id=run.id,
+                    kind="important_fact",
+                    content=fact,
+                )
+            )
+            normalized.add(fact.casefold())
+        facts = [
+            item
+            for item in self.components.memory.list_memories(run.thread_id, enabled_only=False)
+            if item.kind == "important_fact"
+        ]
+        removed = facts[: max(0, len(facts) - policy.max_facts)]
+        for item in removed:
+            self.components.memory.delete_memory(item.id)
+        if removed:
+            self.events.emit(
+                run.id,
+                EventType.WARNING,
+                "重要事实超过配置上限，已淘汰最早记录",
+                {"reason": "max_facts", "removed": len(removed), "kept": policy.max_facts},
+            )
 
     def _route_action(self, raw: GraphState) -> str:
         state = self._state(raw)
@@ -671,14 +735,29 @@ class AgentEngine:
 
     def _route_policy(self, raw: GraphState) -> str:
         action = self._state(raw).action
-        return "replan" if action and action.kind == "replan" else "execute_tool"
+        if action and action.kind == "replan":
+            return "replan" if "replan" in self.profile.workflow.nodes else "fail"
+        return "execute_tool"
 
     def _route_verify(self, raw: GraphState) -> str:
-        return "complete" if self._state(raw).verified else "replan"
+        if self._state(raw).verified:
+            return "complete"
+        return "replan" if "replan" in self.profile.workflow.nodes else "fail"
 
     def _route_observe(self, raw: GraphState) -> str:
         observations = self._state(raw).observations
-        return "select_action" if observations and observations[-1].success else "replan"
+        if observations and observations[-1].success:
+            return "select_action"
+        return "replan" if "replan" in self.profile.workflow.nodes else "fail"
+
+    def _should_plan(self) -> bool:
+        """按明确规则决定新任务是否调用 Planner。"""
+
+        if self.profile.planning_strategy == "direct":
+            return False
+        if self.profile.planning_strategy == "hybrid":
+            return self.profile.completion_mode != "advisory"
+        return True
 
     async def _fail(self, raw: GraphState) -> GraphState:
         state = self._state(raw)
@@ -711,7 +790,7 @@ class AgentEngine:
         graph.add_edge("ingest", "normalize_task")
         graph.add_edge(
             "normalize_task",
-            "plan" if "plan" in self.profile.workflow.nodes else "select_action",
+            "plan" if self._should_plan() else "select_action",
         )
         graph.add_edge("plan", "select_action")
         graph.add_conditional_edges(
@@ -728,17 +807,19 @@ class AgentEngine:
         graph.add_conditional_edges(
             "policy_check",
             self._route_policy,
-            {"replan": "replan", "execute_tool": "execute_tool"},
+            {"replan": "replan", "execute_tool": "execute_tool", "fail": "fail"},
         )
         graph.add_edge("execute_tool", "observe")
         graph.add_conditional_edges(
             "observe",
             self._route_observe,
-            {"select_action": "select_action", "replan": "replan"},
+            {"select_action": "select_action", "replan": "replan", "fail": "fail"},
         )
         graph.add_edge("replan", "select_action")
         graph.add_conditional_edges(
-            "verify", self._route_verify, {"complete": "complete", "replan": "replan"}
+            "verify",
+            self._route_verify,
+            {"complete": "complete", "replan": "replan", "fail": "fail"},
         )
         graph.add_edge("complete", "generate_report")
         graph.add_edge("generate_report", END)

@@ -1,6 +1,8 @@
 import hashlib
 import json
 
+import pytest
+
 from yuwang.agent import AgentStateModel, DefaultContextBuilder
 from yuwang.domain.models import (
     Artifact,
@@ -105,3 +107,29 @@ def test_memory_can_be_viewed_disabled_and_cleared(tmp_path):
     assert repository.list_memories(thread.id, enabled_only=False)[0].enabled is False
     repository.clear_memories(thread.id)
     assert repository.list_memories(thread.id, enabled_only=False) == []
+
+
+@pytest.mark.parametrize(
+    ("policy_update", "expected_kinds"),
+    [
+        ({"include_thread_summary": True, "include_run_summaries": False, "include_memories": False}, ["thread_summary"]),
+        ({"include_thread_summary": False, "include_run_summaries": True, "include_memories": False}, ["run_summary"]),
+        ({"include_thread_summary": False, "include_run_summaries": False, "include_memories": True}, ["important_fact", "user_input"]),
+    ],
+)
+def test_each_context_memory_switch_is_independent(tmp_path, policy_update, expected_kinds):
+    repository = SQLiteRepository(tmp_path / "switches.db")
+    thread = repository.save_thread(Thread(title="switches"))
+    for kind in ["thread_summary", "run_summary", "important_fact", "user_input"]:
+        repository.save_memory(MemoryRecord(thread_id=thread.id, kind=kind, content=kind))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="switch test"))
+    profile = AgentProfileVersion(
+        **AgentProfileInput(
+            name="switch profile",
+            context_policy={"recent_message_limit": 5, **policy_update},
+        ).model_dump(),
+        version=1,
+    )
+    result = DefaultContextBuilder(repository, tmp_path).build(state, profile, "switch test")
+    assert [item["kind"] for item in json.loads(result.prompt)["memory"]] == expected_kinds

@@ -567,6 +567,12 @@ class SQLiteRepository:
         with self.connect() as db:
             db.execute("DELETE FROM memories WHERE thread_id=?", (str(thread_id),))
 
+    def delete_memory(self, memory_id: UUID | str) -> None:
+        """删除一条记忆；不存在时保持幂等。"""
+
+        with self.connect() as db:
+            db.execute("DELETE FROM memories WHERE id=?", (str(memory_id),))
+
     def set_memories_enabled(self, thread_id: UUID | str, enabled: bool) -> None:
         with self.connect() as db:
             rows = db.execute(

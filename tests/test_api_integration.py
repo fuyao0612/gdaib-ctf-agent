@@ -194,6 +194,9 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         assert "调整：协议服务生成的计划" in report.json()["markdown"]
         audit = client.get(f"/api/v1/runs/{run_id}/audit").json()
         assert audit["model_calls"] and audit["tool_calls"] and audit["evidence"]
+        assert audit["profile"]["planning_strategy"] == "dynamic"
+        assert audit["profile"]["workflow_preset"] == "verified"
+        assert audit["profile"]["context_policy"]["include_memories"] is True
         assert [item["checkpoint_sequence"] for item in audit["checkpoints"]] == list(
             range(1, len(audit["checkpoints"]) + 1)
         )
@@ -335,6 +338,25 @@ def test_waiting_input_api_persists_memory_and_resumes(tmp_path, provider_server
                 "name": "交互建议助手",
                 "default_provider_id": provider["id"],
                 "completion_mode": "advisory",
+                "planning_strategy": "direct",
+                "workflow": {"preset": "direct"},
+                "context_policy": {
+                    "recent_message_limit": 7,
+                    "include_thread_summary": False,
+                    "include_run_summaries": True,
+                    "include_memories": False,
+                    "text_attachment_char_limit": 1234,
+                },
+                "memory_policy": {
+                    "enabled": True,
+                    "persist_important_facts": False,
+                    "max_facts": 3,
+                },
+                "intervention_policy": {
+                    "normal_mode": "wait",
+                    "competition_mode": "fail",
+                    "max_requests": 1,
+                },
                 "validation_policy": {"require_external_evidence": False},
             },
         )
@@ -359,6 +381,20 @@ def test_waiting_input_api_persists_memory_and_resumes(tmp_path, provider_server
         finished = wait_for_terminal(client, run_id)
         assert finished["status"] == "completed"
         assert finished["validation_status"] == "unverified"
+        audit = client.get(f"/api/v1/runs/{run_id}/audit").json()
+        assert audit["profile"]["planning_strategy"] == "direct"
+        assert audit["profile"]["workflow_preset"] == "direct"
+        assert audit["profile"]["context_policy"]["recent_message_limit"] == 7
+        assert audit["profile"]["memory_policy"] == {
+            "enabled": True,
+            "persist_important_facts": False,
+            "max_facts": 3,
+        }
+        assert audit["profile"]["intervention_policy"]["max_requests"] == 1
+        assert not any(
+            event["type"] == "plan_updated"
+            for event in client.get(f"/api/v1/runs/{run_id}/events").json()
+        )
         memories = client.get(f"/api/v1/threads/{thread['id']}/memories").json()
         assert any(item["kind"] == "user_input" for item in memories)
         assert any(item["kind"] == "run_summary" for item in memories)
