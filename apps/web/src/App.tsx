@@ -173,6 +173,18 @@ export default function App() {
 
   useEffect(() => () => sourceRef.current?.close(), []);
 
+  // 弹层均支持 Esc 退出，避免键盘用户被困在设置、创建任务或审计抽屉中。
+  useEffect(() => {
+    const closeOverlay = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setInspectorOpen(false);
+      setCreateOpen(false);
+      setSettingsOpen(false);
+    };
+    window.addEventListener("keydown", closeOverlay);
+    return () => window.removeEventListener("keydown", closeOverlay);
+  }, []);
+
   async function createThread() {
     setBusy(true);
     setError("");

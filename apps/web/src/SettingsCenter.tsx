@@ -52,7 +52,12 @@ export default function SettingsCenter({
       await load(csrf);
       setNotice("已建立安全管理员会话");
     } catch (cause) {
-      setError(String(cause));
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setError(
+        message.includes("管理员鉴权失败")
+          ? "管理员令牌不正确。请使用项目根目录 .env 中 YUWANG_ADMIN_TOKEN 的值；如果刚修改过该值，请重启服务后再试。"
+          : message,
+      );
     } finally {
       setBusy(false);
     }
@@ -110,6 +115,10 @@ export default function SettingsCenter({
             <form className="admin-login" onSubmit={authenticate}>
               <h3>管理员验证</h3>
               <p>令牌仅保存在当前页面内存中，关闭或刷新后即清除。</p>
+              <p>
+                请粘贴项目根目录 <code>.env</code> 中{" "}
+                <code>YUWANG_ADMIN_TOKEN</code> 等号后的完整内容。
+              </p>
               <label>
                 管理员令牌
                 <input
@@ -230,7 +239,11 @@ export default function SettingsCenter({
         </div>
         {(notice || error) && (
           <div className="settings-feedback">
-            {notice && <div className="settings-notice">{notice}</div>}
+            {notice && (
+              <div className="settings-notice" aria-live="polite">
+                {notice}
+              </div>
+            )}
             {error && (
               <div role="alert" className="settings-error">
                 {error}

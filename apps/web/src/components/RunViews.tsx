@@ -209,6 +209,9 @@ export function InspectorPanel(props: InspectorProps) {
           </div>
         </a>
       ))}
+      {(!props.detail || props.detail.artifacts.length === 0) && (
+        <p className="muted">暂无附件。</p>
+      )}
       {props.detail && (
         <section className="memory-panel">
           <div className="section-label">对话记忆</div>
