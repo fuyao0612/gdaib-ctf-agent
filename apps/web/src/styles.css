@@ -442,6 +442,8 @@ button:hover,
 .inspector-toggle,
 .inspector-close {
   display: none;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .metrics {
   display: grid;
