@@ -1,30 +1,19 @@
-/** Provider 列表、连接测试与编辑表单。密钥字段只发送到后端，不在列表回显。 */
-import { type FormEvent, useEffect, useState } from "react";
+/** Provider 数据协调器：管理真实 API 操作，列表和表单分别负责展示。 */
+import { useEffect, useState } from "react";
 import { api } from "../api";
 import type {
-  FallbackCategory,
   ProviderConfig,
   ProviderConfigInput,
   ProviderPreset,
-  StructuredMode,
 } from "../types";
-
-const emptyProvider: ProviderConfigInput = {
-  name: "",
-  preset: "deepseek",
-  base_url: "https://api.deepseek.com",
-  model: "deepseek-v4-flash",
-  api_key: "",
-  enabled: true,
-  is_default: false,
-  fallback_order: null,
-  timeout_seconds: 60,
-  max_retries: 2,
-  structured_mode: "auto",
-  input_price_per_million: 0,
-  output_price_per_million: 0,
-  fallback_on: ["rate_limit", "timeout", "service"],
-};
+import ProviderForm from "./provider/ProviderForm";
+import ProviderList from "./provider/ProviderList";
+import {
+  type ProviderPresetDescriptor,
+  createEmptyProvider,
+  providerToInput,
+  selectProviderPreset,
+} from "./provider/model";
 
 interface Props {
   csrf: string;
@@ -37,9 +26,9 @@ interface Props {
 
 export default function ProviderSettings(props: Props) {
   const [presets, setPresets] = useState<
-    Record<string, { base_url: string; model: string }>
+    Record<string, ProviderPresetDescriptor>
   >({});
-  const [form, setForm] = useState<ProviderConfigInput>(emptyProvider);
+  const [form, setForm] = useState<ProviderConfigInput>(createEmptyProvider);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -50,44 +39,19 @@ export default function ProviderSettings(props: Props) {
       .catch(() => setPresets({}));
   }, []);
 
-  function selectPreset(preset: ProviderPreset) {
-    const value = presets[preset];
-    setForm((current) => ({
-      ...current,
-      preset,
-      ...(value ? { base_url: value.base_url, model: value.model } : {}),
-    }));
-  }
-
-  function edit(value: ProviderConfig) {
-    setEditingId(value.id);
-    setForm({
-      name: value.name,
-      preset: value.preset,
-      base_url: value.base_url,
-      model: value.model,
-      api_key: "",
-      enabled: value.enabled,
-      is_default: value.is_default,
-      fallback_order: value.fallback_order,
-      timeout_seconds: value.timeout_seconds,
-      max_retries: value.max_retries,
-      structured_mode: value.structured_mode,
-      input_price_per_million: value.input_price_per_million,
-      output_price_per_million: value.output_price_per_million,
-      fallback_on: value.fallback_on,
-    });
+  function edit(provider: ProviderConfig) {
+    setEditingId(provider.id);
+    setForm(providerToInput(provider));
     props.onNotice("编辑时留空 API Key 将保留现有密钥。");
   }
 
   function resetForm() {
     setEditingId(null);
-    setForm(emptyProvider);
+    setForm(createEmptyProvider());
     props.onNotice("");
   }
 
-  async function saveProvider(event: FormEvent) {
-    event.preventDefault();
+  async function saveProvider() {
     setBusy(true);
     props.onError("");
     props.onNotice("");
@@ -96,8 +60,7 @@ export default function ProviderSettings(props: Props) {
       const wasEditing = Boolean(editingId);
       if (editingId) await api.updateProvider(props.csrf, editingId, payload);
       else await api.createProvider(props.csrf, payload);
-      setForm(emptyProvider);
-      setEditingId(null);
+      resetForm();
       await props.onRefresh();
       await props.onChanged();
       props.onNotice(wasEditing ? "Provider 已更新" : "Provider 已创建");
@@ -113,6 +76,7 @@ export default function ProviderSettings(props: Props) {
     props.onError("");
     try {
       await api.deleteProvider(props.csrf, id);
+      if (editingId === id) resetForm();
       await props.onRefresh();
       await props.onChanged();
       props.onNotice("Provider 已删除");
@@ -160,276 +124,32 @@ export default function ProviderSettings(props: Props) {
     }
   }
 
+  function changePreset(preset: ProviderPreset) {
+    setForm((current) => selectProviderPreset(current, preset, presets));
+  }
+
   return (
     <section>
       <div className="settings-title">
         <h3>模型 Provider</h3>
         <button onClick={resetForm}>新增配置</button>
       </div>
-      <div className="provider-table">
-        {props.providers.map((provider) => (
-          <article
-            key={provider.id}
-            className={
-              provider.is_default ? "provider-row default" : "provider-row"
-            }
-          >
-            <div>
-              <strong>{provider.name}</strong>
-              <small>
-                {provider.preset} · {provider.model}
-              </small>
-              <small>{provider.base_url}</small>
-              <small>
-                连接：
-                {provider.connection_status === "ok"
-                  ? `成功 · ${provider.actual_model ?? provider.model}`
-                  : provider.connection_status === "failed"
-                    ? `失败 · ${provider.last_test_error}`
-                    : "尚未测试"}
-                {provider.last_tested_at
-                  ? ` · ${new Date(provider.last_tested_at).toLocaleString()}`
-                  : ""}
-              </small>
-            </div>
-            <div className="provider-flags">
-              <span>{provider.has_api_key ? "密钥已保存" : "缺少密钥"}</span>
-              {provider.is_default && <span>默认</span>}
-              {!provider.enabled && <span>已停用</span>}
-            </div>
-            <div>
-              <button
-                disabled={busy}
-                onClick={() => void testProvider(provider.id)}
-              >
-                连接测试
-              </button>
-              <button
-                disabled={busy}
-                onClick={() => void discoverModels(provider.id)}
-              >
-                发现模型
-              </button>
-              <button onClick={() => edit(provider)}>编辑</button>
-              <button
-                className="danger"
-                disabled={provider.is_default || busy}
-                onClick={() => void removeProvider(provider.id)}
-              >
-                删除
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
-      <form className="settings-form" onSubmit={saveProvider}>
-        <h4>{editingId ? "编辑 Provider" : "新增 Provider"}</h4>
-        <div className="form-grid">
-          <label>
-            名称
-            <input
-              value={form.name}
-              onChange={(event) =>
-                setForm({ ...form, name: event.target.value })
-              }
-              required
-            />
-          </label>
-          <label>
-            厂商预设
-            <select
-              value={form.preset}
-              onChange={(event) =>
-                selectPreset(event.target.value as ProviderPreset)
-              }
-            >
-              <option value="deepseek">DeepSeek</option>
-              <option value="qwen">阿里云百炼 / 千问</option>
-              <option value="glm">智谱 GLM</option>
-              <option value="custom">自定义兼容 API</option>
-            </select>
-          </label>
-          <label className="wide">
-            Base URL
-            <input
-              value={form.base_url}
-              onChange={(event) =>
-                setForm({ ...form, base_url: event.target.value })
-              }
-              required
-            />
-          </label>
-          <label>
-            模型
-            <input
-              value={form.model}
-              onChange={(event) =>
-                setForm({ ...form, model: event.target.value })
-              }
-              required
-            />
-          </label>
-          <label>
-            API Key
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={form.api_key ?? ""}
-              placeholder={
-                editingId ? "留空以保留现有密钥" : "输入 Provider API Key"
-              }
-              onChange={(event) =>
-                setForm({ ...form, api_key: event.target.value })
-              }
-              required={!editingId}
-            />
-          </label>
-          <label>
-            超时（秒）
-            <input
-              type="number"
-              min="1"
-              max="600"
-              value={form.timeout_seconds}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  timeout_seconds: Number(event.target.value),
-                })
-              }
-            />
-          </label>
-          <label>
-            重试次数
-            <input
-              type="number"
-              min="0"
-              max="8"
-              value={form.max_retries}
-              onChange={(event) =>
-                setForm({ ...form, max_retries: Number(event.target.value) })
-              }
-            />
-          </label>
-          <label>
-            输入价格/百万 Token
-            <input
-              type="number"
-              min="0"
-              step="0.0001"
-              value={form.input_price_per_million}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  input_price_per_million: Number(event.target.value),
-                })
-              }
-            />
-          </label>
-          <label>
-            输出价格/百万 Token
-            <input
-              type="number"
-              min="0"
-              step="0.0001"
-              value={form.output_price_per_million}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  output_price_per_million: Number(event.target.value),
-                })
-              }
-            />
-          </label>
-          <label>
-            备用顺序
-            <input
-              type="number"
-              min="0"
-              max="100"
-              value={form.fallback_order ?? ""}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  fallback_order:
-                    event.target.value === ""
-                      ? null
-                      : Number(event.target.value),
-                })
-              }
-            />
-          </label>
-          <label>
-            结构化模式
-            <select
-              value={form.structured_mode}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  structured_mode: event.target.value as StructuredMode,
-                })
-              }
-            >
-              <option value="auto">自动协商（推荐）</option>
-              <option value="json_schema">JSON Schema</option>
-              <option value="json_object">JSON Object</option>
-              <option value="prompt_json">提示词兼容模式</option>
-            </select>
-          </label>
-        </div>
-        <fieldset className="check-row">
-          <legend>允许触发备用模型的错误</legend>
-          {(
-            [
-              "rate_limit",
-              "timeout",
-              "service",
-              "invalid_output",
-            ] as FallbackCategory[]
-          ).map((category) => (
-            <label key={category}>
-              <input
-                type="checkbox"
-                checked={form.fallback_on.includes(category)}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    fallback_on: event.target.checked
-                      ? [...form.fallback_on, category]
-                      : form.fallback_on.filter((value) => value !== category),
-                  })
-                }
-              />
-              {category}
-            </label>
-          ))}
-        </fieldset>
-        <div className="check-row">
-          <label>
-            <input
-              type="checkbox"
-              checked={form.enabled}
-              onChange={(event) =>
-                setForm({ ...form, enabled: event.target.checked })
-              }
-            />
-            启用
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={form.is_default}
-              onChange={(event) =>
-                setForm({ ...form, is_default: event.target.checked })
-              }
-            />
-            设为默认
-          </label>
-        </div>
-        <button className="primary" disabled={busy}>
-          {editingId ? "保存修改" : "创建 Provider"}
-        </button>
-      </form>
+      <ProviderList
+        providers={props.providers}
+        busy={busy}
+        onTest={(id) => void testProvider(id)}
+        onDiscoverModels={(id) => void discoverModels(id)}
+        onEdit={edit}
+        onRemove={(id) => void removeProvider(id)}
+      />
+      <ProviderForm
+        form={form}
+        editing={Boolean(editingId)}
+        busy={busy}
+        onChange={setForm}
+        onPresetChange={changePreset}
+        onSubmit={() => void saveProvider()}
+      />
     </section>
   );
 }
