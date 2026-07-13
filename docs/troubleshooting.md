@@ -5,6 +5,8 @@
 - health 失败：检查容器状态、8000 内部端口、数据目录权限与只读根文件系统的 tmpfs。
 - health 正常但 readiness 为 503：读取响应中的非敏感 `checks`，依次修复数据库、主密钥、管理员令牌或 Provider。
 - Web 可打开但自动弹出首次配置：这是 Provider 未配置时的预期行为；使用 `.env` 中的管理员令牌登录并完成连接测试。
+- 页面提示“管理员令牌不正确”：设置中心需要 `.env` 中 `YUWANG_ADMIN_TOKEN=` 等号后的完整值，不是 Provider API Key。不要粘贴变量名、引号或首尾空格；修改 `.env` 后执行 `docker compose restart api`。
+- PowerShell 提示 `RandomNumberGenerator` 没有 `Fill` 方法：当前版应使用 `.\scripts\start.ps1`。该入口兼容 Windows PowerShell 5.1；若仍出现旧错误，先确认当前分支已包含最新版 `scripts/first-setup.ps1`。
 
 ## Provider 与运行
 

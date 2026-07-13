@@ -29,9 +29,9 @@ sequenceDiagram
 
 关键入口如下：
 
-1. `apps/web/src/App.tsx` 协调页面状态，`api.ts` 统一 Cookie、CSRF 和错误处理。
-2. `apps/api/main.py` 的 `turn` 接口把“保存消息”和“启动运行”合成一个原子用例，并立即返回可订阅的 Run。
-3. `src/yuwang/agent/engine.py` 是状态机；它只依赖 `AgentRepository`、Provider、工具注册表和显式组件。
+1. `apps/web/src/App.tsx` 只协调共享状态与网络动作；`components/` 分别承载任务导航、对话/审计、消息输入、Provider 和 Agent 配置，`api.ts` 统一 Cookie、CSRF 和错误处理。
+2. `apps/api/main.py` 只装配应用；`context.py` 建立仓储、服务与恢复生命周期，`routes/runs.py` 的 `turn` 接口把“保存消息”和“启动运行”合成一个原子用例，并立即返回可订阅的 Run。
+3. `src/yuwang/agent/engine.py` 是稳定运行门面；`nodes.py` 放单步业务节点，`runner.py` 装配 LangGraph 并协调运行/恢复，`state.py` 定义可持久化图状态，`progress.py` 判断重复动作与无进展。
 4. `src/yuwang/model_providers/providers.py` 负责协议适配、错误分类、重试与备用模型，不能决定任务成功。
 5. `src/yuwang/storage/sqlite.py` 保存运行快照和事件。页面刷新或进程重启后，恢复逻辑以持久化状态为准，而不是以内存为准。
 
@@ -59,6 +59,13 @@ sequenceDiagram
 - React + TypeScript：界面状态多且与后端契约紧密，静态类型能尽早发现字段漂移。
 - SSE：Agent 事件主要是服务端单向推送，SSE 比 WebSocket 更轻，并原生支持事件游标重连。
 - Docker Compose：把 Web、API、数据卷和健康检查变成一条可复现部署路径。
+
+## 建议阅读顺序
+
+1. 从 `apps/web/src/App.tsx` 看一次发送怎样调用 `api.turn()` 并订阅 SSE，再阅读 `MessageComposer.tsx` 与 `RunViews.tsx`。
+2. 沿 `apps/api/routes/runs.py` 进入 `ApiContext.execute()` 与 `schedule()`，理解 HTTP 层为什么不直接实现 Agent 规则。
+3. 阅读 `agent/state.py → nodes.py → runner.py → engine.py`，先看状态与节点，再看图装配和门面中的预算/模型调用。
+4. 最后阅读 `model_providers/`、`storage/sqlite.py` 与测试；用 `tests/test_agent_engine.py` 和 Playwright 全流程把抽象对应回可观察行为。
 
 ## 四种最小扩展
 

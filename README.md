@@ -21,6 +21,8 @@ curl http://localhost:8080/api/v1/health
 
 打开 <http://localhost:8080>。首次使用会自动进入配置向导，依次完成管理员登录、Provider 配置与连接测试、默认 Agent 确认。API Key 只以认证加密密文持久化；主密钥和管理员令牌不进入仓库或浏览器存储。
 
+设置中心要求的是项目根目录 `.env` 里 `YUWANG_ADMIN_TOKEN=` 等号后的完整值，不是 Provider API Key，也不要连同变量名一起粘贴。Windows 可在本机运行 `notepad .env` 查看；如果手动修改过令牌，需要执行 `docker compose restart api` 后再登录。令牌属于敏感信息，不要发到聊天、截图或提交记录。
+
 ## 使用流程
 
 1. 在设置中心配置 Provider 与可版本化 Agent，可预览模板、导入导出、比较版本和回滚。
@@ -53,9 +55,9 @@ npm run e2e
 
 ## 目录与文档
 
-- `apps/api`：FastAPI REST/SSE 适配层
-- `apps/web`：React 工作台与设置中心
-- `src/yuwang/agent`：LangGraph 自主决策与恢复核心
+- `apps/api`：FastAPI 装配、共享上下文与按领域拆分的 REST/SSE 路由
+- `apps/web`：React 工作台、设置中心及独立区域组件
+- `src/yuwang/agent`：LangGraph 运行门面、节点、状态和恢复协调器
 - `src/yuwang/model_providers`：真实 OpenAI 兼容 Provider 与 fallback
 - `src/yuwang/tooling`：受控工具 SDK 和参考工具
 - `src/yuwang/storage`：SQLite 持久化、检查点与审计
