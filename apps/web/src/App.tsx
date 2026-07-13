@@ -46,7 +46,9 @@ export default function App() {
   const [memories, setMemories] = useState<MemoryRecord[]>([])
   const sourceRef = useRef<EventSource | null>(null)
 
-  const loadThreads = useCallback(async () => setThreads(await api.listThreads()), [])
+  const loadThreads = useCallback(async () => {
+    const values = await api.listThreads(); setThreads(values); return values
+  }, [])
   const loadProviders = useCallback(async () => {
     const values = await api.listProviders(); setProviders(values)
     setSelectedProviderId(current => current && values.some(value => value.id === current) ? current : (values.find(value => value.is_default)?.id ?? values[0]?.id ?? ''))
@@ -58,6 +60,7 @@ export default function App() {
   const refreshSettings = useCallback(async () => { await Promise.all([loadProviders(), loadProfiles()]) }, [loadProviders, loadProfiles])
   const selectThread = useCallback(async (id: string) => {
     sourceRef.current?.close(); setError(''); setReport(null)
+    window.localStorage?.setItem('yuwang.currentThreadId', id)
     const value = await api.detail(id); setDetail(value); setPendingArtifacts([]); setMemories(await api.memories(id))
     const run = value.runs.at(-1) ?? null; setActiveRun(run)
     if (run) { setEvents(await api.events(run.id)); setAudit(await api.audit(run.id)); if (run.status === 'completed') setReport(await api.report(run.id)) }
@@ -69,10 +72,12 @@ export default function App() {
       setInitialSetup(!status.configured)
       try {
         await api.adminSession()
-        await Promise.all([loadThreads(), loadProviders(), loadProfiles()])
+        const [values] = await Promise.all([loadThreads(), loadProviders(), loadProfiles()])
+        const remembered = window.localStorage?.getItem('yuwang.currentThreadId')
+        if (remembered && values.some(item => item.id === remembered)) await selectThread(remembered)
       } catch { setSettingsOpen(true) }
     }).catch(() => setError('无法连接后端服务，请检查部署状态。'))
-  }, [loadThreads, loadProviders, loadProfiles])
+  }, [loadThreads, loadProviders, loadProfiles, selectThread])
 
   const connect = useCallback((run: Run) => {
     sourceRef.current?.close()
@@ -132,7 +137,7 @@ export default function App() {
   async function removeThread(thread: Thread) {
     if (!window.confirm(`永久删除“${thread.title}”及其消息、运行和审计记录？此操作无法撤销。`)) return
     await api.deleteThread(thread.id); await loadThreads()
-    if (detail?.id === thread.id) setDetail(null)
+    if (detail?.id === thread.id) { window.localStorage?.removeItem('yuwang.currentThreadId'); setDetail(null) }
   }
 
   const running = activeRun?.status === 'queued' || activeRun?.status === 'running'

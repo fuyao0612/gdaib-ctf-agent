@@ -16,14 +16,16 @@ Linux/macOS：
 ./scripts/first-setup.sh --start
 ```
 
-脚本只在 `.env` 不存在时生成高熵管理员令牌和 Fernet 主密钥，绝不覆盖已有文件，也不会把密钥打印到日志。`.env` 权限应仅限服务账户，并与数据备份分开离线保管。首次打开 `http://localhost:8080` 会进入配置向导：管理员登录、添加 Provider、执行真实连接测试、确认默认 Agent，然后开始对话。Provider API Key 只在设置中心提交，并以主密钥加密后持久化。
+脚本只在 `.env` 不存在时生成高熵管理员令牌和 Fernet 主密钥，绝不覆盖已有文件，也不会把密钥打印到日志。管理员本人可在服务器本机打开 `.env`，读取 `YUWANG_ADMIN_TOKEN` 后粘贴到登录框；不要把它发送到聊天、工单或截图中。`.env` 权限应仅限服务账户，并与数据备份分开离线保管。首次打开 `http://localhost:8080` 会进入配置向导：管理员登录、添加 Provider、执行真实连接测试、确认默认 Agent，然后开始对话。Provider API Key 只在设置中心提交，并以主密钥加密后持久化。
+
+国内模型可直接选择 DeepSeek、阿里云百炼/千问或智谱 GLM 预设，核对控制台提供的 API Key 与模型名后执行“连接测试”。若使用其他 OpenAI 兼容服务，选择“自定义”，填写该服务的 HTTPS Base URL 和模型名；只有明确启用本机协议测试时才允许 HTTP localhost。
 
 可通过 `.env` 调整 `YUWANG_WEB_PORT`、`YUWANG_DATA_PATH`、CORS、Cookie Secure 标志和 API/Web 的 CPU、内存上限。Compose 的一次性 `data-init` 服务只负责建立目录并把持久化数据交给固定 UID 10001，随后退出；长期运行的 API 仍是非 root 用户。API/Web 使用只读根文件系统、受限 tmpfs、最小 capabilities 且禁止提权。HTTPS 部署必须设置 `YUWANG_COOKIE_SECURE=true`，并把 `YUWANG_CORS_ORIGINS` 改为准确的 HTTPS 来源。
 
 ## 健康与就绪
 
 - `/api/v1/health`：只表明进程存活并返回版本，供容器健康检查使用。
-- `/api/v1/readiness`：检查数据库、主密钥、管理员配置和至少一个启用的 Provider；首次配置前返回 503 是正常行为。
+- `/api/v1/readiness`：检查数据库、主密钥、管理员配置，以及默认 Agent 是否能解析到已启用且最近真实连接测试成功的 Provider；首次配置前返回 503 是正常行为。
 - `/api/v1/setup/status`：供首次配置界面读取非敏感检查结果，不返回令牌、密钥或内部路径。
 
 ## 备份、恢复和迁移
