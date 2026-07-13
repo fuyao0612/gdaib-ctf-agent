@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# 在停服窗口恢复备份；先校验目标路径，避免覆盖项目外文件。
 set -eu
 [ "$#" -ge 1 ] || { echo '用法: restore.sh BACKUP [DATA_PATH] --force' >&2; exit 2; }
 [ "${3:-}" = '--force' ] || { echo '恢复会替换数据，请显式传入 --force。' >&2; exit 2; }

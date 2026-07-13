@@ -1,3 +1,5 @@
+"""SQLite 数据访问层：显式保存状态、检查点、快照和完整审计链。"""
+
 from __future__ import annotations
 
 import json
@@ -101,6 +103,27 @@ class SQLiteRepository:
         with self.connect() as db:
             rows = db.execute("SELECT data FROM threads ORDER BY created_at DESC").fetchall()
         return [self._load(Thread, row["data"]) for row in rows]
+
+    def delete_thread(self, thread_id: UUID | str) -> None:
+        """在一个事务内清理对话及其运行数据，避免留下孤立审计记录。"""
+        key = str(thread_id)
+        with self.connect() as db:
+            run_rows = db.execute("SELECT id FROM runs WHERE thread_id=?", (key,)).fetchall()
+            run_ids = [row["id"] for row in run_rows]
+            for run_id in run_ids:
+                for table, column in (
+                    ("events", "run_id"), ("reports", "run_id"),
+                    ("run_tasks", "run_id"), ("run_checkpoints", "run_id"),
+                    ("model_calls", "run_id"), ("tool_calls", "run_id"),
+                    ("evidence", "run_id"), ("provider_snapshots", "run_id"),
+                    ("run_agent_profiles", "run_id"),
+                ):
+                    db.execute(f"DELETE FROM {table} WHERE {column}=?", (run_id,))
+            db.execute("DELETE FROM messages WHERE thread_id=?", (key,))
+            db.execute("DELETE FROM artifacts WHERE thread_id=?", (key,))
+            db.execute("DELETE FROM memories WHERE thread_id=?", (key,))
+            db.execute("DELETE FROM runs WHERE thread_id=?", (key,))
+            db.execute("DELETE FROM threads WHERE id=?", (key,))
 
     def save_message(self, value: Message) -> Message:
         with self.connect() as db:
@@ -566,6 +589,12 @@ class SQLiteRepository:
     def clear_memories(self, thread_id: UUID | str) -> None:
         with self.connect() as db:
             db.execute("DELETE FROM memories WHERE thread_id=?", (str(thread_id),))
+
+    def delete_memory(self, memory_id: UUID | str) -> None:
+        """删除一条记忆；不存在时保持幂等。"""
+
+        with self.connect() as db:
+            db.execute("DELETE FROM memories WHERE id=?", (str(memory_id),))
 
     def set_memories_enabled(self, thread_id: UUID | str, enabled: bool) -> None:
         with self.connect() as db:

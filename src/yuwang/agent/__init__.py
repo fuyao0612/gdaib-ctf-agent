@@ -5,7 +5,8 @@ __all__ = [
     "AgentEngine",
     "AgentStateModel",
     "BudgetExceeded",
-    "ComponentRegistry",
+    "AgentComponents",
+    "AgentRepository",
     "ContextBuilder",
     "DefaultActionSelector",
     "DefaultContextBuilder",
@@ -17,9 +18,10 @@ __all__ = [
     "VerificationResult",
     "Verifier",
     "WorkflowNode",
+    "default_components",
 ]
 from .components import (
-    ComponentRegistry,
+    AgentComponents,
     ContextBuilder,
     DefaultActionSelector,
     DefaultContextBuilder,
@@ -29,4 +31,6 @@ from .components import (
     ReportRenderer,
     Verifier,
     WorkflowNode,
+    default_components,
 )
+from .repository import AgentRepository

@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# 启动前检查环境、Compose 配置、权限和必需密钥是否满足生产条件。
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 [ -f "$ROOT/.env" ] || { echo '缺少 .env，请先运行 scripts/first-setup.sh。' >&2; exit 1; }

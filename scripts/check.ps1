@@ -1,3 +1,4 @@
+# 本地一键执行与 CI 相同的后端和前端质量门禁。
 $ErrorActionPreference = "Stop"
 ruff check .
 mypy

@@ -1,3 +1,4 @@
+# 构建阶段生成静态资源，运行阶段不携带 Node.js 工具链。
 FROM node:22-alpine AS build
 WORKDIR /web
 COPY package.json package-lock.json ./

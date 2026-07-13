@@ -1,3 +1,5 @@
+"""确定性完成验证器：模型候选必须满足结构或外部证据规则才能通过。"""
+
 from __future__ import annotations
 
 import hashlib

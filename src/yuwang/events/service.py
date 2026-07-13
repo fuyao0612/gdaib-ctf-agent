@@ -1,3 +1,5 @@
+"""按序读取运行事件，为轮询与 SSE 重连提供一致游标语义。"""
+
 from __future__ import annotations
 
 from typing import Any, cast

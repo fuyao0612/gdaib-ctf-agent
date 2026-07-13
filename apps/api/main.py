@@ -1,3 +1,5 @@
+"""御网智元 HTTP 适配层：负责鉴权、输入校验、运行调度和审计查询。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -84,6 +86,11 @@ class ThreadCreate(BaseModel):
     agent_profile_id: UUID | None = None
 
 
+class ThreadUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    archived: bool | None = None
+
+
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=100_000)
     artifact_ids: list[UUID] = Field(default_factory=list)
@@ -112,6 +119,10 @@ class TemplatePreview(BaseModel):
 
 class RunInput(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
+
+
+class TurnCreate(MessageCreate, RunCreate):
+    """用户一次发送所需的消息与运行选项。"""
 
 
 class MemoryToggle(BaseModel):
@@ -162,16 +173,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_insecure_local=config.allow_insecure_local_provider,
         )
 
-    def require_admin(
+    def verify_session(
         request: Request,
-        authorization: Annotated[str | None, Header()] = None,
-        csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
-    ) -> None:
+        authorization: str | None = None,
+        csrf_token: str | None = None,
+    ) -> tuple[float, str] | None:
         if not config.admin_token:
             raise HTTPException(503, "管理员鉴权未配置")
         scheme, _, token = (authorization or "").partition(" ")
         if scheme.lower() == "bearer" and secrets.compare_digest(token, config.admin_token):
-            return
+            return None
         session_id = request.cookies.get("yuwang_admin_session", "")
         session = admin_sessions.get(session_id)
         if not session or session[0] <= time.time():
@@ -181,6 +192,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             csrf_token or "", session[1]
         ):
             raise HTTPException(403, "管理员会话 CSRF 校验失败")
+        return session
+
+    def require_admin(
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+        csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+    ) -> None:
+        verify_session(request, authorization, csrf_token)
 
     def build_provider_chain_from_configs(provider_configs: list[ProviderConfig]) -> ProviderChain:
         service = get_settings_service()
@@ -286,6 +305,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         return await call_next(request)
 
+    @application.middleware("http")
+    async def protect_workbench(request: Request, call_next: Any) -> Any:
+        """单用户工作台统一复用服务端会话，公开范围仅限启动所需端点。"""
+        public = {
+            "/api/v1/health", "/api/v1/readiness", "/api/v1/setup/status",
+            "/api/v1/provider-presets", "/api/v1/admin/session",
+            "/api/v1/openapi.json", "/api/docs",
+        }
+        if request.url.path.startswith("/api/v1/") and request.url.path not in public:
+            try:
+                verify_session(
+                    request,
+                    request.headers.get("Authorization"),
+                    request.headers.get("X-CSRF-Token"),
+                )
+            except HTTPException as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"error": {"code": f"http_{exc.status_code}", "message": str(exc.detail)}},
+                )
+        return await call_next(request)
+
     @application.exception_handler(HTTPException)
     async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
         detail = exc.detail if isinstance(exc.detail, str) else "请求失败"
@@ -366,7 +407,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 master_key_ok = True
             except ValueError:
                 master_key_ok = False
-        provider_ok = any(value.enabled for value in repository.list_provider_configs())
+        providers = repository.list_provider_configs()
+        try:
+            default_profile = profile_service.resolve(None)
+            selected = (
+                next((item for item in providers if item.id == default_profile.default_provider_id), None)
+                if default_profile.default_provider_id
+                else next((item for item in providers if item.is_default), None)
+            )
+            provider_ok = bool(
+                selected and selected.enabled and selected.connection_status == "ok"
+            )
+        except (KeyError, ValueError):
+            provider_ok = False
         return {
             "database": database_ok,
             "master_key": master_key_ok,
@@ -405,9 +458,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             httponly=True,
             secure=config.cookie_secure,
             samesite="strict",
-            path="/api/v1/admin",
+            path="/api/v1",
         )
         return {"status": "ok", "csrf_token": csrf, "expires_at": expires_at}
+
+    @application.get("/api/v1/admin/session")
+    async def get_admin_session(request: Request) -> dict[str, Any]:
+        session = verify_session(
+            request,
+            request.headers.get("Authorization"),
+            request.headers.get("X-CSRF-Token"),
+        )
+        return {
+            "authenticated": True,
+            "csrf_token": session[1] if session else "",
+            "expires_at": session[0] if session else None,
+        }
 
     @application.delete(
         "/api/v1/admin/session",
@@ -417,7 +483,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def delete_admin_session(request: Request, response: Response) -> None:
         session_id = request.cookies.get("yuwang_admin_session", "")
         admin_sessions.pop(session_id, None)
-        response.delete_cookie("yuwang_admin_session", path="/api/v1/admin")
+        response.delete_cookie("yuwang_admin_session", path="/api/v1")
 
     @application.post("/api/v1/threads", response_model=Thread, status_code=201)
     async def create_thread(body: ThreadCreate) -> Thread:
@@ -455,6 +521,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         thread.archived = True
         thread.updated_at = utcnow()
         return repository.save_thread(thread)
+
+    @application.patch("/api/v1/threads/{thread_id}", response_model=Thread)
+    async def update_thread(thread_id: UUID, body: ThreadUpdate) -> Thread:
+        thread = require_thread(thread_id)
+        if body.title is not None:
+            thread.title = body.title.strip()
+        if body.archived is not None:
+            thread.archived = body.archived
+        thread.updated_at = utcnow()
+        return repository.save_thread(thread)
+
+    @application.delete("/api/v1/threads/{thread_id}", status_code=204)
+    async def delete_thread(thread_id: UUID) -> None:
+        require_thread(thread_id)
+        active = any(
+            run.status in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}
+            for run in repository.list_runs(thread_id)
+        )
+        if active:
+            raise HTTPException(409, "请先停止正在运行的任务")
+        repository.delete_thread(thread_id)
 
     @application.post(
         "/api/v1/threads/{thread_id}/messages", response_model=Message, status_code=201
@@ -559,6 +646,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         task_handle.add_done_callback(cleanup_callback(run.id))
         return run
 
+    @application.post("/api/v1/threads/{thread_id}/turns", response_model=Run, status_code=202)
+    async def send_turn(thread_id: UUID, body: TurnCreate) -> Run:
+        """保存用户消息并自动创建 Run，让调用方只理解“发送一轮对话”。"""
+
+        await send_message(
+            thread_id,
+            MessageCreate(content=body.content, artifact_ids=body.artifact_ids),
+        )
+        return await start_run(
+            thread_id,
+            RunCreate(
+                provider_config_id=body.provider_config_id,
+                authorized_targets=body.authorized_targets,
+                success_conditions=body.success_conditions,
+                verification_rules=body.verification_rules,
+            ),
+        )
+
     @application.get("/api/v1/runs/{run_id}", response_model=Run)
     async def get_run(run_id: UUID) -> Run:
         return require_run(run_id)
@@ -639,6 +744,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         require_thread(thread_id)
         repository.clear_memories(thread_id)
 
+    @application.delete(
+        "/api/v1/threads/{thread_id}/memories/{memory_id}", status_code=204
+    )
+    async def delete_thread_memory(thread_id: UUID, memory_id: UUID) -> None:
+        require_thread(thread_id)
+        memory = next(
+            (
+                item
+                for item in repository.list_memories(thread_id, enabled_only=False)
+                if item.id == memory_id
+            ),
+            None,
+        )
+        if not memory:
+            raise HTTPException(404, "记忆不存在")
+        repository.delete_memory(memory_id)
+
     @application.patch("/api/v1/threads/{thread_id}/memories", status_code=204)
     async def toggle_thread_memories(thread_id: UUID, body: MemoryToggle) -> None:
         require_thread(thread_id)
@@ -716,7 +838,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "limits": budget.model_dump(mode="json") if budget else {},
             "profile": (
-                {"name": profile.name, "version": profile.version, "completion_mode": profile.completion_mode}
+                {
+                    "name": profile.name,
+                    "version": profile.version,
+                    "completion_mode": profile.completion_mode,
+                    "planning_strategy": profile.planning_strategy,
+                    "workflow_preset": profile.workflow.preset,
+                    "default_provider_id": (
+                        str(profile.default_provider_id) if profile.default_provider_id else None
+                    ),
+                    "fallback_provider_ids": [str(value) for value in profile.fallback_provider_ids],
+                    "context_policy": profile.context_policy.model_dump(mode="json"),
+                    "memory_policy": profile.memory_policy.model_dump(mode="json"),
+                    "intervention_policy": profile.intervention_policy.model_dump(mode="json"),
+                }
                 if profile
                 else None
             ),
@@ -1061,7 +1196,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         except ProviderError as exc:
+            service.record_connection_test(provider_id, succeeded=False, error=str(exc))
             raise HTTPException(502, f"连接测试失败：{exc}") from exc
+        service.record_connection_test(
+            provider_id, succeeded=True, actual_model=metrics.model
+        )
         return {
             "status": "ok",
             "provider": metrics.provider,

@@ -1,3 +1,5 @@
+"""受控工具 SDK：以声明式元数据、参数模型和显式注册替代任意执行。"""
+
 from __future__ import annotations
 
 import asyncio
