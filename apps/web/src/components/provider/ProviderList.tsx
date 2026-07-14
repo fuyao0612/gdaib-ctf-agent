@@ -1,9 +1,10 @@
 /** 只展示 Provider 状态和操作按钮，连接测试仍由上层调用真实 API。 */
-import type { ProviderConfig } from "../../types";
+import type { ProviderConfig, SettingsMode } from "../../types";
 
 interface Props {
   providers: ProviderConfig[];
   busy: boolean;
+  mode: SettingsMode;
   onTest: (id: string) => void;
   onDiscoverModels: (id: string) => void;
   onEdit: (provider: ProviderConfig) => void;
@@ -21,6 +22,7 @@ function connectionSummary(provider: ProviderConfig): string {
 export default function ProviderList({
   providers,
   busy,
+  mode,
   onTest,
   onDiscoverModels,
   onEdit,
@@ -57,20 +59,24 @@ export default function ProviderList({
             <button disabled={busy} onClick={() => onTest(provider.id)}>
               连接测试
             </button>
-            <button
-              disabled={busy}
-              onClick={() => onDiscoverModels(provider.id)}
-            >
-              发现模型
-            </button>
+            {mode === "advanced" && (
+              <button
+                disabled={busy}
+                onClick={() => onDiscoverModels(provider.id)}
+              >
+                发现模型
+              </button>
+            )}
             <button onClick={() => onEdit(provider)}>编辑</button>
-            <button
-              className="danger"
-              disabled={provider.is_default || busy}
-              onClick={() => onRemove(provider.id)}
-            >
-              删除
-            </button>
+            {mode === "advanced" && (
+              <button
+                className="danger"
+                disabled={provider.is_default || busy}
+                onClick={() => onRemove(provider.id)}
+              >
+                删除
+              </button>
+            )}
           </div>
         </article>
       ))}

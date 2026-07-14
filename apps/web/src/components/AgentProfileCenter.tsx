@@ -1,7 +1,12 @@
 /** Agent 配置数据协调器：远端操作留在这里，展示和表单拆到 agent-profile/。 */
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import type { AgentProfile, AgentProfileInput, ProviderConfig } from "../types";
+import type {
+  AgentProfile,
+  AgentProfileInput,
+  ProviderConfig,
+  SettingsMode,
+} from "../types";
 import AgentProfileForm from "./agent-profile/AgentProfileForm";
 import AgentProfileList from "./agent-profile/AgentProfileList";
 import VersionHistory from "./agent-profile/VersionHistory";
@@ -15,18 +20,19 @@ interface Props {
   csrf: string;
   providers: ProviderConfig[];
   onChanged: () => Promise<void>;
+  mode: SettingsMode;
 }
 
 export default function AgentProfileCenter({
   csrf,
   providers,
   onChanged,
+  mode,
 }: Props) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [form, setForm] = useState<AgentProfileInput>(createEmptyProfile);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [versions, setVersions] = useState<AgentProfile[]>([]);
-  const [expert, setExpert] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -169,14 +175,60 @@ export default function AgentProfileCenter({
     }
   }
 
+  const recommended = profiles.find((profile) => profile.is_default);
+
+  if (mode === "beginner") {
+    return (
+      <section className="profile-center" data-testid="agent-profile-center">
+        <div className="settings-title">
+          <div>
+            <h3>推荐 Agent 配置</h3>
+            <small>来自服务端正式默认配置，并非演示数据。</small>
+          </div>
+        </div>
+        {recommended ? (
+          <article className="recommended-agent">
+            <div>
+              <strong>{recommended.name}</strong>
+              <span>v{recommended.version}</span>
+            </div>
+            <p>{recommended.description || "使用安全预算、动态规划与证据验证。"}</p>
+            <dl>
+              <div>
+                <dt>工作流</dt>
+                <dd>{recommended.workflow.preset}</dd>
+              </div>
+              <div>
+                <dt>完成标准</dt>
+                <dd>{recommended.completion_mode}</dd>
+              </div>
+              <div>
+                <dt>模型来源</dt>
+                <dd>
+                  {recommended.default_provider_id
+                    ? providers.find(
+                        (provider) => provider.id === recommended.default_provider_id,
+                      )?.name ?? "指定 Provider"
+                    : "跟随默认 Provider"}
+                </dd>
+              </div>
+            </dl>
+            <small>
+              如需修改预算、记忆、提示词或验证方式，请切换到高级模式。
+            </small>
+          </article>
+        ) : (
+          <p className="settings-notice">正在读取默认 Agent 配置…</p>
+        )}
+      </section>
+    );
+  }
+
   return (
     <section className="profile-center" data-testid="agent-profile-center">
       <div className="settings-title">
         <h3>Agent 配置</h3>
         <div>
-          <button onClick={() => setExpert((value) => !value)}>
-            {expert ? "向导模式" : "专家模式"}
-          </button>
           <button onClick={reset}>新建配置</button>
           <button onClick={() => void exportConfig()}>无密钥导出</button>
           <label className="file-button">
@@ -200,7 +252,7 @@ export default function AgentProfileCenter({
       <AgentProfileForm
         form={form}
         providers={providers}
-        expert={expert}
+        expert
         wizardStep={wizardStep}
         schemaText={schemaText}
         preview={preview}

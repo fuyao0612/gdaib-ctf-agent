@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ProviderConfig } from "../../types";
 import {
   createEmptyProvider,
+  explainProviderFailure,
   providerToInput,
   selectProviderPreset,
 } from "./model";
@@ -33,5 +34,15 @@ describe("Provider 表单纯转换规则", () => {
     expect(result.preset).toBe("qwen");
     expect(result.base_url).toBe("https://dashscope.example/v1");
     expect(result.model).toBe("qwen-tested");
+    expect(result.name).toBe("阿里云百炼 / 千问");
+  });
+
+  it.each([
+    ["连接测试失败：模型鉴权失败，请检查 API Key", "API Key 错误"],
+    ["连接测试失败：模型请求超时", "请求超时"],
+    ["模型未返回符合配置的结构化 JSON", "服务不兼容结构化输出"],
+    ["模型或接口不存在，请检查 Base URL", "API 地址或模型错误"],
+  ])("把 Provider 错误转换为可操作提示", (message, expected) => {
+    expect(explainProviderFailure(message)).toContain(expected);
   });
 });

@@ -5,12 +5,14 @@ import type {
   ProviderConfig,
   ProviderConfigInput,
   ProviderPreset,
+  SettingsMode,
 } from "../types";
 import ProviderForm from "./provider/ProviderForm";
 import ProviderList from "./provider/ProviderList";
 import {
   type ProviderPresetDescriptor,
   createEmptyProvider,
+  explainProviderFailure,
   providerToInput,
   selectProviderPreset,
 } from "./provider/model";
@@ -22,6 +24,7 @@ interface Props {
   onChanged: () => Promise<void>;
   onNotice: (message: string) => void;
   onError: (message: string) => void;
+  mode: SettingsMode;
 }
 
 export default function ProviderSettings(props: Props) {
@@ -56,7 +59,16 @@ export default function ProviderSettings(props: Props) {
     props.onError("");
     props.onNotice("");
     try {
-      const payload = { ...form, api_key: form.api_key?.trim() || null };
+      const payload = {
+        ...form,
+        api_key: form.api_key?.trim() || null,
+        // 新手创建首个 Provider 时自动完成“启用 + 默认”，编辑时仍保留真实原值。
+        enabled: props.mode === "beginner" ? true : form.enabled,
+        is_default:
+          props.mode === "beginner" && !editingId
+            ? !props.providers.some((provider) => provider.is_default)
+            : form.is_default,
+      };
       const wasEditing = Boolean(editingId);
       if (editingId) await api.updateProvider(props.csrf, editingId, payload);
       else await api.createProvider(props.csrf, payload);
@@ -100,7 +112,7 @@ export default function ProviderSettings(props: Props) {
       );
     } catch (cause) {
       await props.onRefresh().catch(() => undefined);
-      props.onError(String(cause));
+      props.onError(explainProviderFailure(String(cause)));
       props.onNotice("");
     } finally {
       setBusy(false);
@@ -137,6 +149,7 @@ export default function ProviderSettings(props: Props) {
       <ProviderList
         providers={props.providers}
         busy={busy}
+        mode={props.mode}
         onTest={(id) => void testProvider(id)}
         onDiscoverModels={(id) => void discoverModels(id)}
         onEdit={edit}
@@ -146,6 +159,7 @@ export default function ProviderSettings(props: Props) {
         form={form}
         editing={Boolean(editingId)}
         busy={busy}
+        mode={props.mode}
         onChange={setForm}
         onPresetChange={changePreset}
         onSubmit={() => void saveProvider()}

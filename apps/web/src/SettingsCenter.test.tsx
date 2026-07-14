@@ -17,6 +17,44 @@ const defaults = {
   observation_char_budget: 20000,
 };
 
+const defaultProfile = {
+  profile_id: "agent-1",
+  version: 1,
+  schema_version: "1.0",
+  created_at: "2026-07-14T00:00:00Z",
+  name: "默认安全 Agent",
+  description: "正式默认配置",
+  run_mode: "normal",
+  default_provider_id: null,
+  fallback_provider_ids: [],
+  user_prompt_template: "请处理以下任务：{task}",
+  planning_strategy: "dynamic",
+  budget: defaults.budget,
+  context_policy: {
+    recent_message_limit: 20,
+    include_thread_summary: true,
+    include_run_summaries: true,
+    include_memories: true,
+    text_attachment_char_limit: 20000,
+  },
+  memory_policy: {
+    enabled: true,
+    persist_important_facts: true,
+    max_facts: 100,
+  },
+  completion_mode: "evidence",
+  validation_policy: { require_external_evidence: true, json_schema: null },
+  intervention_policy: {
+    normal_mode: "wait",
+    competition_mode: "fail",
+    max_requests: 2,
+  },
+  workflow: { preset: "verified" },
+  report_template: "# {task}\n\n{observations}",
+  enabled: true,
+  is_default: true,
+};
+
 describe("SettingsCenter", () => {
   const storageSet = vi.fn();
   beforeEach(() => {
@@ -37,6 +75,18 @@ describe("SettingsCenter", () => {
               model: "deepseek-v4-flash",
             },
           });
+        if (input.endsWith("/setup/status"))
+          return Response.json({
+            configured: false,
+            checks: {
+              database: true,
+              master_key: true,
+              admin: true,
+              provider: false,
+              agent: false,
+            },
+            version: "0.4.2",
+          });
         if (
           input.endsWith("/admin/session") &&
           init?.method === "POST" &&
@@ -54,7 +104,7 @@ describe("SettingsCenter", () => {
         if (input.endsWith("/admin/settings/providers") && !init?.method)
           return Response.json([]);
         if (input.endsWith("/admin/settings/agent-profiles") && !init?.method)
-          return Response.json([]);
+          return Response.json([defaultProfile]);
         if (input.endsWith("/admin/settings/agent") && !init?.method)
           return Response.json(defaults);
         if (
@@ -100,13 +150,67 @@ describe("SettingsCenter", () => {
     await screen.findByText("模型 Provider");
     const keyInput = screen.getByPlaceholderText("输入 Provider API Key");
     expect(keyInput).toHaveAttribute("type", "password");
-    fireEvent.change(screen.getAllByLabelText("名称")[0], {
-      target: { value: "DeepSeek" },
-    });
     fireEvent.change(keyInput, { target: { value: "provider-secret" } });
     fireEvent.click(screen.getByRole("button", { name: "创建 Provider" }));
     await waitFor(() => expect(changed).toHaveBeenCalled());
     expect(storageSet).not.toHaveBeenCalled();
+    const providerRequest = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([url, init]) =>
+          String(url).endsWith("/admin/settings/providers") &&
+          init?.method === "POST",
+      );
+    const payload = JSON.parse(String(providerRequest?.[1]?.body));
+    expect(payload).toMatchObject({
+      name: "DeepSeek",
+      enabled: true,
+      is_default: true,
+    });
+  });
+
+  it("新手和高级模式编辑同一份 Provider 表单数据", async () => {
+    render(
+      <SettingsCenter
+        onClose={() => undefined}
+        onChanged={async () => undefined}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("管理员令牌"), {
+      target: { value: "admin-secret" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "进入设置" }));
+
+    const keyInput = await screen.findByPlaceholderText("输入 Provider API Key");
+    fireEvent.change(keyInput, { target: { value: "provider-secret" } });
+    fireEvent.change(screen.getByLabelText("模型"), {
+      target: { value: "deepseek-chat" },
+    });
+    expect(screen.queryByLabelText("超时（秒）")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "高级模式" }));
+    expect(screen.getByLabelText("模型")).toHaveValue("deepseek-chat");
+    fireEvent.change(screen.getByLabelText("超时（秒）"), {
+      target: { value: "90" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "新手模式" }));
+    expect(screen.getByLabelText("模型")).toHaveValue("deepseek-chat");
+    fireEvent.click(screen.getByRole("button", { name: "创建 Provider" }));
+
+    await waitFor(() => {
+      const request = vi
+        .mocked(fetch)
+        .mock.calls.find(
+          ([url, init]) =>
+            String(url).endsWith("/admin/settings/providers") &&
+            init?.method === "POST",
+        );
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+        model: "deepseek-chat",
+        timeout_seconds: 90,
+      });
+    });
   });
 
   it("管理员令牌错误时给出可操作提示且不泄露输入", async () => {

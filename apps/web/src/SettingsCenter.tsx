@@ -3,8 +3,14 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import AgentProfileCenter from "./components/AgentProfileCenter";
 import ProviderSettings from "./components/ProviderSettings";
+import SetupProgress from "./components/SetupProgress";
 import { useAdminSession } from "./hooks/useAdminSession";
-import type { AgentDefaults, ProviderConfig } from "./types";
+import type {
+  AgentDefaults,
+  ProviderConfig,
+  SettingsMode,
+  SetupStatus,
+} from "./types";
 import "./settings.css";
 
 interface Props {
@@ -26,15 +32,23 @@ export default function SettingsCenter({
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<SettingsMode>("beginner");
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const session = useAdminSession();
 
   const load = useCallback(async (csrf: string) => {
-    const [items, defaults] = await Promise.all([
+    const [items, defaults, status] = await Promise.all([
       api.adminProviders(csrf),
       api.agentDefaults(csrf),
+      api.setupStatus(),
     ]);
     setProviders(items);
     setAgentDefaults(defaults);
+    setSetupStatus(status);
+  }, []);
+
+  useEffect(() => {
+    void api.setupStatus().then(setSetupStatus).catch(() => undefined);
   }, []);
 
   // 已存在 HttpOnly 会话时，CSRF 恢复完成后立即载入设置，而不是要求再次登录。
@@ -81,6 +95,12 @@ export default function SettingsCenter({
     }
   }
 
+  async function syncPublicState() {
+    const status = await api.setupStatus();
+    setSetupStatus(status);
+    await onChanged();
+  }
+
   return (
     <div
       className="settings-backdrop"
@@ -102,15 +122,14 @@ export default function SettingsCenter({
           </div>
         </header>
         <div className="settings-scroll">
+          <SetupProgress
+            authenticated={session.authenticated}
+            status={setupStatus}
+          />
           {initialSetup && (
-            <div className="setup-progress">
-              <strong>首次配置向导</strong>
-              <span>
-                1 管理员登录 → 2 配置 Provider → 3 连接测试 → 4 确认默认 Agent →
-                5 开始对话
-              </span>
-              <small>管理员令牌只用于建立服务端会话，不会保存到浏览器。</small>
-            </div>
+            <p className="setup-hint">
+              首次配置只需要管理员登录、填写模型并完成一次真实连接测试。
+            </p>
           )}
           {!session.authenticated ? (
             <form className="admin-login" onSubmit={authenticate}>
@@ -139,6 +158,32 @@ export default function SettingsCenter({
             </form>
           ) : (
             <div className="settings-content">
+              <div className="settings-mode-switch" role="group" aria-label="设置模式">
+                <div>
+                  <strong>{mode === "beginner" ? "新手模式" : "高级模式"}</strong>
+                  <small>
+                    {mode === "beginner"
+                      ? "仅显示首次运行需要的配置"
+                      : "显示预算、上下文、记忆、规划、验证与版本管理"}
+                  </small>
+                </div>
+                <div>
+                  <button
+                    className={mode === "beginner" ? "active" : ""}
+                    aria-pressed={mode === "beginner"}
+                    onClick={() => setMode("beginner")}
+                  >
+                    新手模式
+                  </button>
+                  <button
+                    className={mode === "advanced" ? "active" : ""}
+                    aria-pressed={mode === "advanced"}
+                    onClick={() => setMode("advanced")}
+                  >
+                    高级模式
+                  </button>
+                </div>
+              </div>
               <ProviderSettings
                 csrf={session.csrf}
                 providers={providers}
@@ -146,13 +191,15 @@ export default function SettingsCenter({
                 onChanged={onChanged}
                 onNotice={setNotice}
                 onError={setError}
+                mode={mode}
               />
               <AgentProfileCenter
                 csrf={session.csrf}
                 providers={providers}
-                onChanged={onChanged}
+                onChanged={syncPublicState}
+                mode={mode}
               />
-              {agentDefaults && (
+              {mode === "advanced" && agentDefaults && (
                 <section>
                   <div className="settings-title">
                     <h3>平台默认预算</h3>

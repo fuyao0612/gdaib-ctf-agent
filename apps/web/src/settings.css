@@ -84,6 +84,29 @@
   grid-template-columns: minmax(0, 1fr);
   gap: 20px;
 }
+.settings-mode-switch {
+  background: #0b1926;
+  border: 1px solid #1e3446;
+  border-radius: 7px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.settings-mode-switch > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settings-mode-switch small {
+  color: #7895a8;
+}
+.settings-mode-switch button.active {
+  border-color: var(--cyan);
+  color: #dffdf7;
+  background: #16413f;
+}
 .settings-content > section {
   background: #0b1926;
   border: 1px solid #1e3446;
@@ -259,16 +282,73 @@
   background: #102d2d;
   display: flex;
   gap: 12px;
-  align-items: center;
+  align-items: flex-start;
   font-size: 11px;
   flex-wrap: wrap;
 }
-.setup-progress span {
+.setup-progress ol {
+  list-style: none;
+  display: flex;
+  margin: 0;
+  padding: 0;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.setup-progress li {
+  color: #7997a8;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.setup-progress li span {
+  border: 1px solid #365567;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+}
+.setup-progress li.ready {
   color: #a8d9ce;
+}
+.setup-progress li.ready span {
+  background: #1b5e55;
+  border-color: #399b8d;
 }
 .setup-progress small {
   color: #7997a8;
   flex: 1 1 100%;
+}
+.setup-hint {
+  color: #8fb7b0;
+  margin: 0 20px 10px;
+  font-size: 11px;
+}
+.recommended-agent {
+  background: #0a1723;
+  border: 1px solid #28786c;
+  padding: 14px;
+}
+.recommended-agent > div,
+.recommended-agent dl {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.recommended-agent > div span,
+.recommended-agent small,
+.recommended-agent dt {
+  color: #7895a8;
+}
+.recommended-agent p {
+  color: #a9bfcc;
+}
+.recommended-agent dl > div {
+  min-width: 140px;
+}
+.recommended-agent dd {
+  margin: 3px 0 0;
+  color: #c9e0e8;
 }
 .provider-chain {
   display: flex;
@@ -324,5 +404,9 @@
 
   .setup-progress {
     margin-inline: 12px;
+  }
+
+  .settings-mode-switch {
+    flex-direction: column;
   }
 }

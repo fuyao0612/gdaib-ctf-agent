@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import type {
   ProviderConfigInput,
   ProviderPreset,
+  SettingsMode,
   StructuredMode,
 } from "../../types";
 import { FALLBACK_CATEGORIES } from "./model";
@@ -11,6 +12,7 @@ interface Props {
   form: ProviderConfigInput;
   editing: boolean;
   busy: boolean;
+  mode: SettingsMode;
   onChange: (form: ProviderConfigInput) => void;
   onPresetChange: (preset: ProviderPreset) => void;
   onSubmit: () => void;
@@ -20,10 +22,12 @@ export default function ProviderForm({
   form,
   editing,
   busy,
+  mode,
   onChange,
   onPresetChange,
   onSubmit,
 }: Props) {
+  const advanced = mode === "advanced";
   function submit(event: FormEvent) {
     event.preventDefault();
     onSubmit();
@@ -33,16 +37,18 @@ export default function ProviderForm({
     <form className="settings-form" onSubmit={submit}>
       <h4>{editing ? "编辑 Provider" : "新增 Provider"}</h4>
       <div className="form-grid">
-        <label>
-          名称
-          <input
-            value={form.name}
-            onChange={(event) =>
-              onChange({ ...form, name: event.target.value })
-            }
-            required
-          />
-        </label>
+        {advanced && (
+          <label>
+            名称
+            <input
+              value={form.name}
+              onChange={(event) =>
+                onChange({ ...form, name: event.target.value })
+              }
+              required
+            />
+          </label>
+        )}
         <label>
           厂商预设
           <select
@@ -90,141 +96,149 @@ export default function ProviderForm({
             required={!editing}
           />
         </label>
-        <label>
-          超时（秒）
-          <input
-            type="number"
-            min="1"
-            max="600"
-            value={form.timeout_seconds}
-            onChange={(event) =>
-              onChange({
-                ...form,
-                timeout_seconds: Number(event.target.value),
-              })
-            }
-          />
-        </label>
-        <label>
-          重试次数
-          <input
-            type="number"
-            min="0"
-            max="8"
-            value={form.max_retries}
-            onChange={(event) =>
-              onChange({ ...form, max_retries: Number(event.target.value) })
-            }
-          />
-        </label>
-        <label>
-          输入价格/百万 Token
-          <input
-            type="number"
-            min="0"
-            step="0.0001"
-            value={form.input_price_per_million}
-            onChange={(event) =>
-              onChange({
-                ...form,
-                input_price_per_million: Number(event.target.value),
-              })
-            }
-          />
-        </label>
-        <label>
-          输出价格/百万 Token
-          <input
-            type="number"
-            min="0"
-            step="0.0001"
-            value={form.output_price_per_million}
-            onChange={(event) =>
-              onChange({
-                ...form,
-                output_price_per_million: Number(event.target.value),
-              })
-            }
-          />
-        </label>
-        <label>
-          备用顺序
-          <input
-            type="number"
-            min="0"
-            max="100"
-            value={form.fallback_order ?? ""}
-            onChange={(event) =>
-              onChange({
-                ...form,
-                fallback_order:
-                  event.target.value === ""
-                    ? null
-                    : Number(event.target.value),
-              })
-            }
-          />
-        </label>
-        <label>
-          结构化模式
-          <select
-            value={form.structured_mode}
-            onChange={(event) =>
-              onChange({
-                ...form,
-                structured_mode: event.target.value as StructuredMode,
-              })
-            }
-          >
-            <option value="auto">自动协商（推荐）</option>
-            <option value="json_schema">JSON Schema</option>
-            <option value="json_object">JSON Object</option>
-            <option value="prompt_json">提示词兼容模式</option>
-          </select>
-        </label>
+        {advanced && (
+          <>
+            <label>
+              超时（秒）
+              <input
+                type="number"
+                min="1"
+                max="600"
+                value={form.timeout_seconds}
+                onChange={(event) =>
+                  onChange({
+                    ...form,
+                    timeout_seconds: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <label>
+              重试次数
+              <input
+                type="number"
+                min="0"
+                max="8"
+                value={form.max_retries}
+                onChange={(event) =>
+                  onChange({ ...form, max_retries: Number(event.target.value) })
+                }
+              />
+            </label>
+            <label>
+              输入价格/百万 Token
+              <input
+                type="number"
+                min="0"
+                step="0.0001"
+                value={form.input_price_per_million}
+                onChange={(event) =>
+                  onChange({
+                    ...form,
+                    input_price_per_million: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <label>
+              输出价格/百万 Token
+              <input
+                type="number"
+                min="0"
+                step="0.0001"
+                value={form.output_price_per_million}
+                onChange={(event) =>
+                  onChange({
+                    ...form,
+                    output_price_per_million: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <label>
+              备用顺序
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={form.fallback_order ?? ""}
+                onChange={(event) =>
+                  onChange({
+                    ...form,
+                    fallback_order:
+                      event.target.value === ""
+                        ? null
+                        : Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <label>
+              结构化模式
+              <select
+                value={form.structured_mode}
+                onChange={(event) =>
+                  onChange({
+                    ...form,
+                    structured_mode: event.target.value as StructuredMode,
+                  })
+                }
+              >
+                <option value="auto">自动协商（推荐）</option>
+                <option value="json_schema">JSON Schema</option>
+                <option value="json_object">JSON Object</option>
+                <option value="prompt_json">提示词兼容模式</option>
+              </select>
+            </label>
+          </>
+        )}
       </div>
-      <fieldset className="check-row">
-        <legend>允许触发备用模型的错误</legend>
-        {FALLBACK_CATEGORIES.map((category) => (
-          <label key={category}>
-            <input
-              type="checkbox"
-              checked={form.fallback_on.includes(category)}
-              onChange={(event) =>
-                onChange({
-                  ...form,
-                  fallback_on: event.target.checked
-                    ? [...form.fallback_on, category]
-                    : form.fallback_on.filter((value) => value !== category),
-                })
-              }
-            />
-            {category}
-          </label>
-        ))}
-      </fieldset>
-      <div className="check-row">
-        <label>
-          <input
-            type="checkbox"
-            checked={form.enabled}
-            onChange={(event) =>
-              onChange({ ...form, enabled: event.target.checked })
-            }
-          />
-          启用
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={form.is_default}
-            onChange={(event) =>
-              onChange({ ...form, is_default: event.target.checked })
-            }
-          />
-          设为默认
-        </label>
-      </div>
+      {advanced && (
+        <>
+          <fieldset className="check-row">
+            <legend>允许触发备用模型的错误</legend>
+            {FALLBACK_CATEGORIES.map((category) => (
+              <label key={category}>
+                <input
+                  type="checkbox"
+                  checked={form.fallback_on.includes(category)}
+                  onChange={(event) =>
+                    onChange({
+                      ...form,
+                      fallback_on: event.target.checked
+                        ? [...form.fallback_on, category]
+                        : form.fallback_on.filter((value) => value !== category),
+                    })
+                  }
+                />
+                {category}
+              </label>
+            ))}
+          </fieldset>
+          <div className="check-row">
+            <label>
+              <input
+                type="checkbox"
+                checked={form.enabled}
+                onChange={(event) =>
+                  onChange({ ...form, enabled: event.target.checked })
+                }
+              />
+              启用
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={form.is_default}
+                onChange={(event) =>
+                  onChange({ ...form, is_default: event.target.checked })
+                }
+              />
+              设为默认
+            </label>
+          </div>
+        </>
+      )}
       <button className="primary" disabled={busy}>
         {editing ? "保存修改" : "创建 Provider"}
       </button>

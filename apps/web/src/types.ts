@@ -1,5 +1,6 @@
 /** 与后端公开 JSON 契约一一对应的工作台类型。 */
 export type Mode = "normal" | "competition";
+export type SettingsMode = "beginner" | "advanced";
 export type RunStatus =
   | "queued"
   | "running"
