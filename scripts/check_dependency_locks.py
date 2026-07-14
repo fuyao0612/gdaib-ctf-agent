@@ -67,7 +67,7 @@ def check_frontend_lock(project_version: str) -> None:
 
 
 def check_ci_version_source() -> None:
-    """CI 必须复用版本校验脚本，不得再次复制版本常量。"""
+    """CI 必须复用版本源并固定第三方 Action，减少漂移和供应链风险。"""
 
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     expected_command = "python scripts/check_health_version.py"
@@ -75,6 +75,9 @@ def check_ci_version_source() -> None:
         raise AssertionError(f"CI 健康检查必须调用 {expected_command}")
     if re.search(r"version.+==.+['\"]\d+\.\d+\.\d+['\"]", workflow):
         raise AssertionError("CI 工作流仍含硬编码健康接口版本号")
+    for action, reference in re.findall(r"uses:\s*([^\s@]+)@([^\s#]+)", workflow):
+        if not re.fullmatch(r"[0-9a-f]{40}", reference):
+            raise AssertionError(f"CI Action {action}@{reference} 未固定到完整提交 SHA")
 
 
 def main() -> None:
