@@ -104,7 +104,8 @@ export default function App() {
     }
     setEvents(await api.events(run.id));
     setAudit(await api.audit(run.id));
-    if (run.status === "completed") setReport(await api.report(run.id));
+    if (["completed", "failed"].includes(run.status))
+      setReport(await api.report(run.id).catch(() => null));
   }, []);
 
   useEffect(() => {
@@ -161,8 +162,8 @@ export default function App() {
             setActiveRun(latest);
             void loadThreads();
             void api.memories(run.thread_id).then(setMemories);
-            if (event.type === "run_completed")
-              void api.report(run.id).then(setReport);
+            if (["run_completed", "run_failed"].includes(event.type))
+              void api.report(run.id).then(setReport).catch(() => setReport(null));
           });
         }
       };
@@ -430,7 +431,8 @@ export default function App() {
               detail={detail}
               events={events}
               report={report}
-              runId={activeRun?.id}
+              run={activeRun}
+              audit={audit}
             />
             <MessageComposer
               activeRun={activeRun}

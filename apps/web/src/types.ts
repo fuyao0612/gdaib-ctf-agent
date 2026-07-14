@@ -38,6 +38,9 @@ export interface Run {
   attempt: number;
   stop_requested: boolean;
   error?: string;
+  created_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 export interface Artifact {
   id: string;
@@ -224,4 +227,35 @@ export interface RunAudit {
     memory_policy: AgentProfileInput["memory_policy"];
     intervention_policy: AgentProfileInput["intervention_policy"];
   } | null;
+  model_calls?: Array<{
+    id: string;
+    provider: string;
+    model: string;
+    duration_ms: number;
+    input_tokens: number;
+    output_tokens: number;
+    status: string;
+    error_category: string | null;
+    metadata: Record<string, unknown>;
+  }>;
+  tool_calls?: Array<{
+    id: string;
+    tool_name: string;
+    result_summary: string | null;
+    duration_ms: number;
+    status: string;
+    error: string | null;
+  }>;
+  evidence?: Array<{
+    id: string;
+    verified: boolean;
+    verification_summary: string;
+    location: string;
+  }>;
+  checkpoints?: Array<{
+    checkpoint_sequence: number;
+    node: string;
+    elapsed_seconds: number;
+    created_at: string;
+  }>;
 }

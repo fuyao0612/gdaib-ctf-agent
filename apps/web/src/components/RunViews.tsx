@@ -1,16 +1,25 @@
 /** 运行状态、对话时间线与审计抽屉等只读视图。 */
-import ReactMarkdown from "react-markdown";
 import { api } from "../api";
 import type {
   Event,
   MemoryRecord,
   Report,
+  Run,
   RunAudit,
   ThreadDetail,
 } from "../types";
+import { ResultCard, RunProgress } from "./RunSummary";
 
 export function StatusBadge({ status }: { status: string }) {
-  return <span className={`badge badge-${status}`}>{status}</span>;
+  const labels: Record<string, string> = {
+    queued: "排队中",
+    running: "运行中",
+    waiting_input: "等待补充",
+    completed: "已完成",
+    failed: "失败",
+    stopped: "已停止",
+  };
+  return <span className={`badge badge-${status}`}>{labels[status] ?? status}</span>;
 }
 
 export function EventCard({ event }: { event: Event }) {
@@ -40,14 +49,16 @@ interface ConversationProps {
   detail: ThreadDetail;
   events: Event[];
   report: Report | null;
-  runId?: string;
+  run: Run | null;
+  audit: RunAudit | null;
 }
 
 export function ConversationView({
   detail,
   events,
   report,
-  runId,
+  run,
+  audit,
 }: ConversationProps) {
   return (
     <section className="conversation" aria-label="对话时间线">
@@ -65,30 +76,15 @@ export function ConversationView({
           </div>
         </div>
       ))}
-      {events.length > 0 && (
-        <div className="agent-progress">
-          <div className="progress-title">
-            <span className="pulse" />
-            Agent 执行记录 <span>{events.length} 项</span>
-          </div>
-          {events
-            .filter((event) => !event.type.startsWith("tool_"))
-            .map((event) => (
-              <EventCard key={event.event_id} event={event} />
-            ))}
-        </div>
-      )}
-      {report && runId && (
-        <section className="report" data-testid="final-report">
-          <div className="report-header">
-            <h3>最终报告</h3>
-            <div>
-              <a href={api.reportUrl(runId, "md")}>Markdown</a>
-              <a href={api.reportUrl(runId, "json")}>JSON</a>
-            </div>
-          </div>
-          <ReactMarkdown>{report.markdown}</ReactMarkdown>
-        </section>
+      {run && <RunProgress run={run} events={events} audit={audit} />}
+      {run && (
+        <ResultCard
+          run={run}
+          events={events}
+          audit={audit}
+          report={report}
+          messages={detail.messages}
+        />
       )}
     </section>
   );
