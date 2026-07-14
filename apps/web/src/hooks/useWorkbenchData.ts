@@ -61,26 +61,6 @@ export function useWorkbenchData() {
     await Promise.all([loadProviders(), loadProfiles()]);
   }, [loadProviders, loadProfiles]);
 
-  const selectThread = useCallback(async (id: string) => {
-    sourceRef.current?.close();
-    setReport(null);
-    window.localStorage?.setItem("yuwang.currentThreadId", id);
-    const value = await api.detail(id);
-    setDetail(value);
-    setMemories(await api.memories(id));
-    const run = value.runs.at(-1) ?? null;
-    setActiveRun(run);
-    if (!run) {
-      setEvents([]);
-      setAudit(null);
-      return;
-    }
-    setEvents(await api.events(run.id));
-    setAudit(await api.audit(run.id));
-    if (["completed", "failed"].includes(run.status))
-      setReport(await api.report(run.id).catch(() => null));
-  }, []);
-
   const connect = useCallback(
     (run: Run) => {
       // SSE 只传递追加事件，刷新后的权威状态仍从持久化详情和审计接口恢复。
@@ -119,6 +99,33 @@ export function useWorkbenchData() {
       };
     },
     [loadThreads],
+  );
+
+  const selectThread = useCallback(
+    async (id: string) => {
+      sourceRef.current?.close();
+      setReport(null);
+      window.localStorage?.setItem("yuwang.currentThreadId", id);
+      const value = await api.detail(id);
+      setDetail(value);
+      setMemories(await api.memories(id));
+      const run = value.runs.at(-1) ?? null;
+      setActiveRun(run);
+      if (!run) {
+        setEvents([]);
+        setAudit(null);
+        return;
+      }
+      setEvents(await api.events(run.id));
+      setAudit(await api.audit(run.id));
+      if (["completed", "failed"].includes(run.status)) {
+        setReport(await api.report(run.id).catch(() => null));
+      } else if (["queued", "running"].includes(run.status)) {
+        // 刷新或重新选择会话后必须恢复实时订阅，否则页面会停在旧检查点。
+        connect(run);
+      }
+    },
+    [connect],
   );
 
   const bootstrap = useCallback(async () => {
