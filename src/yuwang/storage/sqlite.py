@@ -3,56 +3,32 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-import threading
-from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
-
 from yuwang.domain.models import (
-    Artifact,
     Event,
     EventType,
     EvidenceRecord,
-    MemoryRecord,
-    Message,
     ModelCall,
     Run,
     RunCheckpoint,
     RunStatus,
     TaskSpec,
-    Thread,
     ToolCall,
 )
-from yuwang.settings.models import AgentDefaults, ProviderConfig
+from yuwang.settings.models import ProviderConfig
 from yuwang.settings.profiles import AgentProfileVersion
+from yuwang.storage.sqlite_settings import SQLiteSettingsStore
+from yuwang.storage.sqlite_workspace import SQLiteWorkspaceStore
 
-T = TypeVar("T", bound=BaseModel)
 
-
-class SQLiteRepository:
+class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore):
     """显式 SQLite 数据访问层。
 
     输入和输出均为领域模型，调用方看不到 SQL 行。未来替换数据库时实现
     `AgentRepository` 与设置仓储协议即可，不应修改 Agent 节点。
     """
-
-    def __init__(self, path: str | Path) -> None:
-        self.path = str(path)
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self.migrate()
-
-    def connect(self) -> sqlite3.Connection:
-        """创建短生命周期连接，并统一启用外键、WAL 和 Row 访问。"""
-
-        connection = sqlite3.connect(self.path, check_same_thread=False)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA journal_mode=WAL")
-        return connection
 
     def migrate(self) -> None:
         """幂等创建当前 Schema；复杂版本迁移应继续记录到 `schema_migrations`。"""
@@ -85,73 +61,6 @@ class SQLiteRepository:
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
                 """
             )
-
-    @staticmethod
-    def _dump(model: BaseModel) -> str:
-        return model.model_dump_json()
-
-    @staticmethod
-    def _load(model: type[T], raw: str) -> T:
-        return model.model_validate_json(raw)
-
-    def save_thread(self, value: Thread) -> Thread:
-        with self.connect() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO threads VALUES(?,?,?)",
-                (str(value.id), self._dump(value), value.created_at.isoformat()),
-            )
-        return value
-
-    def get_thread(self, thread_id: UUID | str) -> Thread | None:
-        with self.connect() as db:
-            row = db.execute("SELECT data FROM threads WHERE id=?", (str(thread_id),)).fetchone()
-        return self._load(Thread, row["data"]) if row else None
-
-    def list_threads(self) -> list[Thread]:
-        with self.connect() as db:
-            rows = db.execute("SELECT data FROM threads ORDER BY created_at DESC").fetchall()
-        return [self._load(Thread, row["data"]) for row in rows]
-
-    def delete_thread(self, thread_id: UUID | str) -> None:
-        """在一个事务内清理对话及其运行数据，避免留下孤立审计记录。"""
-        key = str(thread_id)
-        with self.connect() as db:
-            run_rows = db.execute("SELECT id FROM runs WHERE thread_id=?", (key,)).fetchall()
-            run_ids = [row["id"] for row in run_rows]
-            for run_id in run_ids:
-                for table, column in (
-                    ("events", "run_id"), ("reports", "run_id"),
-                    ("run_tasks", "run_id"), ("run_checkpoints", "run_id"),
-                    ("model_calls", "run_id"), ("tool_calls", "run_id"),
-                    ("evidence", "run_id"), ("provider_snapshots", "run_id"),
-                    ("run_agent_profiles", "run_id"),
-                ):
-                    db.execute(f"DELETE FROM {table} WHERE {column}=?", (run_id,))
-            db.execute("DELETE FROM messages WHERE thread_id=?", (key,))
-            db.execute("DELETE FROM artifacts WHERE thread_id=?", (key,))
-            db.execute("DELETE FROM memories WHERE thread_id=?", (key,))
-            db.execute("DELETE FROM runs WHERE thread_id=?", (key,))
-            db.execute("DELETE FROM threads WHERE id=?", (key,))
-
-    def save_message(self, value: Message) -> Message:
-        with self.connect() as db:
-            db.execute(
-                "INSERT INTO messages VALUES(?,?,?,?)",
-                (
-                    str(value.id),
-                    str(value.thread_id),
-                    self._dump(value),
-                    value.created_at.isoformat(),
-                ),
-            )
-        return value
-
-    def list_messages(self, thread_id: UUID | str) -> list[Message]:
-        with self.connect() as db:
-            rows = db.execute(
-                "SELECT data FROM messages WHERE thread_id=? ORDER BY created_at", (str(thread_id),)
-            ).fetchall()
-        return [self._load(Message, row["data"]) for row in rows]
 
     def save_run(self, value: Run) -> Run:
         with self._lock, self.connect() as db:
@@ -265,35 +174,6 @@ class SQLiteRepository:
             ).fetchall()
         return [self._load(Event, row["data"]) for row in rows]
 
-    def save_artifact(self, value: Artifact) -> Artifact:
-        with self.connect() as db:
-            db.execute(
-                "INSERT INTO artifacts VALUES(?,?,?,?,?)",
-                (
-                    str(value.id),
-                    str(value.thread_id),
-                    str(value.run_id) if value.run_id else None,
-                    self._dump(value),
-                    value.created_at.isoformat(),
-                ),
-            )
-        return value
-
-    def get_artifact(self, artifact_id: UUID | str) -> Artifact | None:
-        with self.connect() as db:
-            row = db.execute(
-                "SELECT data FROM artifacts WHERE id=?", (str(artifact_id),)
-            ).fetchone()
-        return self._load(Artifact, row["data"]) if row else None
-
-    def list_artifacts(self, thread_id: UUID | str) -> list[Artifact]:
-        with self.connect() as db:
-            rows = db.execute(
-                "SELECT data FROM artifacts WHERE thread_id=? ORDER BY created_at",
-                (str(thread_id),),
-            ).fetchall()
-        return [self._load(Artifact, row["data"]) for row in rows]
-
     def save_checkpoint(self, run_id: UUID | str, node: str, data: dict[str, Any]) -> None:
         elapsed = float(data.get("elapsed_seconds", 0.0))
         with self._lock, self.connect() as db:
@@ -352,55 +232,6 @@ class SQLiteRepository:
                 "SELECT markdown,json_data FROM reports WHERE run_id=?", (str(run_id),)
             ).fetchone()
         return (row["markdown"], json.loads(row["json_data"])) if row else None
-
-    def save_provider_config(self, value: ProviderConfig) -> ProviderConfig:
-        with self._lock, self.connect() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO provider_configs VALUES(?,?,?)",
-                (str(value.id), value.model_dump_json(), value.created_at),
-            )
-        return value
-
-    def get_provider_config(self, provider_id: UUID | str) -> ProviderConfig | None:
-        with self.connect() as db:
-            row = db.execute(
-                "SELECT data FROM provider_configs WHERE id=?", (str(provider_id),)
-            ).fetchone()
-        return ProviderConfig.model_validate_json(row["data"]) if row else None
-
-    def list_provider_configs(self) -> list[ProviderConfig]:
-        with self.connect() as db:
-            rows = db.execute("SELECT data FROM provider_configs ORDER BY created_at").fetchall()
-        return [ProviderConfig.model_validate_json(row["data"]) for row in rows]
-
-    def set_default_provider(self, provider_id: UUID) -> None:
-        with self._lock:
-            values = self.list_provider_configs()
-            if not any(value.id == provider_id for value in values):
-                raise KeyError("Provider 配置不存在")
-            for value in values:
-                desired = value.id == provider_id
-                if value.is_default != desired:
-                    value.is_default = desired
-                    self.save_provider_config(value)
-
-    def delete_provider_config(self, provider_id: UUID) -> None:
-        with self.connect() as db:
-            cursor = db.execute("DELETE FROM provider_configs WHERE id=?", (str(provider_id),))
-            if cursor.rowcount == 0:
-                raise KeyError("Provider 配置不存在")
-
-    def get_agent_defaults(self) -> AgentDefaults:
-        with self.connect() as db:
-            row = db.execute("SELECT data FROM app_settings WHERE key='agent_defaults'").fetchone()
-        return AgentDefaults.model_validate_json(row["data"]) if row else AgentDefaults()
-
-    def save_agent_defaults(self, value: AgentDefaults) -> None:
-        with self.connect() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO app_settings(key,data) VALUES('agent_defaults',?)",
-                (value.model_dump_json(),),
-            )
 
     def save_run_task(self, run_id: UUID, value: TaskSpec) -> None:
         with self.connect() as db:
@@ -486,67 +317,6 @@ class SQLiteRepository:
             return []
         return [ProviderConfig.model_validate(value) for value in json.loads(row["data"])]
 
-    def save_agent_profile_version(self, value: AgentProfileVersion) -> None:
-        with self.connect() as db:
-            existing = db.execute(
-                "SELECT data FROM agent_profile_versions WHERE profile_id=? AND version=?",
-                (str(value.profile_id), value.version),
-            ).fetchone()
-            serialized = value.model_dump_json()
-            if existing and existing["data"] != serialized:
-                raise ValueError("AgentProfile 历史版本不可变")
-            db.execute(
-                "INSERT OR IGNORE INTO agent_profile_versions VALUES(?,?,?,?)",
-                (str(value.profile_id), value.version, serialized, value.created_at),
-            )
-
-    def get_agent_profile(
-        self, profile_id: UUID, version: int | None = None
-    ) -> AgentProfileVersion | None:
-        with self.connect() as db:
-            if version is None:
-                row = db.execute(
-                    "SELECT data FROM agent_profile_versions WHERE profile_id=? ORDER BY version DESC LIMIT 1",
-                    (str(profile_id),),
-                ).fetchone()
-            else:
-                row = db.execute(
-                    "SELECT data FROM agent_profile_versions WHERE profile_id=? AND version=?",
-                    (str(profile_id), version),
-                ).fetchone()
-        return AgentProfileVersion.model_validate_json(row["data"]) if row else None
-
-    def list_agent_profile_versions(self, profile_id: UUID) -> list[AgentProfileVersion]:
-        with self.connect() as db:
-            rows = db.execute(
-                "SELECT data FROM agent_profile_versions WHERE profile_id=? ORDER BY version",
-                (str(profile_id),),
-            ).fetchall()
-        return [AgentProfileVersion.model_validate_json(row["data"]) for row in rows]
-
-    def list_agent_profiles(self) -> list[AgentProfileVersion]:
-        with self.connect() as db:
-            rows = db.execute(
-                """
-                SELECT versions.data FROM agent_profile_versions AS versions
-                JOIN (
-                    SELECT profile_id, MAX(version) AS latest
-                    FROM agent_profile_versions GROUP BY profile_id
-                ) AS current
-                ON versions.profile_id=current.profile_id AND versions.version=current.latest
-                ORDER BY versions.created_at
-                """
-            ).fetchall()
-        return [AgentProfileVersion.model_validate_json(row["data"]) for row in rows]
-
-    def delete_agent_profile(self, profile_id: UUID) -> None:
-        with self.connect() as db:
-            cursor = db.execute(
-                "DELETE FROM agent_profile_versions WHERE profile_id=?", (str(profile_id),)
-            )
-            if cursor.rowcount == 0:
-                raise KeyError("Agent 配置不存在")
-
     def save_run_agent_profile(self, run_id: UUID, value: AgentProfileVersion) -> None:
         serialized = value.model_dump_json()
         with self.connect() as db:
@@ -566,53 +336,3 @@ class SQLiteRepository:
                 "SELECT data FROM run_agent_profiles WHERE run_id=?", (str(run_id),)
             ).fetchone()
         return AgentProfileVersion.model_validate_json(row["data"]) if row else None
-
-    def save_memory(self, value: MemoryRecord) -> MemoryRecord:
-        with self.connect() as db:
-            db.execute(
-                "INSERT OR REPLACE INTO memories VALUES(?,?,?,?,?,?)",
-                (
-                    str(value.id),
-                    str(value.thread_id),
-                    value.kind,
-                    int(value.enabled),
-                    value.model_dump_json(),
-                    value.created_at.isoformat(),
-                ),
-            )
-        return value
-
-    def list_memories(
-        self, thread_id: UUID | str, enabled_only: bool = True
-    ) -> list[MemoryRecord]:
-        query = "SELECT data FROM memories WHERE thread_id=?"
-        parameters: list[Any] = [str(thread_id)]
-        if enabled_only:
-            query += " AND enabled=1"
-        query += " ORDER BY created_at"
-        with self.connect() as db:
-            rows = db.execute(query, parameters).fetchall()
-        return [MemoryRecord.model_validate_json(row["data"]) for row in rows]
-
-    def clear_memories(self, thread_id: UUID | str) -> None:
-        with self.connect() as db:
-            db.execute("DELETE FROM memories WHERE thread_id=?", (str(thread_id),))
-
-    def delete_memory(self, memory_id: UUID | str) -> None:
-        """删除一条记忆；不存在时保持幂等。"""
-
-        with self.connect() as db:
-            db.execute("DELETE FROM memories WHERE id=?", (str(memory_id),))
-
-    def set_memories_enabled(self, thread_id: UUID | str, enabled: bool) -> None:
-        with self.connect() as db:
-            rows = db.execute(
-                "SELECT data FROM memories WHERE thread_id=?", (str(thread_id),)
-            ).fetchall()
-            for row in rows:
-                value = MemoryRecord.model_validate_json(row["data"])
-                value.enabled = enabled
-                db.execute(
-                    "UPDATE memories SET enabled=?, data=? WHERE id=?",
-                    (int(enabled), value.model_dump_json(), str(value.id)),
-                )

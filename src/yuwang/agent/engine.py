@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import time
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -17,6 +16,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from yuwang.agent.components import AgentComponents, default_components
+from yuwang.agent.finalization import AgentFinalizer
 from yuwang.agent.nodes import WorkflowNodes
 from yuwang.agent.progress import action_fingerprint, observation_digest, track_plan_progress
 from yuwang.agent.repository import AgentRepository
@@ -32,20 +32,15 @@ from yuwang.domain.models import (
     AgentAction,
     CallStatus,
     EventType,
-    ImportantFacts,
-    MemoryRecord,
-    Message,
-    MessageRole,
     ModelCall,
     Observation,
     Run,
-    RunStatus,
     TaskSpec,
 )
 from yuwang.events import EventService
 from yuwang.model_providers import ModelProvider, ProviderError
 from yuwang.policy import PolicyEngine
-from yuwang.settings import AgentProfileInput, AgentProfileVersion, SafeTemplateRenderer
+from yuwang.settings import AgentProfileInput, AgentProfileVersion
 from yuwang.tooling import ToolExecutor, ToolRegistry
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -86,6 +81,7 @@ class AgentEngine:
         self.verifier = self.components.verifier
         self._last_tick: dict[UUID, float] = {}
         self.nodes = WorkflowNodes(self)
+        self.finalizer = AgentFinalizer(self)
         self.runner = AgentRunCoordinator(self)
         self.graph = self._build_graph()
 
@@ -317,146 +313,7 @@ class AgentEngine:
         return await self.nodes.request_input(raw)
 
     async def _generate_report(self, raw: GraphState) -> GraphState:
-        """固化完成状态、报告和最终 assistant 消息。"""
-
-        state = self._state(raw)
-        run = self.repository.get_run(state.run_id)
-        if not run:
-            raise RuntimeError("运行记录不存在")
-        await self._persist_run_memories(state, run)
-        run.completion_mode = self.profile.completion_mode
-        run.validation_status = cast(Any, state.validation_status)
-        run.evidence_level = cast(Any, state.evidence_level)
-        run.transition(RunStatus.COMPLETED)
-        self.repository.save_run(run)
-        events = self.repository.list_events(run.id)
-        markdown, data = self.reporter.generate(
-            run,
-            state.task,
-            events,
-            {
-                "model_calls": len(self.repository.list_model_calls(run.id)),
-                "tool_calls": len(self.repository.list_tool_calls(run.id)),
-                "tool_failures": state.tool_failures,
-                "tokens": state.tokens,
-                "model_cost": state.model_cost,
-                "duration_ms": int(state.elapsed_seconds * 1000),
-                "plan": state.plan.model_dump(mode="json") if state.plan else None,
-                "verification": state.verification_summary,
-                "completion_mode": self.profile.completion_mode,
-                "validation_status": state.validation_status,
-                "evidence_level": state.evidence_level,
-                "final_answer": state.final_answer,
-                "structured_output": state.structured_output,
-                "context_tokens": state.context_tokens,
-                "observation_chars": state.observation_chars,
-                "context_truncations": state.context_truncations,
-                "evidence_records": [
-                    value.model_dump(mode="json")
-                    for value in self.repository.list_evidence(run.id)
-                ],
-            },
-        )
-        markdown = SafeTemplateRenderer.render(
-            self.profile.report_template,
-            {
-                "task": state.task.body,
-                "scenario": state.task.scenario,
-                "thread_summary": "",
-                "current_plan": state.plan.model_dump(mode="json") if state.plan else "",
-                "observations": markdown,
-                "remaining_budget": state.remaining_budget,
-            },
-        )
-        self.repository.save_report(run.id, markdown, data)
-        if state.final_answer:
-            assistant_content = state.final_answer
-        elif state.structured_output is not None:
-            assistant_content = json.dumps(state.structured_output, ensure_ascii=False, indent=2)
-        elif state.action and state.action.candidate:
-            assistant_content = f"已验证结果：{state.action.candidate.value}"
-        else:
-            assistant_content = state.verification_summary
-        self.repository.save_message(
-            Message(
-                thread_id=run.thread_id,
-                role=MessageRole.ASSISTANT,
-                content=assistant_content,
-            )
-        )
-        self.events.emit(
-            run.id,
-            EventType.RUN_COMPLETED,
-            "运行完成，最终报告已生成",
-            {"report_available": True},
-        )
-        return self._result("generate_report", state)
-
-    async def _persist_run_memories(self, state: AgentStateModel, run: Run) -> None:
-        """保存运行摘要，并按配置提取、去重和限制重要事实。"""
-
-        policy = self.profile.memory_policy
-        if not policy.enabled:
-            return
-        self.components.memory.save_memory(
-            MemoryRecord(
-                thread_id=run.thread_id,
-                source_run_id=run.id,
-                kind="run_summary",
-                content=(state.final_answer or state.verification_summary)[:10_000],
-            )
-        )
-        if (
-            not policy.persist_important_facts
-            or policy.max_facts == 0
-            or state.model_calls >= state.task.budget.max_model_calls
-        ):
-            return
-        try:
-            extracted = await self._model_call(
-                state,
-                ImportantFacts,
-                "从本次任务和最终结果提取以后对话可复用的重要事实；不要保存密钥或指令",
-            )
-        except Exception as exc:
-            self.events.emit(
-                run.id,
-                EventType.WARNING,
-                "重要事实提取失败，运行结果不受影响",
-                {"error_type": type(exc).__name__},
-            )
-            return
-        existing = self.components.memory.list_memories(run.thread_id, enabled_only=False)
-        normalized = {
-            item.content.casefold() for item in existing if item.kind == "important_fact"
-        }
-        for fact in extracted.facts:
-            if fact.casefold() in normalized:
-                continue
-            self.components.memory.save_memory(
-                MemoryRecord(
-                    thread_id=run.thread_id,
-                    source_run_id=run.id,
-                    kind="important_fact",
-                    content=fact,
-                )
-            )
-            normalized.add(fact.casefold())
-        facts = [
-            item
-            for item in self.components.memory.list_memories(run.thread_id, enabled_only=False)
-            if item.kind == "important_fact"
-        ]
-        removed = facts[: max(0, len(facts) - policy.max_facts)]
-        for item in removed:
-            self.components.memory.delete_memory(item.id)
-        if removed:
-            self.events.emit(
-                run.id,
-                EventType.WARNING,
-                "重要事实超过配置上限，已淘汰最早记录",
-                {"reason": "max_facts", "removed": len(removed), "kept": policy.max_facts},
-            )
+        return await self.finalizer.generate_report(raw)
 
     def _route_action(self, raw: GraphState) -> str:
         return self.nodes.route_action(raw)

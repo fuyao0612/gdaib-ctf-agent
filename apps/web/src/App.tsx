@@ -1,5 +1,5 @@
 /** 单页工作台协调器：只管理共享状态和网络动作，页面区域由小组件渲染。 */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import SettingsCenter from "./SettingsCenter";
 import CreateThreadDialog from "./components/CreateThreadDialog";
@@ -10,35 +10,43 @@ import {
   StatusBadge,
 } from "./components/RunViews";
 import ThreadSidebar from "./components/ThreadSidebar";
+import { useWorkbenchData } from "./hooks/useWorkbenchData";
 import type {
-  AgentProfileSummary,
   Artifact,
-  Event,
-  MemoryRecord,
   Mode,
-  ProviderConfig,
-  Report,
-  Run,
-  RunAudit,
   Thread,
-  ThreadDetail,
 } from "./types";
 import "./styles.css";
 import "./thread-management.css";
 
-const terminalStatuses = new Set(["completed", "failed", "stopped"]);
-
 export default function App() {
-  const [threads, setThreads] = useState<Thread[]>([]);
-  const [detail, setDetail] = useState<ThreadDetail | null>(null);
-  const [events, setEvents] = useState<Event[]>([]);
-  const [activeRun, setActiveRun] = useState<Run | null>(null);
-  const [report, setReport] = useState<Report | null>(null);
+  const workspace = useWorkbenchData();
+  const {
+    threads,
+    detail,
+    events,
+    activeRun,
+    report,
+    audit,
+    memories,
+    providers,
+    agentProfiles,
+    selectedProfileId,
+    selectedProviderId,
+    setDetail,
+    setEvents,
+    setActiveRun,
+    setReport,
+    setMemories,
+    setSelectedProfileId,
+    setSelectedProviderId,
+    loadThreads,
+    refreshSettings,
+    selectThread,
+    connect,
+    bootstrap,
+  } = workspace;
   const [message, setMessage] = useState("");
-  const [providers, setProviders] = useState<ProviderConfig[]>([]);
-  const [agentProfiles, setAgentProfiles] = useState<AgentProfileSummary[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState("");
-  const [selectedProviderId, setSelectedProviderId] = useState("");
   const [successPattern, setSuccessPattern] = useState("");
   const [pendingArtifacts, setPendingArtifacts] = useState<Artifact[]>([]);
   const [busy, setBusy] = useState(false);
@@ -49,132 +57,16 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [initialSetup, setInitialSetup] = useState(false);
-  const [audit, setAudit] = useState<RunAudit | null>(null);
   const [supplementalInput, setSupplementalInput] = useState("");
-  const [memories, setMemories] = useState<MemoryRecord[]>([]);
-  const sourceRef = useRef<EventSource | null>(null);
-
-  const loadThreads = useCallback(async () => {
-    const values = await api.listThreads();
-    setThreads(values);
-    return values;
-  }, []);
-
-  const loadProviders = useCallback(async () => {
-    const values = await api.listProviders();
-    setProviders(values);
-    setSelectedProviderId((current) =>
-      current && values.some((value) => value.id === current)
-        ? current
-        : (values.find((value) => value.is_default)?.id ?? values[0]?.id ?? ""),
-    );
-  }, []);
-
-  const loadProfiles = useCallback(async () => {
-    const values = await api.listAgentProfiles();
-    setAgentProfiles(values);
-    setSelectedProfileId((current) =>
-      current && values.some((value) => value.profile_id === current)
-        ? current
-        : (values.find((value) => value.is_default)?.profile_id ??
-          values[0]?.profile_id ??
-          ""),
-    );
-  }, []);
-
-  const refreshSettings = useCallback(async () => {
-    await Promise.all([loadProviders(), loadProfiles()]);
-  }, [loadProviders, loadProfiles]);
-
-  const selectThread = useCallback(async (id: string) => {
-    sourceRef.current?.close();
-    setError("");
-    setReport(null);
-    window.localStorage?.setItem("yuwang.currentThreadId", id);
-    const value = await api.detail(id);
-    setDetail(value);
-    setPendingArtifacts([]);
-    setMemories(await api.memories(id));
-    const run = value.runs.at(-1) ?? null;
-    setActiveRun(run);
-    if (!run) {
-      setEvents([]);
-      setAudit(null);
-      return;
-    }
-    setEvents(await api.events(run.id));
-    setAudit(await api.audit(run.id));
-    if (["completed", "failed"].includes(run.status))
-      setReport(await api.report(run.id).catch(() => null));
-  }, []);
 
   useEffect(() => {
-    void api
-      .setupStatus()
-      .then(async (status) => {
-        setInitialSetup(!status.configured);
-        try {
-          await api.adminSession();
-          const [values] = await Promise.all([
-            loadThreads(),
-            loadProviders(),
-            loadProfiles(),
-          ]);
-          const remembered = window.localStorage?.getItem(
-            "yuwang.currentThreadId",
-          );
-          if (remembered && values.some((item) => item.id === remembered)) {
-            await selectThread(remembered);
-          }
-        } catch {
-          setSettingsOpen(true);
-        }
+    void bootstrap()
+      .then((result) => {
+        setInitialSetup(result.initialSetup);
+        setSettingsOpen(!result.authenticated);
       })
       .catch(() => setError("无法连接后端服务，请检查部署状态。"));
-  }, [loadThreads, loadProviders, loadProfiles, selectThread]);
-
-  const connect = useCallback(
-    (run: Run) => {
-      // 每次只保留一个 EventSource。服务端用事件 sequence 作为 SSE id，
-      // 浏览器断线重连时会自动携带 Last-Event-ID，最终仍以持久化详情为准。
-      sourceRef.current?.close();
-      const source = new EventSource(`/api/v1/runs/${run.id}/events/stream`);
-      sourceRef.current = source;
-      source.onmessage = (messageEvent) => {
-        const event = JSON.parse(messageEvent.data) as Event;
-        setEvents((previous) =>
-          previous.some((item) => item.sequence === event.sequence)
-            ? previous
-            : [...previous, event],
-        );
-        void api.audit(run.id).then(setAudit);
-        if (event.type === "run_waiting_input") {
-          void api.detail(run.thread_id).then((value) => {
-            setDetail(value);
-            setActiveRun(value.runs.find((item) => item.id === run.id) ?? run);
-          });
-        }
-        if (terminalStatuses.has(event.type.replace("run_", ""))) {
-          source.close();
-          void api.detail(run.thread_id).then((value) => {
-            const latest = value.runs.find((item) => item.id === run.id) ?? run;
-            setDetail(value);
-            setActiveRun(latest);
-            void loadThreads();
-            void api.memories(run.thread_id).then(setMemories);
-            if (["run_completed", "run_failed"].includes(event.type))
-              void api.report(run.id).then(setReport).catch(() => setReport(null));
-          });
-        }
-      };
-      source.onerror = () => {
-        if (source.readyState === EventSource.CLOSED) source.close();
-      };
-    },
-    [loadThreads],
-  );
-
-  useEffect(() => () => sourceRef.current?.close(), []);
+  }, [bootstrap]);
 
   // 弹层均支持 Esc 退出，避免键盘用户被困在设置、创建任务或审计抽屉中。
   useEffect(() => {
@@ -199,6 +91,7 @@ export default function App() {
       );
       await loadThreads();
       await selectThread(value.id);
+      setPendingArtifacts([]);
       setCreateOpen(false);
     } catch (cause) {
       setError(String(cause));
@@ -363,7 +256,11 @@ export default function App() {
         <ThreadSidebar
           threads={threads}
           selectedId={detail?.id}
-          onSelect={(id) => void selectThread(id)}
+          onSelect={(id) => {
+            setError("");
+            setPendingArtifacts([]);
+            void selectThread(id);
+          }}
           onRename={(thread) => void renameThread(thread)}
           onToggleArchive={(thread) => void toggleArchive(thread)}
           onDelete={(thread) => void removeThread(thread)}
