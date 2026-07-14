@@ -146,6 +146,7 @@ export interface SetupStatus {
     master_key: boolean;
     admin: boolean;
     provider: boolean;
+    agent: boolean;
   };
   version: string;
 }

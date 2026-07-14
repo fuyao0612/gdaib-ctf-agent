@@ -287,6 +287,7 @@ def test_health_readiness_and_setup_status_are_distinct(tmp_path, provider_serve
             "master_key": True,
             "admin": True,
             "provider": False,
+            "agent": False,
         }
         assert client.get("/api/v1/readiness").status_code == 503
 

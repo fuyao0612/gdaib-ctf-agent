@@ -5,6 +5,7 @@ param(
     [switch]$Build,
     [switch]$Development,
     [switch]$CheckOnly,
+    [switch]$Quiet,
     [ValidateRange(0, 300)]
     [int]$RunSeconds = 0
 )
@@ -14,6 +15,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $envFile = Join-Path $root '.env'
 $logDirectory = Join-Path $root 'data\logs'
 $processFile = Join-Path $root 'data\dev-processes.json'
+. (Join-Path $PSScriptRoot 'process-record.ps1')
 
 function Write-Step([string]$Message) {
     Write-Host "[检查] $Message" -ForegroundColor Cyan
@@ -131,28 +133,26 @@ function Wait-Http([string]$Url, [int]$Seconds = 30) {
     throw "服务在 $Seconds 秒内未就绪：$Url。请查看 data\logs 中的错误日志。"
 }
 
-function Stop-ProcessTree([int]$TargetProcessId) {
-    $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $TargetProcessId" -ErrorAction SilentlyContinue
-    foreach ($child in $children) { Stop-ProcessTree ([int]$child.ProcessId) }
-    Stop-Process -Id $TargetProcessId -Force -ErrorAction SilentlyContinue
-}
-
 function Assert-NoTrackedDevelopmentProcesses {
     if (-not (Test-Path -LiteralPath $processFile)) { return }
+    $tracked = Read-YuwangProcessRecord $processFile $root
     $alive = @()
-    try {
-        $tracked = Get-Content -Raw -LiteralPath $processFile | ConvertFrom-Json
-        $alive = @($tracked.api, $tracked.web) | Where-Object {
-            $_ -and (Get-Process -Id $_ -ErrorAction SilentlyContinue)
-        }
-        if ($alive.Count -gt 0) {
-            throw "检测到本项目已有本地开发进程（PID：$($alive -join '、')）。请回到原终端按 Ctrl+C 停止，避免重复启动。"
-        }
-    } finally {
-        if ($alive.Count -eq 0) {
-            Remove-Item -LiteralPath $processFile -Force -ErrorAction SilentlyContinue
+    $unverified = @()
+    foreach ($item in @($tracked.processes)) {
+        $process = Get-YuwangVerifiedProcess $item $root
+        if ($process) {
+            $alive += $process.Id
+        } elseif (Get-Process -Id ([int]$item.pid) -ErrorAction SilentlyContinue) {
+            $unverified += [int]$item.pid
         }
     }
+    if ($unverified.Count -gt 0) {
+        throw "进程记录中的 PID $($unverified -join '、') 已被其他进程复用。请人工核对后删除 data\dev-processes.json。"
+    }
+    if ($alive.Count -gt 0) {
+        throw "检测到本项目已有本地开发进程（PID：$($alive -join '、')）。请运行 .\yuwang.ps1 stop -Development，避免重复启动。"
+    }
+    Remove-Item -LiteralPath $processFile -Force
 }
 
 function Start-Development {
@@ -212,8 +212,11 @@ function Start-Development {
             RedirectStandardError = $webError
         }
         $webProcess = Start-Process @webOptions
-        @{ api = $apiProcess.Id; web = $webProcess.Id } |
-            ConvertTo-Json | Set-Content -LiteralPath $processFile -Encoding UTF8
+        New-YuwangProcessRecord $root @(
+            @{ role = 'api'; pid = $apiProcess.Id },
+            @{ role = 'web'; pid = $webProcess.Id }
+        ) |
+            ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $processFile -Encoding UTF8
 
         Wait-Http 'http://127.0.0.1:8000/api/v1/health'
         Wait-Http 'http://127.0.0.1:5173'
@@ -233,11 +236,15 @@ function Start-Development {
             }
             Start-Sleep -Seconds 1
         }
+        if (-not (Test-Path -LiteralPath $processFile)) {
+            Write-Host '本地开发服务已由统一入口安全停止。' -ForegroundColor Green
+            return
+        }
         throw 'API 或 Web 意外退出，请查看 data\logs 中的 stderr 日志。'
     } finally {
         Write-Host '正在清理本次启动的本地进程…'
-        if ($webProcess) { Stop-ProcessTree $webProcess.Id }
-        if ($apiProcess) { Stop-ProcessTree $apiProcess.Id }
+        if ($webProcess) { Stop-YuwangProcessTree $webProcess.Id }
+        if ($apiProcess) { Stop-YuwangProcessTree $apiProcess.Id }
         Remove-Item -LiteralPath $processFile -Force -ErrorAction SilentlyContinue
     }
 }
@@ -270,8 +277,21 @@ function Start-Docker {
         }
         $arguments = @('compose', 'up', '-d', '--wait')
         if ($Build) { $arguments += '--build' }
-        & docker $arguments
-        if ($LASTEXITCODE) {
+        if ($Quiet) {
+            [IO.Directory]::CreateDirectory($logDirectory) | Out-Null
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                & docker $arguments *> (Join-Path $logDirectory 'compose-start.log')
+                $composeExitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $previousPreference
+            }
+        } else {
+            & docker $arguments
+            $composeExitCode = $LASTEXITCODE
+        }
+        if ($composeExitCode) {
             throw 'Docker Compose 启动失败。请运行 docker compose logs 查看具体原因。'
         }
     } finally {

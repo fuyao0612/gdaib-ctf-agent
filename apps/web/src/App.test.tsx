@@ -27,6 +27,7 @@ describe("App", () => {
               master_key: true,
               admin: true,
               provider: true,
+              agent: true,
             },
             version: "0.4.1",
           });

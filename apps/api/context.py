@@ -265,6 +265,10 @@ class ApiContext:
                 # 就绪端点只公开布尔状态，避免把密钥格式或内部异常泄露给调用方。
                 master_key_ok = False
         providers = self.repository.list_provider_configs()
+        provider_ok = any(
+            item.enabled and item.connection_status == "ok" for item in providers
+        )
+        agent_ok = False
         try:
             default_profile = self.profile_service.resolve(None)
             selected = (
@@ -275,14 +279,15 @@ class ApiContext:
                 if default_profile.default_provider_id
                 else next((item for item in providers if item.is_default), None)
             )
-            provider_ok = bool(selected and selected.enabled and selected.connection_status == "ok")
+            agent_ok = bool(selected and selected.enabled and selected.connection_status == "ok")
         except (KeyError, ValueError):
-            provider_ok = False
+            agent_ok = False
         return {
             "database": database_ok,
             "master_key": master_key_ok,
             "admin": bool(self.config.admin_token),
             "provider": provider_ok,
+            "agent": agent_ok,
         }
 
     @asynccontextmanager
