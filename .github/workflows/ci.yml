@@ -53,8 +53,12 @@ jobs:
       - name: Generate ephemeral deployment secrets
         shell: bash
         run: |
-          echo "YUWANG_MASTER_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" >> "$GITHUB_ENV"
-          echo "YUWANG_ADMIN_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')" >> "$GITHUB_ENV"
+          master_key=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')
+          admin_token=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
+          echo "::add-mask::$master_key"
+          echo "::add-mask::$admin_token"
+          echo "YUWANG_MASTER_KEY=$master_key" >> "$GITHUB_ENV"
+          echo "YUWANG_ADMIN_TOKEN=$admin_token" >> "$GITHUB_ENV"
       - run: docker compose config --quiet
       - run: docker compose build
       - run: docker run --rm yuwang-api sh -c "test ! -d /app/tests && test ! -d /app/apps/web"
@@ -64,7 +68,7 @@ jobs:
         shell: bash
         run: |
           docker compose up -d --wait
-          curl --fail --silent http://localhost:8080/api/v1/health | python -c "import json,sys; assert json.load(sys.stdin)['version'] == '0.4.1'"
+          curl --fail --silent http://localhost:8080/api/v1/health | python scripts/check_health_version.py
           THREAD_ID=$(curl --fail --silent -X POST -H "Authorization: Bearer $YUWANG_ADMIN_TOKEN" -H 'Content-Type: application/json' -d '{"title":"ci-recovery","mode":"normal"}' http://localhost:8080/api/v1/threads | python -c "import json,sys; print(json.load(sys.stdin)['id'])")
           docker compose restart
           for attempt in {1..60}; do curl --fail --silent http://localhost:8080/api/v1/health >/dev/null && break; sleep 1; done

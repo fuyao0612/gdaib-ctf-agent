@@ -66,6 +66,17 @@ def check_frontend_lock(project_version: str) -> None:
             raise AssertionError(f"package-lock.json 的 {group} 与 package.json 不一致")
 
 
+def check_ci_version_source() -> None:
+    """CI 必须复用版本校验脚本，不得再次复制版本常量。"""
+
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    expected_command = "python scripts/check_health_version.py"
+    if expected_command not in workflow:
+        raise AssertionError(f"CI 健康检查必须调用 {expected_command}")
+    if re.search(r"version.+==.+['\"]\d+\.\d+\.\d+['\"]", workflow):
+        raise AssertionError("CI 工作流仍含硬编码健康接口版本号")
+
+
 def main() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     project = pyproject["project"]
@@ -75,6 +86,7 @@ def main() -> None:
         raise AssertionError("src/yuwang/__init__.py 与 pyproject.toml 版本号不一致")
     check_python_locks(project)
     check_frontend_lock(version)
+    check_ci_version_source()
     print(f"依赖锁文件和 v{version} 版本号一致。")
 
 
