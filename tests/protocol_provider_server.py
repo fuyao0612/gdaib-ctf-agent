@@ -74,6 +74,8 @@ class Handler(BaseHTTPRequestHandler):
                 "summary": "Produce an advisory answer without external evidence.",
                 "answer": "Review the plan with the authorized operator before execution.",
             }
+        if "hard-fail" in task:
+            return {"kind": "fail", "summary": "测试要求明确失败"}
         if not observations:
             attachment = context.get("attachments_untrusted", context.get("attachments", []))[0]
             return {

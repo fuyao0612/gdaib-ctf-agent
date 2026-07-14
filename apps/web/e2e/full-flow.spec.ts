@@ -38,7 +38,7 @@ async function configureProtocolProvider(
   await page.waitForTimeout(250);
   if (!(await page.locator(".settings-backdrop").isVisible()))
     await page.locator(".settings-button").click();
-  await expect(page.getByText("首次配置向导")).toBeVisible();
+  await expect(page.getByLabel("配置进度")).toBeVisible();
   await page
     .locator(".admin-login input")
     .fill(process.env.YUWANG_E2E_ADMIN_TOKEN!);
@@ -48,23 +48,24 @@ async function configureProtocolProvider(
   const form = page.locator(".settings-form").first();
   await form.locator("select").first().selectOption("custom");
   const inputs = form.locator("input");
-  await inputs.nth(0).fill("Protocol acceptance provider");
-  await inputs.nth(1).fill("http://127.0.0.1:8899/v1");
-  await inputs.nth(2).fill("protocol-test-model");
-  await inputs.nth(3).fill(`protocol-${Date.now()}`);
-  await form.locator(".check-row input").nth(1).check();
+  await inputs.nth(0).fill("http://127.0.0.1:8899/v1");
+  await inputs.nth(1).fill("protocol-test-model");
+  await inputs.nth(2).fill(`protocol-${Date.now()}`);
   await form.locator("button.primary").click();
   const providerRow = page
     .locator(".settings-content > section")
     .first()
     .locator(".provider-row");
-  await expect(providerRow).toContainText("Protocol acceptance provider");
+  await expect(providerRow).toContainText("自定义模型服务");
   await providerRow.locator("button").first().click();
-  await expect(page.locator(".settings-notice")).toBeVisible();
+  await expect(page.locator(".settings-notice")).toContainText("连接测试成功");
+  await expect(
+    page.getByLabel("配置进度").locator("li.ready"),
+  ).toHaveCount(4);
+  await page.getByRole("button", { name: "高级模式" }).click();
 
   const profileName = `Advisory Agent ${Date.now()}`;
   const center = page.getByTestId("agent-profile-center");
-  await center.getByRole("button", { name: "专家模式" }).click();
   await center.getByLabel("Agent 名称").fill(profileName);
   await center.getByLabel("规划策略").selectOption("direct");
   await center.getByLabel("完成模式").selectOption("advisory");
@@ -157,6 +158,7 @@ test("responsive layouts keep setup, settings, composer and audit accessible", a
       .fill(process.env.YUWANG_E2E_ADMIN_TOKEN!);
     await loginButton.click();
     await expect(page.locator(".settings-content")).toBeVisible();
+    await page.getByRole("button", { name: "高级模式" }).click();
     const settingsScroll = page.locator(".settings-scroll");
     await settingsScroll.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
@@ -300,25 +302,30 @@ test("production browser flow covers settings, SSE, stop/retry, reports and refr
   await expect(page.getByTestId("event-tool_finished")).toBeVisible({
     timeout: 20_000,
   });
-  await expect(page.getByTestId("final-report")).toBeVisible({
+  await expect(page.getByTestId("result-completed")).toBeVisible({
     timeout: 20_000,
   });
   await expect(page.locator(".badge-completed")).toBeVisible();
+  await expect(page.getByTestId("run-progress").locator("li.completed")).toHaveCount(5);
+  for (const stage of ["理解任务", "制定计划", "执行动作", "验证结果", "生成汇报"])
+    await expect(page.getByTestId("run-progress").getByText(stage)).toBeVisible();
   await expect(page.getByTestId("budget-audit")).toContainText("策略：dynamic");
-  await expect(page.getByTestId("final-report").locator("a")).toHaveCount(2);
+  await expect(page.getByTestId("result-completed").locator(".full-report a")).toHaveCount(2);
 
   await page.reload();
-  await expect(page.getByTestId("final-report")).toBeVisible();
+  await expect(page.getByTestId("result-completed")).toBeVisible();
+  await expect(page.getByTestId("run-progress").locator("li.completed")).toHaveCount(5);
 
   await uploadAndRun(page, "slow: verify stop and retry recovery", "retry.txt");
   await expect(page.locator(".run-actions .danger")).toBeVisible();
   await page.locator(".run-actions .danger").click();
   await expect(page.locator(".badge-stopped")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("result-stopped")).toContainText("任务已停止");
   await page.getByRole("button", { name: "重试" }).click();
   await expect(page.locator(".badge-completed")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByTestId("final-report")).toBeVisible();
+  await expect(page.getByTestId("result-completed")).toBeVisible();
 
   await page.locator(".sidebar .primary.full").click();
   await page.getByLabel("任务名称").fill(`Advisory-${Date.now()}`);
@@ -336,7 +343,7 @@ test("production browser flow covers settings, SSE, stop/retry, reports and refr
     .getByLabel("任务消息")
     .fill("advisory-only: explain a safe rollout");
   await page.locator(".run-actions .primary").click();
-  await expect(page.getByTestId("final-report")).toBeVisible({
+  await expect(page.getByTestId("result-completed")).toBeVisible({
     timeout: 20_000,
   });
   await expect(page.locator(".message.assistant")).toContainText(
@@ -359,6 +366,9 @@ test("production browser flow covers settings, SSE, stop/retry, reports and refr
   await expect(page.locator(".badge-waiting_input")).toBeVisible({
     timeout: 20_000,
   });
+  await expect(page.getByTestId("result-waiting_input")).toContainText(
+    "等待用户补充",
+  );
   await page
     .getByLabel("补充信息")
     .fill("Scope is the isolated staging environment.");
@@ -366,6 +376,12 @@ test("production browser flow covers settings, SSE, stop/retry, reports and refr
   await expect(page.locator(".badge-completed")).toBeVisible({
     timeout: 20_000,
   });
+
+  await page.getByLabel("任务消息").fill("hard-fail: reject this run explicitly");
+  await page.locator(".run-actions .primary").click();
+  await expect(page.locator(".badge-failed")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("result-failed")).toContainText("测试要求明确失败");
+  await expect(page.getByTestId("result-failed")).toContainText("未生成最终答案");
 
   await page.locator(".sidebar .primary.full").click();
   await page.getByLabel("任务名称").fill(`Hybrid-${Date.now()}`);

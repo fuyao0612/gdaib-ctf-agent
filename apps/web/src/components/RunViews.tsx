@@ -107,6 +107,9 @@ export function InspectorPanel(props: InspectorProps) {
   const toolEvents = props.events.filter((event) =>
     event.type.startsWith("tool_"),
   );
+  const progressEvents = props.events.filter(
+    (event) => !event.type.startsWith("tool_"),
+  );
   return (
     <aside
       id="run-inspector"
@@ -180,6 +183,15 @@ export function InspectorPanel(props: InspectorProps) {
           </dl>
         </section>
       )}
+      <div className="section-label">完整公开事件</div>
+      <div className="tool-list">
+        {progressEvents.map((event) => (
+          <EventCard key={event.event_id} event={event} />
+        ))}
+        {progressEvents.length === 0 && (
+          <p className="muted">运行后将在此展示计划、状态、验证和结果事件。</p>
+        )}
+      </div>
       <div className="section-label">工具与证据</div>
       <div className="tool-list">
         {toolEvents.map((event) => (
