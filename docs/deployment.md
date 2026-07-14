@@ -7,11 +7,12 @@
 Windows PowerShell：
 
 ```powershell
-.\scripts\start.ps1 -CheckOnly
-.\scripts\start.ps1
+.\yuwang.ps1 setup
+.\yuwang.ps1 doctor
+.\yuwang.ps1 start
 ```
 
-`-CheckOnly` 只检查 Docker、Compose、必要环境变量、Compose 配置和端口，不创建或重启容器。日常启动不会强制重建镜像；拉取代码更新后可运行 `.\scripts\start.ps1 -Build` 重新构建并启动。成功后脚本会打印访问地址、健康检查、日志命令和停止方法。
+`doctor` 只读检查 Docker、Compose、必要环境变量、端口、依赖和服务状态，不创建或重启容器。日常启动不会强制重建镜像；拉取代码更新后可运行 `.\yuwang.ps1 start -Build` 重新构建并启动。停止、状态和完整检查分别使用 `stop`、`status`、`check`。
 脚本兼容 Windows PowerShell 5.1，不依赖 `RandomNumberGenerator.Fill()` 或 `Convert.ToHexString()`。已有 `.env` 时只做检查，不会重新生成或覆盖密钥。
 
 不使用 Docker 的 Windows 开发环境可运行：
@@ -22,8 +23,8 @@ python -m pip install --no-deps -e .
 Push-Location apps/web
 npm ci
 Pop-Location
-.\scripts\start.ps1 -Development -CheckOnly
-.\scripts\start.ps1 -Development
+.\yuwang.ps1 start -Development -CheckOnly
+.\yuwang.ps1 start -Development
 ```
 
 本地模式把数据隔离在 `data/development/`，日志写入 `data/logs/`，固定使用 8000/5173 端口，并在 `Ctrl+C` 后清理本次创建的进程。它用于开发，不替代生产 Docker 部署。

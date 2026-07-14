@@ -29,7 +29,7 @@ describe("App", () => {
               provider: true,
               agent: true,
             },
-            version: "0.4.1",
+            version: "0.4.2",
           });
         if (input.endsWith("/threads") && !init?.method)
           return Response.json([]);

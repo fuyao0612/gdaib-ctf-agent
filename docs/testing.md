@@ -3,7 +3,7 @@
 ## 一条命令完整检查
 
 ```powershell
-.\scripts\full-check.ps1
+.\yuwang.ps1 check
 ```
 
 该入口运行后端和前端质量门禁、生产表面检查、Playwright、`docker compose config --quiet`，并在 Windows 上真实验收本地启动与进程清理。测试使用隔离协议服务，Compose 配置使用仅存在于当前进程的临时高熵值，默认不需要真实 Provider API Key。
