@@ -81,6 +81,18 @@ function Invoke-ReadOnlyPython([string]$Executable, [string[]]$Arguments) {
     }
 }
 
+function Test-NativeCommand([scriptblock]$Command) {
+    # PowerShell 5.1 会把原生程序 stderr 包装成错误记录；探针只看退出码，不能让诊断中断。
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $Command *> $null
+        return $LASTEXITCODE -eq 0
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+}
+
 $python = Get-Command python -ErrorAction SilentlyContinue
 if ($python) {
     $versionResult = Invoke-ReadOnlyPython $python.Source @('--version')
@@ -115,12 +127,10 @@ if ($npm) {
 
 $docker = Get-Command docker -ErrorAction SilentlyContinue
 if ($docker) {
-    docker info *> $null
-    if ($LASTEXITCODE) {
+    if (-not (Test-NativeCommand { docker info })) {
         Add-Diagnostic '警告' 'Docker' '已安装但服务未运行' '需要容器模式时启动 Docker Desktop；本地开发模式不受影响。'
     } else {
-        docker compose version *> $null
-        if ($LASTEXITCODE) {
+        if (-not (Test-NativeCommand { docker compose version })) {
             Add-Diagnostic '失败' 'Docker' '缺少 Compose v2' '更新 Docker Desktop。'
         } else {
             Add-Diagnostic '正常' 'Docker' 'Docker 与 Compose v2 可用' ''
