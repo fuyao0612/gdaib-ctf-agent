@@ -60,7 +60,9 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                 CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, kind TEXT NOT NULL, enabled INTEGER NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS task_briefs(run_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(run_id,version));
                 CREATE TABLE IF NOT EXISTS run_plan_revisions(run_id TEXT NOT NULL, version INTEGER NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(run_id,version));
+                CREATE TABLE IF NOT EXISTS run_control_requests(run_id TEXT NOT NULL, request_id TEXT NOT NULL, action TEXT NOT NULL, payload_hash TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(run_id,request_id));
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (4);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
                 """

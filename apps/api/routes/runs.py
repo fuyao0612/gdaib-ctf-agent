@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 from uuid import UUID
@@ -11,8 +12,17 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from apps.api.context import ApiContext
-from apps.api.schemas import MessageCreate, RunCreate, RunInput, TurnCreate
+from apps.api.schemas import (
+    ClarificationSubmit,
+    MessageCreate,
+    PlanDecision,
+    PlanEdit,
+    RunCreate,
+    RunInput,
+    TurnCreate,
+)
 from yuwang.agent import AgentEngine, AgentStateModel
+from yuwang.control import PlanRevision, PlanSource
 from yuwang.domain.models import (
     ACTIVE_RUN_STATUSES,
     EventType,
@@ -51,6 +61,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
             provider_config_id=selected.id,
             agent_profile_id=profile.profile_id,
             agent_profile_version=profile.version,
+            plan_mode=body.plan_mode or thread.plan_mode,
         )
         try:
             repository.save_run(run)
@@ -84,8 +95,171 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 authorized_targets=body.authorized_targets,
                 success_conditions=body.success_conditions,
                 verification_rules=body.verification_rules,
+                plan_mode=body.plan_mode,
             ),
         )
+
+    def recovery_data(run: Run) -> tuple[Any, list[Any], Any]:
+        task_spec = repository.get_run_task(run.id)
+        provider_configs = repository.get_provider_snapshot(run.id)
+        profile = repository.get_run_agent_profile(run.id)
+        if not task_spec or not provider_configs or not profile:
+            raise HTTPException(409, "控制恢复所需快照不完整")
+        return task_spec, provider_configs, profile
+
+    def schedule_resume(run: Run) -> None:
+        task_spec, provider_configs, profile = recovery_data(run)
+        provider = context.build_provider_chain(provider_configs)
+        engine = AgentEngine(
+            repository,
+            provider,
+            context.registry,
+            context.policy,
+            profile=profile,
+            artifact_root=context.config.artifact_root,
+        )
+        context.schedule(run.id, engine.resume(run.id, task_spec))
+
+    @router.get("/runs/{run_id}/control")
+    async def get_run_control(run_id: UUID) -> dict[str, Any]:
+        run = context.require_run(run_id)
+        return {
+            "status": run.status,
+            "plan_mode": run.plan_mode,
+            "task_briefs": [
+                value.model_dump(mode="json")
+                for value in repository.list_task_briefs(run_id)
+            ],
+            "plans": [
+                value.model_dump(mode="json")
+                for value in repository.list_plan_revisions(run_id)
+            ],
+        }
+
+    @router.post("/runs/{run_id}/clarification", response_model=Run, status_code=202)
+    async def submit_clarification(run_id: UUID, body: ClarificationSubmit) -> Run:
+        run = context.require_run(run_id)
+        brief = repository.latest_task_brief(run_id)
+        if not brief or brief.version != body.expected_brief_version:
+            raise HTTPException(409, "Task Brief 版本已变化，请刷新后重试")
+        payload_hash = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+        try:
+            run, claimed = repository.claim_run_control(
+                run_id,
+                body.request_id,
+                "clarification",
+                payload_hash,
+                RunStatus.WAITING_CLARIFICATION,
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if not claimed:
+            return run
+        checkpoint = repository.latest_checkpoint(run_id)
+        if not checkpoint:
+            raise HTTPException(409, "澄清恢复检查点缺失")
+        state = AgentStateModel.model_validate(checkpoint.state)
+        state.supplemental_inputs.append(body.content)
+        state.action = None
+        repository.save_message(
+            Message(
+                id=body.request_id,
+                thread_id=run.thread_id,
+                role=MessageRole.USER,
+                content=body.content,
+            )
+        )
+        repository.save_checkpoint(
+            run.id, "clarification_received", state.model_dump(mode="json")
+        )
+        repository.create_event(
+            run.id,
+            EventType.CLARIFICATION_RECEIVED,
+            "已接收澄清信息，正在更新 Task Brief",
+            {"brief_version": brief.version, "input_length": len(body.content)},
+        )
+        schedule_resume(run)
+        return run
+
+    @router.put("/runs/{run_id}/plan", response_model=PlanRevision)
+    async def edit_plan(run_id: UUID, body: PlanEdit) -> PlanRevision:
+        run = context.require_run(run_id)
+        if run.status != RunStatus.WAITING_APPROVAL:
+            raise HTTPException(409, "运行当前不在等待计划确认状态")
+        revision = PlanRevision(
+            run_id=run_id,
+            version=body.expected_version + 1,
+            plan=body.plan,
+            source=PlanSource.USER_EDIT,
+            change_reason=body.reason,
+            based_on_version=body.expected_version,
+        )
+        payload_hash = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+        try:
+            revision, claimed = repository.save_user_plan_revision(
+                revision, body.request_id, payload_hash
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if claimed:
+            checkpoint = repository.latest_checkpoint(run_id)
+            if not checkpoint:
+                raise HTTPException(409, "计划编辑检查点缺失")
+            state = AgentStateModel.model_validate(checkpoint.state)
+            state.plan = revision.plan
+            repository.save_checkpoint(run_id, "plan_edited", state.model_dump(mode="json"))
+            repository.create_event(
+                run_id,
+                EventType.PLAN_EDITED,
+                "用户已编辑执行计划",
+                {"version": revision.version, "based_on_version": body.expected_version},
+            )
+        return revision
+
+    async def decide_plan(run_id: UUID, body: PlanDecision, approved: bool) -> Run:
+        run = context.require_run(run_id)
+        action = "plan_approve" if approved else "plan_reject"
+        payload_hash = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+        try:
+            run, claimed = repository.claim_run_control(
+                run_id,
+                body.request_id,
+                action,
+                payload_hash,
+                RunStatus.WAITING_APPROVAL,
+                body.expected_version,
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if not claimed:
+            return run
+        checkpoint = repository.latest_checkpoint(run_id)
+        revision = repository.latest_plan_revision(run_id)
+        if not checkpoint or not revision:
+            raise HTTPException(409, "计划确认恢复数据缺失")
+        state = AgentStateModel.model_validate(checkpoint.state)
+        state.plan = revision.plan
+        state.plan_approved = approved
+        node = "plan_approved" if approved else "plan_rejected"
+        if not approved:
+            state.supplemental_inputs.append(f"计划拒绝原因：{body.reason or '请重新规划'}")
+        repository.save_checkpoint(run_id, node, state.model_dump(mode="json"))
+        repository.create_event(
+            run_id,
+            EventType.PLAN_APPROVED if approved else EventType.PLAN_REJECTED,
+            "用户已批准执行计划" if approved else "用户已拒绝计划，正在重新规划",
+            {"version": revision.version, "has_reason": bool(body.reason)},
+        )
+        schedule_resume(run)
+        return run
+
+    @router.post("/runs/{run_id}/plan/approve", response_model=Run, status_code=202)
+    async def approve_plan(run_id: UUID, body: PlanDecision) -> Run:
+        return await decide_plan(run_id, body, True)
+
+    @router.post("/runs/{run_id}/plan/reject", response_model=Run, status_code=202)
+    async def reject_plan(run_id: UUID, body: PlanDecision) -> Run:
+        return await decide_plan(run_id, body, False)
 
     @router.get("/runs/{run_id}", response_model=Run)
     async def get_run(run_id: UUID) -> Run:
@@ -100,6 +274,20 @@ def create_run_router(context: ApiContext) -> APIRouter:
         task = context.tasks.get(run_id)
         if task and not task.done():
             task.cancel()
+        elif stopped.status in {
+            RunStatus.WAITING_INPUT,
+            RunStatus.WAITING_CLARIFICATION,
+            RunStatus.WAITING_APPROVAL,
+            RunStatus.PAUSED,
+        }:
+            stopped.transition(RunStatus.STOPPED, "用户在等待状态终止运行")
+            repository.save_run(stopped)
+            repository.create_event(
+                stopped.id,
+                EventType.RUN_STOPPED,
+                "运行已由用户终止",
+                {"from_waiting_state": True},
+            )
         return stopped
 
     @router.post("/runs/{run_id}/input", response_model=Run, status_code=202)

@@ -11,6 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from yuwang.control import TaskBrief
 from yuwang.domain.models import AgentAction, AgentPlan, Observation, TaskSpec
 
 
@@ -39,6 +40,8 @@ class AgentStateModel(BaseModel):
     tokens: int = 0
     model_cost: float = Field(default=0, ge=0)
     elapsed_seconds: float = Field(default=0, ge=0)
+    task_brief: TaskBrief | None = None
+    plan_approved: bool = False
     plan: AgentPlan | None = None
     action: AgentAction | None = None
     observations: list[Observation] = Field(default_factory=list)
@@ -73,6 +76,8 @@ class GraphState(TypedDict, total=False):
     tokens: int
     model_cost: float
     elapsed_seconds: float
+    task_brief: dict[str, Any] | None
+    plan_approved: bool
     plan: dict[str, Any] | None
     action: dict[str, Any] | None
     observations: list[dict[str, Any]]

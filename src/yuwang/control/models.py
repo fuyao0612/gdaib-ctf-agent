@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yuwang.domain.models import AgentPlan, DomainModel, utcnow
 
@@ -20,6 +20,28 @@ class PlanSource(StrEnum):
     AGENT_INITIAL = "agent_initial"
     USER_EDIT = "user_edit"
     AGENT_REPLAN = "agent_replan"
+
+
+class TaskBriefDraft(BaseModel):
+    """模型只生成公开业务字段，版本、来源和运行归属由服务端补齐。"""
+
+    model_config = ConfigDict(extra="forbid")
+    goal: str = Field(min_length=1, max_length=10_000)
+    authorized_scope: list[str] = Field(default_factory=list, max_length=100)
+    constraints: list[str] = Field(default_factory=list, max_length=100)
+    success_criteria: list[str] = Field(default_factory=list, max_length=100)
+    expected_output: str = Field(default="", max_length=10_000)
+    known_information: list[str] = Field(default_factory=list, max_length=100)
+    assumptions: list[str] = Field(default_factory=list, max_length=100)
+    risks: list[str] = Field(default_factory=list, max_length=100)
+    needs_clarification: bool = False
+    clarification_questions: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def require_questions_when_needed(self) -> TaskBriefDraft:
+        if self.needs_clarification and not self.clarification_questions:
+            raise ValueError("需要澄清时必须提供至少一个公开问题")
+        return self
 
 
 class TaskBrief(DomainModel):

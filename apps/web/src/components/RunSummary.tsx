@@ -54,7 +54,14 @@ function verifiedLabel(run: Run): string {
 
 export function RunProgress({ run, events, audit }: Omit<Props, "report" | "messages">) {
   const [now, setNow] = useState(0);
-  const active = ["queued", "running", "waiting_input"].includes(run.status);
+  const active = [
+    "queued",
+    "running",
+    "waiting_input",
+    "waiting_clarification",
+    "waiting_approval",
+    "paused",
+  ].includes(run.status);
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);

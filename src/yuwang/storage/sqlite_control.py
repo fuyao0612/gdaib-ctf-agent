@@ -2,13 +2,131 @@
 
 from __future__ import annotations
 
+import sqlite3
+from datetime import UTC, datetime
 from uuid import UUID
 
 from yuwang.control import PlanRevision, TaskBrief
+from yuwang.domain.models import Run, RunStatus
 from yuwang.storage.sqlite_common import SQLiteStore
 
 
 class SQLiteControlStore(SQLiteStore):
+    @staticmethod
+    def _check_control_request(
+        db: sqlite3.Connection,
+        run_id: UUID | str,
+        request_id: UUID | str,
+        action: str,
+        payload_hash: str,
+    ) -> bool:
+        row = db.execute(
+            "SELECT action,payload_hash FROM run_control_requests "
+            "WHERE run_id=? AND request_id=?",
+            (str(run_id), str(request_id)),
+        ).fetchone()
+        if not row:
+            return False
+        if row["action"] != action or row["payload_hash"] != payload_hash:
+            raise ValueError("请求 ID 已用于不同的控制操作")
+        return True
+
+    def claim_run_control(
+        self,
+        run_id: UUID | str,
+        request_id: UUID | str,
+        action: str,
+        payload_hash: str,
+        expected_status: RunStatus,
+        expected_plan_version: int | None = None,
+    ) -> tuple[Run, bool]:
+        """在一个写事务中完成幂等检查、版本检查和运行态认领。"""
+
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if self._check_control_request(db, run_id, request_id, action, payload_hash):
+                row = db.execute("SELECT data FROM runs WHERE id=?", (str(run_id),)).fetchone()
+                if not row:
+                    raise KeyError("run not found")
+                return self._load(Run, row["data"]), False
+            row = db.execute("SELECT data FROM runs WHERE id=?", (str(run_id),)).fetchone()
+            if not row:
+                raise KeyError("run not found")
+            run = self._load(Run, row["data"])
+            if run.status != expected_status:
+                raise ValueError(f"运行状态必须为 {expected_status}")
+            if expected_plan_version is not None:
+                latest = db.execute(
+                    "SELECT MAX(version) AS version FROM run_plan_revisions WHERE run_id=?",
+                    (str(run_id),),
+                ).fetchone()["version"]
+                if latest != expected_plan_version:
+                    raise ValueError(f"计划版本已变化，当前为 {latest}")
+            run.transition(RunStatus.RUNNING)
+            db.execute(
+                "UPDATE runs SET status=?,data=? WHERE id=?",
+                (str(run.status), self._dump(run), str(run_id)),
+            )
+            db.execute(
+                "INSERT INTO run_control_requests VALUES(?,?,?,?,?)",
+                (
+                    str(run_id),
+                    str(request_id),
+                    action,
+                    payload_hash,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        return run, True
+
+    def save_user_plan_revision(
+        self,
+        value: PlanRevision,
+        request_id: UUID | str,
+        payload_hash: str,
+    ) -> tuple[PlanRevision, bool]:
+        """用户编辑按计划版本串行追加；重复请求返回已保存版本。"""
+
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if self._check_control_request(
+                db, value.run_id, request_id, "plan_edit", payload_hash
+            ):
+                row = db.execute(
+                    "SELECT data FROM run_plan_revisions WHERE run_id=? AND version=?",
+                    (str(value.run_id), value.version),
+                ).fetchone()
+                if not row:
+                    raise ValueError("幂等计划版本缺失")
+                return self._load(PlanRevision, row["data"]), False
+            latest = db.execute(
+                "SELECT MAX(version) AS version FROM run_plan_revisions WHERE run_id=?",
+                (str(value.run_id),),
+            ).fetchone()["version"]
+            if latest != value.based_on_version:
+                raise ValueError(f"计划版本已变化，当前为 {latest}")
+            db.execute(
+                "INSERT INTO run_plan_revisions(run_id,version,source,data,created_at) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    str(value.run_id),
+                    value.version,
+                    str(value.source),
+                    self._dump(value),
+                    value.created_at.isoformat(),
+                ),
+            )
+            db.execute(
+                "INSERT INTO run_control_requests VALUES(?,?,?,?,?)",
+                (
+                    str(value.run_id),
+                    str(request_id),
+                    "plan_edit",
+                    payload_hash,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        return value, True
     def save_task_brief(self, value: TaskBrief) -> TaskBrief:
         previous = self.latest_task_brief(value.run_id)
         expected_version = 1 if previous is None else previous.version + 1

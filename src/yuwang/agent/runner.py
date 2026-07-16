@@ -39,8 +39,11 @@ class AgentRunCoordinator:
         add_node = cast(Any, graph.add_node)
         node_functions = [
             ("ingest", engine._ingest),
+            ("create_task_brief", engine._create_task_brief),
+            ("await_clarification", engine._await_clarification),
             ("normalize_task", engine._normalize_task),
             ("plan", engine._plan),
+            ("await_plan_approval", engine._await_plan_approval),
             ("select_action", engine._select_action),
             ("policy_check", engine._policy_check),
             ("execute_tool", engine._execute_tool),
@@ -55,12 +58,30 @@ class AgentRunCoordinator:
         for name, function in node_functions:
             add_node(name, function)
         graph.set_entry_point(entry_point)
-        graph.add_edge("ingest", "normalize_task")
-        graph.add_edge(
-            "normalize_task",
-            "plan" if engine._should_plan() else "select_action",
+        graph.add_edge("ingest", "create_task_brief")
+        graph.add_conditional_edges(
+            "create_task_brief",
+            engine._route_task_brief,
+            {
+                "await_clarification": "await_clarification",
+                "normalize_task": "normalize_task",
+            },
         )
-        graph.add_edge("plan", "select_action")
+        graph.add_edge("await_clarification", END)
+        graph.add_conditional_edges(
+            "normalize_task",
+            engine._route_initial_planning,
+            {"plan": "plan", "select_action": "select_action"},
+        )
+        graph.add_conditional_edges(
+            "plan",
+            engine._route_plan,
+            {
+                "await_plan_approval": "await_plan_approval",
+                "select_action": "select_action",
+            },
+        )
+        graph.add_edge("await_plan_approval", END)
         graph.add_conditional_edges(
             "select_action",
             engine._route_action,
@@ -239,9 +260,16 @@ class AgentRunCoordinator:
         if node == "verify":
             return engine._route_verify(raw)
         mapping = {
-            "ingest": "normalize_task",
+            "ingest": "create_task_brief",
+            "create_task_brief": "normalize_task",
+            "await_clarification": "create_task_brief",
+            "clarification_received": "create_task_brief",
             "normalize_task": "plan",
             "plan": "select_action",
+            "await_plan_approval": "select_action",
+            "plan_edited": "await_plan_approval",
+            "plan_approved": "select_action",
+            "plan_rejected": "plan",
             "execute_tool": "observe",
             "replan": "select_action",
             "complete": "generate_report",

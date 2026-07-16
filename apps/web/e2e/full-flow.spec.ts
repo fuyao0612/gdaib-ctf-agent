@@ -284,7 +284,34 @@ test("production browser flow covers settings, SSE, stop/retry, reports and refr
     await configureProtocolProvider(page);
 
   await page.locator(".sidebar .primary.full").click();
+  await page.locator(".modal input").fill(`Clarify-${Date.now()}`);
+  await page.locator('.modal button[type="submit"]').click();
+
+  await uploadAndRun(
+    page,
+    "clarify-first: Inspect this controlled attachment",
+    "clarify.txt",
+  );
+  await expect(page.getByTestId("clarification-control")).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.getByLabel("任务澄清").fill("The audience is a new project member.");
+  await page.getByRole("button", { name: "提交澄清并继续" }).click();
+  await expect(page.getByTestId("plan-approval-control")).toBeVisible({
+    timeout: 20_000,
+  });
+  await page.getByLabel("计划意见").fill("Add an explicit scope check.");
+  await page.getByRole("button", { name: "保存新版本" }).click();
+  await expect(page.getByText(/执行计划 · v2/)).toBeVisible();
+  await page.getByRole("button", { name: "批准并执行" }).click();
+  await expect(page.getByTestId("result-completed")).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(page.getByText("Task Brief · v2")).toBeVisible();
+
+  await page.locator(".sidebar .primary.full").click();
   await page.locator(".modal input").fill(`E2E-${Date.now()}`);
+  await page.getByLabel("计划控制").selectOption("auto");
   await page.locator('.modal button[type="submit"]').click();
 
   await uploadAndRun(
@@ -329,6 +356,7 @@ test("production browser flow covers settings, SSE, stop/retry, reports and refr
 
   await page.locator(".sidebar .primary.full").click();
   await page.getByLabel("任务名称").fill(`Advisory-${Date.now()}`);
+  await page.getByLabel("计划控制").selectOption("auto");
   const advisoryOption = page
     .getByLabel("Agent 配置")
     .getByRole("option", { name: new RegExp(advisoryProfile) });
@@ -385,6 +413,7 @@ test("production browser flow covers settings, SSE, stop/retry, reports and refr
 
   await page.locator(".sidebar .primary.full").click();
   await page.getByLabel("任务名称").fill(`Hybrid-${Date.now()}`);
+  await page.getByLabel("计划控制").selectOption("auto");
   const hybridOption = page
     .getByLabel("Agent 配置")
     .getByRole("option", { name: new RegExp(hybridName) });

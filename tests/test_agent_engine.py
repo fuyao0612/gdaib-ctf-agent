@@ -77,7 +77,7 @@ async def test_complete_failure_replan_success_report(tmp_path):
     tool_events = [event for event in events if event.type == EventType.TOOL_FINISHED]
     assert [event.payload["success"] for event in tool_events] == [False, True]
     assert repository.get_report(run.id)[1]["tool_metrics"] == {"calls": 2, "failures": 1}
-    assert len(repository.list_model_calls(run.id)) == 6
+    assert len(repository.list_model_calls(run.id)) == 7
     assert [call.status for call in repository.list_tool_calls(run.id)] == [
         CallStatus.FAILED,
         CallStatus.SUCCEEDED,
@@ -330,7 +330,7 @@ async def test_disabling_important_fact_extraction_skips_extra_model_call(tmp_pa
     run = repository.save_run(Run(thread_id=thread.id))
     await engine.run(run.id, TaskSpec(body="do not remember facts"))
     assert [item.kind for item in repository.list_memories(thread.id)] == ["run_summary"]
-    assert len(repository.list_model_calls(run.id)) == 1
+    assert len(repository.list_model_calls(run.id)) == 2
 
 
 @pytest.mark.asyncio

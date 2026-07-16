@@ -12,8 +12,10 @@ import {
 import ThreadSidebar from "./components/ThreadSidebar";
 import { useWorkbenchData } from "./hooks/useWorkbenchData";
 import type {
+  AgentPlan,
   Artifact,
   Mode,
+  PlanMode,
   Thread,
 } from "./types";
 import "./styles.css";
@@ -28,6 +30,7 @@ export default function App() {
     activeRun,
     report,
     audit,
+    control,
     memories,
     providers,
     agentProfiles,
@@ -37,11 +40,13 @@ export default function App() {
     setEvents,
     setActiveRun,
     setReport,
+    setControl,
     setMemories,
     setSelectedProfileId,
     setSelectedProviderId,
     loadThreads,
     refreshSettings,
+    loadControl,
     selectThread,
     connect,
     bootstrap,
@@ -54,6 +59,7 @@ export default function App() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("新的安全任务");
   const [newMode, setNewMode] = useState<Mode>("normal");
+  const [newPlanMode, setNewPlanMode] = useState<PlanMode>("approval");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [initialSetup, setInitialSetup] = useState(false);
@@ -88,6 +94,7 @@ export default function App() {
         newTitle,
         newMode,
         selectedProfileId,
+        newPlanMode,
       );
       await loadThreads();
       await selectThread(value.id);
@@ -127,6 +134,7 @@ export default function App() {
     setError("");
     setEvents([]);
     setReport(null);
+    setControl(null);
     try {
       const run = await api.turn(
         detail.id,
@@ -168,6 +176,73 @@ export default function App() {
     setSupplementalInput("");
     setActiveRun(run);
     connect(run);
+  }
+
+  async function submitClarification(content: string, briefVersion: number) {
+    if (!activeRun) return;
+    setBusy(true);
+    setError("");
+    try {
+      const run = await api.submitClarification(
+        activeRun.id,
+        content,
+        briefVersion,
+        crypto.randomUUID(),
+      );
+      setActiveRun(run);
+      await loadControl(run.id);
+      connect(run);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function editPlan(plan: AgentPlan, version: number, reason: string) {
+    if (!activeRun) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.editPlan(
+        activeRun.id,
+        plan,
+        version,
+        reason,
+        crypto.randomUUID(),
+      );
+      await loadControl(activeRun.id);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function decidePlan(
+    decision: "approve" | "reject",
+    version: number,
+    reason: string,
+  ) {
+    if (!activeRun) return;
+    setBusy(true);
+    setError("");
+    try {
+      const run = await api.decidePlan(
+        activeRun.id,
+        decision,
+        version,
+        reason,
+        crypto.randomUUID(),
+      );
+      setActiveRun(run);
+      await loadControl(run.id);
+      connect(run);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function toggleMemory(enabled: boolean) {
@@ -217,8 +292,17 @@ export default function App() {
     }
   }
 
-  const running =
-    activeRun?.status === "queued" || activeRun?.status === "running";
+  const running = Boolean(
+    activeRun &&
+      [
+        "queued",
+        "running",
+        "waiting_input",
+        "waiting_clarification",
+        "waiting_approval",
+        "paused",
+      ].includes(activeRun.status),
+  );
   const inputLocked = detail?.mode === "competition" && running;
   const currentProfile = agentProfiles.find(
     (value) => value.profile_id === detail?.agent_profile_id,
@@ -330,6 +414,17 @@ export default function App() {
               report={report}
               run={activeRun}
               audit={audit}
+              control={control}
+              busy={busy}
+              onClarify={(content, version) =>
+                void submitClarification(content, version)
+              }
+              onEditPlan={(plan, version, reason) =>
+                void editPlan(plan, version, reason)
+              }
+              onDecidePlan={(decision, version, reason) =>
+                void decidePlan(decision, version, reason)
+              }
             />
             <MessageComposer
               activeRun={activeRun}
@@ -381,11 +476,13 @@ export default function App() {
         <CreateThreadDialog
           title={newTitle}
           mode={newMode}
+          planMode={newPlanMode}
           profileId={selectedProfileId}
           profiles={agentProfiles}
           busy={busy}
           onTitleChange={setNewTitle}
           onModeChange={setNewMode}
+          onPlanModeChange={setNewPlanMode}
           onProfileChange={(id, mode) => {
             setSelectedProfileId(id);
             if (mode) setNewMode(mode);

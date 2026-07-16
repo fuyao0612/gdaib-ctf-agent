@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from yuwang.agent.repository import AgentRepository
 from yuwang.agent.verification import SuccessVerifier, VerificationResult
+from yuwang.control import TaskBrief
 from yuwang.domain.models import AgentAction, AgentPlan, MemoryRecord, Observation, TaskSpec
 from yuwang.reports import ReportGenerator
 from yuwang.settings.profiles import (
@@ -34,6 +35,7 @@ class AgentRuntimeState(Protocol):
     supplemental_inputs: list[str]
     tool_schemas: list[dict[str, Any]]
     plan: AgentPlan | None
+    task_brief: TaskBrief | None
     remaining_budget: dict[str, float | int]
 
 
@@ -101,7 +103,11 @@ class DefaultPlanner:
     async def plan(
         self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentPlan]
     ) -> AgentPlan:
-        return await invoke(state, AgentPlan, "根据任务、上下文和可用能力生成动态计划")
+        return await invoke(
+            state,
+            AgentPlan,
+            "根据 Task Brief 生成动态计划；每个步骤必须给出预期结果和验证方式，并说明风险与依赖",
+        )
 
 
 class DefaultActionSelector:
@@ -201,6 +207,9 @@ class DefaultContextBuilder:
             ],
             "tools": state.tool_schemas,
             "current_plan": state.plan.model_dump(mode="json") if state.plan else None,
+            "task_brief": (
+                state.task_brief.model_dump(mode="json") if state.task_brief else None
+            ),
             "observations_untrusted": observations,
             "completion_mode": profile.completion_mode,
             "validation_policy": profile.validation_policy.model_dump(mode="json"),

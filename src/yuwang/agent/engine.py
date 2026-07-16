@@ -285,6 +285,24 @@ class AgentEngine:
     async def _normalize_task(self, raw: GraphState) -> GraphState:
         return await self.nodes.normalize_task(raw)
 
+    async def _create_task_brief(self, raw: GraphState) -> GraphState:
+        return await self.nodes.create_task_brief(raw)
+
+    async def _await_clarification(self, raw: GraphState) -> GraphState:
+        return await self.nodes.await_clarification(raw)
+
+    async def _await_plan_approval(self, raw: GraphState) -> GraphState:
+        return await self.nodes.await_plan_approval(raw)
+
+    def _route_task_brief(self, raw: GraphState) -> str:
+        return self.nodes.route_task_brief(raw)
+
+    def _route_plan(self, raw: GraphState) -> str:
+        return self.nodes.route_plan(raw)
+
+    def _route_initial_planning(self, raw: GraphState) -> str:
+        return self.nodes.route_initial_planning(raw)
+
     async def _plan(self, raw: GraphState) -> GraphState:
         return await self.nodes.plan(raw)
 

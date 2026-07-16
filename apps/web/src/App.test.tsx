@@ -122,6 +122,13 @@ describe("App", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("新建任务默认选择计划确认", async () => {
+    render(<App />);
+    await screen.findByText("从一个可审计的任务开始");
+    fireEvent.click(screen.getByText("创建第一个任务"));
+    expect(screen.getByLabelText("计划控制")).toHaveValue("approval");
+  });
+
   it("刷新后为运行中的任务恢复事件订阅", async () => {
     const now = new Date().toISOString();
     window.localStorage.setItem("yuwang.currentThreadId", "t-running");
@@ -233,7 +240,8 @@ describe("App", () => {
     await waitFor(() =>
       expect(
         FakeEventSource.instances.some(
-          (source) => source.url === "/api/v1/runs/r-running/events/stream",
+          (source) =>
+            source.url === "/api/v1/runs/r-running/events/stream?after=0",
         ),
       ).toBe(true),
     );

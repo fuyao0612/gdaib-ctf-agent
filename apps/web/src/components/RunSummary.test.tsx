@@ -14,6 +14,7 @@ function makeRun(status: RunStatus): Run {
     provider: "DeepSeek",
     agent_profile_id: "agent-1",
     agent_profile_version: 2,
+    plan_mode: "auto",
     completion_mode: "evidence",
     validation_status: status === "completed" ? "validated" : "pending",
     evidence_level: status === "completed" ? "external" : "none",

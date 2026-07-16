@@ -38,6 +38,7 @@ def create_thread_router(context: ApiContext) -> APIRouter:
                 mode=body.mode,
                 agent_profile_id=profile.profile_id,
                 agent_profile_version=profile.version,
+                plan_mode=body.plan_mode,
             )
         )
 
