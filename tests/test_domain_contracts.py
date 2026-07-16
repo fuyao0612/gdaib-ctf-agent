@@ -59,3 +59,17 @@ def test_run_transitions_reject_illegal_changes():
     assert run.started_at and run.finished_at
     with pytest.raises(ValueError, match="illegal"):
         run.transition(RunStatus.RUNNING)
+
+
+def test_run_control_states_can_resume_without_becoming_terminal():
+    for waiting in (
+        RunStatus.WAITING_CLARIFICATION,
+        RunStatus.WAITING_APPROVAL,
+        RunStatus.PAUSED,
+    ):
+        run = Run(thread_id=uuid4())
+        run.transition(RunStatus.RUNNING)
+        run.transition(waiting)
+        assert run.finished_at is None
+        run.transition(RunStatus.RUNNING)
+        assert run.status == RunStatus.RUNNING

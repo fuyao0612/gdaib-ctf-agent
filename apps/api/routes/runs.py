@@ -13,7 +13,15 @@ from fastapi.responses import StreamingResponse
 from apps.api.context import ApiContext
 from apps.api.schemas import MessageCreate, RunCreate, RunInput, TurnCreate
 from yuwang.agent import AgentEngine, AgentStateModel
-from yuwang.domain.models import EventType, MemoryRecord, Message, MessageRole, Run, RunStatus
+from yuwang.domain.models import (
+    ACTIVE_RUN_STATUSES,
+    EventType,
+    MemoryRecord,
+    Message,
+    MessageRole,
+    Run,
+    RunStatus,
+)
 
 
 def create_run_router(context: ApiContext) -> APIRouter:
@@ -86,7 +94,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
     @router.post("/runs/{run_id}/stop", response_model=Run)
     async def stop_run(run_id: UUID) -> Run:
         run = context.require_run(run_id)
-        if run.status not in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}:
+        if run.status not in ACTIVE_RUN_STATUSES:
             raise HTTPException(409, "运行已结束")
         stopped = repository.request_stop(run_id)
         task = context.tasks.get(run_id)
@@ -288,8 +296,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 run = repository.get_run(run_id)
                 if (
                     run
-                    and run.status
-                    not in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}
+                    and run.status not in ACTIVE_RUN_STATUSES
                     and not repository.list_events(run_id, cursor)
                 ):
                     return

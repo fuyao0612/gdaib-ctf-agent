@@ -14,10 +14,10 @@ from fastapi.responses import FileResponse
 from apps.api.context import ApiContext
 from apps.api.schemas import MemoryToggle, MessageCreate, ThreadCreate, ThreadUpdate
 from yuwang.domain.models import (
+    ACTIVE_RUN_STATUSES,
     Artifact,
     MemoryRecord,
     Message,
-    RunStatus,
     Thread,
     utcnow,
 )
@@ -82,7 +82,7 @@ def create_thread_router(context: ApiContext) -> APIRouter:
     async def delete_thread(thread_id: UUID) -> None:
         context.require_thread(thread_id)
         active = any(
-            run.status in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}
+            run.status in ACTIVE_RUN_STATUSES
             for run in repository.list_runs(thread_id)
         )
         if active:
