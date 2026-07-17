@@ -11,7 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from yuwang.domain.models import AgentPlan, ThreadMode, VerificationRule
+from yuwang.domain.models import AgentPlan, InteractionMode, ThreadMode, VerificationRule
 
 
 class ThreadCreate(BaseModel):
@@ -19,16 +19,24 @@ class ThreadCreate(BaseModel):
     mode: ThreadMode = ThreadMode.NORMAL
     agent_profile_id: UUID | None = None
     plan_mode: Literal["auto", "approval"] = "auto"
+    interaction_mode: InteractionMode = InteractionMode.CHAT
 
 
 class ThreadUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=160)
     archived: bool | None = None
+    interaction_mode: InteractionMode | None = None
 
 
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=100_000)
     artifact_ids: list[UUID] = Field(default_factory=list)
+
+
+class ChatCreate(MessageCreate):
+    request_id: UUID
+    provider_config_id: UUID | None = None
+    retry: bool = False
 
 
 class RunCreate(BaseModel):

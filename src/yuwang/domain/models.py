@@ -24,6 +24,11 @@ class ThreadMode(StrEnum):
     COMPETITION = "competition"
 
 
+class InteractionMode(StrEnum):
+    CHAT = "chat"
+    AGENT = "agent"
+
+
 class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -99,6 +104,8 @@ class Thread(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     title: str = Field(min_length=1, max_length=160)
     mode: ThreadMode = ThreadMode.NORMAL
+    # 旧数据缺少该字段时继续按 Agent 任务恢复；新建会话由 API 显式默认成 chat。
+    interaction_mode: InteractionMode = InteractionMode.AGENT
     agent_profile_id: UUID | None = None
     agent_profile_version: int | None = Field(default=None, ge=1)
     plan_mode: Literal["auto", "approval"] = "auto"

@@ -8,6 +8,7 @@ from uuid import UUID
 from yuwang.domain.models import utcnow
 from yuwang.settings.models import (
     AgentDefaults,
+    ChatDefaults,
     ProviderConfig,
     ProviderConfigInput,
     ProviderConfigView,
@@ -25,6 +26,8 @@ class SettingsRepository(Protocol):
     def delete_provider_config(self, provider_id: UUID) -> None: ...
     def get_agent_defaults(self) -> AgentDefaults: ...
     def save_agent_defaults(self, value: AgentDefaults) -> None: ...
+    def get_chat_defaults(self) -> ChatDefaults: ...
+    def save_chat_defaults(self, value: ChatDefaults) -> None: ...
 
 
 class SettingsService:
@@ -160,4 +163,11 @@ class SettingsService:
 
     def save_agent_defaults(self, value: AgentDefaults) -> AgentDefaults:
         self.repository.save_agent_defaults(value)
+        return value
+
+    def get_chat_defaults(self) -> ChatDefaults:
+        return self.repository.get_chat_defaults()
+
+    def save_chat_defaults(self, value: ChatDefaults) -> ChatDefaults:
+        self.repository.save_chat_defaults(value)
         return value

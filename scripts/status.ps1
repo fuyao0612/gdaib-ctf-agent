@@ -43,6 +43,9 @@ if (-not $apiBase) {
 $setup = Invoke-YuwangEndpoint "$apiBase/api/v1/setup/status"
 if ($setup.StatusCode -ne 200 -or -not $setup.Body) {
     Write-Host '  配置状态：API 可用，但无法读取公开配置状态。' -ForegroundColor Yellow
+    Write-Host '  数据库：  未检测（配置状态不可用）' -ForegroundColor Yellow
+    Write-Host '  Provider：未检测（配置状态不可用）' -ForegroundColor Yellow
+    Write-Host '  默认 Agent：未检测（配置状态不可用）' -ForegroundColor Yellow
     return
 }
 $checks = $setup.Body.checks

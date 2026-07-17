@@ -2,14 +2,133 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from yuwang.domain.models import Artifact, MemoryRecord, Message, Thread
+from yuwang.domain.models import Artifact, MemoryRecord, Message, MessageRole, Thread
 from yuwang.storage.sqlite_common import SQLiteStore
 
 
 class SQLiteWorkspaceStore(SQLiteStore):
+    def begin_chat_request(
+        self,
+        thread_id: UUID,
+        request_id: UUID,
+        content: str,
+        artifact_ids: list[UUID],
+        retry: bool,
+    ) -> tuple[Message, Message | None]:
+        """幂等创建聊天用户消息；失败重试复用原消息，绝不重复插入。"""
+
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            active = db.execute(
+                "SELECT request_id FROM chat_requests WHERE thread_id=? AND status='running' AND request_id<>?",
+                (str(thread_id), str(request_id)),
+            ).fetchone()
+            if active:
+                raise ValueError("当前对话仍有回复正在生成")
+            row = db.execute(
+                "SELECT * FROM chat_requests WHERE request_id=?", (str(request_id),)
+            ).fetchone()
+            if row:
+                user_row = db.execute(
+                    "SELECT data FROM messages WHERE id=?", (row["user_message_id"],)
+                ).fetchone()
+                if not user_row:
+                    raise ValueError("聊天请求对应的用户消息不存在")
+                user_message = self._load(Message, user_row["data"])
+                if user_message.content != content or user_message.artifact_ids != artifact_ids:
+                    raise ValueError("请求 ID 已用于不同的聊天内容")
+                if row["status"] == "completed" and row["assistant_message_id"]:
+                    assistant_row = db.execute(
+                        "SELECT data FROM messages WHERE id=?",
+                        (row["assistant_message_id"],),
+                    ).fetchone()
+                    return user_message, self._load(Message, assistant_row["data"])
+                if row["status"] == "running":
+                    raise ValueError("该聊天请求仍在生成中")
+                if not retry:
+                    raise ValueError("上次生成失败，请使用重试操作")
+                db.execute(
+                    "UPDATE chat_requests SET status='running',error=NULL WHERE request_id=?",
+                    (str(request_id),),
+                )
+                return user_message, None
+            user_message = Message(
+                thread_id=thread_id,
+                role=MessageRole.USER,
+                content=content,
+                artifact_ids=artifact_ids,
+            )
+            db.execute(
+                "INSERT INTO messages VALUES(?,?,?,?)",
+                (
+                    str(user_message.id),
+                    str(thread_id),
+                    self._dump(user_message),
+                    user_message.created_at.isoformat(),
+                ),
+            )
+            db.execute(
+                "INSERT INTO chat_requests VALUES(?,?,?,?,?,?,?)",
+                (
+                    str(request_id),
+                    str(thread_id),
+                    "running",
+                    str(user_message.id),
+                    None,
+                    None,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+        return user_message, None
+
+    def complete_chat_request(
+        self, request_id: UUID, thread_id: UUID, content: str
+    ) -> Message:
+        """助手消息与请求完成状态在同一事务提交，刷新不会看到半条回复。"""
+
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT status,assistant_message_id FROM chat_requests WHERE request_id=?",
+                (str(request_id),),
+            ).fetchone()
+            if not row:
+                raise KeyError("聊天请求不存在")
+            if row["status"] == "completed" and row["assistant_message_id"]:
+                saved = db.execute(
+                    "SELECT data FROM messages WHERE id=?", (row["assistant_message_id"],)
+                ).fetchone()
+                return self._load(Message, saved["data"])
+            assistant = Message(
+                thread_id=thread_id,
+                role=MessageRole.ASSISTANT,
+                content=content,
+            )
+            db.execute(
+                "INSERT INTO messages VALUES(?,?,?,?)",
+                (
+                    str(assistant.id),
+                    str(thread_id),
+                    self._dump(assistant),
+                    assistant.created_at.isoformat(),
+                ),
+            )
+            db.execute(
+                "UPDATE chat_requests SET status='completed',assistant_message_id=?,error=NULL WHERE request_id=?",
+                (str(assistant.id), str(request_id)),
+            )
+        return assistant
+
+    def fail_chat_request(self, request_id: UUID, error: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE chat_requests SET status='failed',error=? WHERE request_id=? AND status='running'",
+                (error[:500], str(request_id)),
+            )
     def save_thread(self, value: Thread) -> Thread:
         with self.connect() as db:
             db.execute(
@@ -52,6 +171,7 @@ class SQLiteWorkspaceStore(SQLiteStore):
                     "run_pause_requests",
                 ):
                     db.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))
+            db.execute("DELETE FROM chat_requests WHERE thread_id=?", (key,))
             db.execute("DELETE FROM messages WHERE thread_id=?", (key,))
             db.execute("DELETE FROM artifacts WHERE thread_id=?", (key,))
             db.execute("DELETE FROM memories WHERE thread_id=?", (key,))
