@@ -147,6 +147,7 @@ def test_v02_database_and_json_rows_migrate_without_profile_fields(tmp_path):
     legacy_thread = Thread(title="v0.2 thread").model_dump(mode="json")
     legacy_thread.pop("agent_profile_id", None)
     legacy_thread.pop("agent_profile_version", None)
+    legacy_thread.pop("interaction_mode", None)
     with sqlite3.connect(path) as db:
         db.executescript(
             """
@@ -162,8 +163,9 @@ def test_v02_database_and_json_rows_migrate_without_profile_fields(tmp_path):
     repository = SQLiteRepository(path)
     restored = repository.get_thread(legacy_thread["id"])
     assert restored and restored.agent_profile_id is None
+    assert restored.interaction_mode == "agent"
     service = AgentProfileService(repository)
     assert service.ensure_default().is_default
     with sqlite3.connect(path) as db:
         versions = {row[0] for row in db.execute("SELECT version FROM schema_migrations")}
-    assert versions == {1, 2, 3, 4, 5, 6}
+    assert versions == {1, 2, 3, 4, 5, 6, 7}

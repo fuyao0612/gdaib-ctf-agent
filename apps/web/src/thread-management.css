@@ -1,53 +1,44 @@
 .thread-search {
   width: 100%;
-  margin: 8px 0;
   padding: 8px 9px;
-  border: 1px solid #2a4053;
-  border-radius: 6px;
-  color: #d9e5ef;
-  background: #0c1b29;
+  color: var(--text);
+  border: 1px solid #dce0e5;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 72%);
 }
 
 .thread-search::placeholder {
-  color: #658096;
+  color: #999fa7;
 }
 
 .archive-toggle {
   display: flex;
-  gap: 6px;
   align-items: center;
-  margin-bottom: 8px;
+  gap: 6px;
+  margin: 1px 4px 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .thread-row {
+  width: 100%;
+  min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  width: 100%;
-  min-width: 0;
   overflow: hidden;
-  border-radius: 7px;
-}
-
-.thread-row.selected {
-  border-left: 2px solid var(--cyan);
-  background: #10283a;
+  border-radius: 9px;
 }
 
 .thread-row .thread-item {
-  width: 100%;
   min-width: 0;
-  overflow: hidden;
 }
 
 .thread-actions {
   display: none;
   align-items: center;
-  gap: 2px;
-  padding-right: 3px;
-  min-width: 76px;
+  gap: 1px;
+  padding-right: 4px;
 }
 
 .thread-row.selected .thread-actions,
@@ -57,16 +48,16 @@
 }
 
 .thread-actions button {
-  width: 24px;
-  height: 28px;
+  width: 25px;
+  min-height: 28px;
   padding: 0;
+  color: #767d86;
   border: 0;
   background: transparent;
-  color: var(--muted);
 }
 
 .thread-empty {
-  margin: 10px 4px;
+  margin: 10px 5px;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.6;

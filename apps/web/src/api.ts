@@ -1,6 +1,8 @@
 /** 浏览器 API 边界：统一凭据、CSRF、错误结构和 JSON 编解码。 */
 import type {
   AgentDefaults,
+  ChatDefaults,
+  ChatEvent,
   AgentProfile,
   AgentProfileInput,
   AgentProfileSummary,
@@ -66,6 +68,7 @@ export const api = {
     mode: string,
     agentProfileId: string,
     planMode: "auto" | "approval",
+    interactionMode: "chat" | "agent",
   ) =>
     request<Thread>("/threads", {
       method: "POST",
@@ -74,6 +77,7 @@ export const api = {
         mode,
         agent_profile_id: agentProfileId,
         plan_mode: planMode,
+        interaction_mode: interactionMode,
       }),
     }),
   detail: (id: string) => request<ThreadDetail>(`/threads/${id}`),
@@ -82,6 +86,58 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ content, artifact_ids: artifactIds }),
     }),
+  chat: async (
+    id: string,
+    value: {
+      request_id: string;
+      content: string;
+      artifact_ids: string[];
+      provider_config_id: string | null;
+      retry: boolean;
+    },
+    signal: AbortSignal,
+    onEvent: (event: ChatEvent) => void,
+  ) => {
+    const response = await fetch(`${API}/threads/${id}/chat`, {
+      method: "POST",
+      credentials: "same-origin",
+      signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(sessionCsrf ? adminHeaders(sessionCsrf) : {}),
+      },
+      body: JSON.stringify(value),
+    });
+    if (!response.ok) {
+      const body = await response
+        .json()
+        .catch(() => ({ error: { message: "聊天请求失败" } }));
+      throw new Error(body.error?.message ?? `HTTP ${response.status}`);
+    }
+    if (!response.body) throw new Error("浏览器无法读取流式响应");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const dispatch = (block: string) => {
+      let eventType = "";
+      const data: string[] = [];
+      for (const line of block.split(/\r?\n/)) {
+        if (line.startsWith("event:")) eventType = line.slice(6).trim();
+        if (line.startsWith("data:")) data.push(line.slice(5).trim());
+      }
+      if (!eventType || !data.length) return;
+      onEvent({ type: eventType, data: JSON.parse(data.join("\n")) } as ChatEvent);
+    };
+    while (true) {
+      const { done, value: chunk } = await reader.read();
+      buffer += decoder.decode(chunk, { stream: !done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      blocks.forEach(dispatch);
+      if (done) break;
+    }
+    if (buffer.trim()) dispatch(buffer);
+  },
   upload: async (id: string, file: File) => {
     const form = new FormData();
     form.append("upload", file);
@@ -237,7 +293,14 @@ export const api = {
       method: "DELETE",
       headers: adminHeaders(csrf),
     }),
-  updateThread: (id: string, value: { title?: string; archived?: boolean }) =>
+  updateThread: (
+    id: string,
+    value: {
+      title?: string;
+      archived?: boolean;
+      interaction_mode?: "chat" | "agent";
+    },
+  ) =>
     request<Thread>(`/threads/${id}`, {
       method: "PATCH",
       body: JSON.stringify(value),
@@ -286,6 +349,17 @@ export const api = {
     }),
   saveAgentDefaults: (csrf: string, value: AgentDefaults) =>
     request<AgentDefaults>("/admin/settings/agent", {
+      method: "PUT",
+      headers: adminHeaders(csrf),
+      body: JSON.stringify(value),
+    }),
+  chatDefaults: (csrf: string) =>
+    request<ChatDefaults>("/admin/settings/chat", {
+      headers: adminHeaders(csrf),
+    }),
+  chatPreferences: () => request<ChatDefaults>("/settings/chat"),
+  saveChatDefaults: (csrf: string, value: ChatDefaults) =>
+    request<ChatDefaults>("/admin/settings/chat", {
       method: "PUT",
       headers: adminHeaders(csrf),
       body: JSON.stringify(value),

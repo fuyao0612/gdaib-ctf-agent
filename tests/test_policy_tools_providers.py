@@ -89,6 +89,47 @@ async def test_compatible_provider_validates_schema_and_never_sends_key_in_url()
 
 
 @pytest.mark.asyncio
+async def test_free_text_provider_never_forces_json_and_reads_standard_stream():
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        requests.append(body)
+        assert "response_format" not in body
+        if body["stream"]:
+            stream = (
+                'data: {"choices":[{"delta":{"content":"你"}}]}\n\n'
+                'data: {"choices":[{"delta":{"content":"好"}}],'
+                '"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}\n\n'
+                "data: [DONE]\n\n"
+            )
+            return httpx.Response(
+                200,
+                content=stream.encode(),
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "自然语言回答"}}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+            },
+        )
+
+    provider = provider_with_transport(httpx.MockTransport(handler))
+    messages = [{"role": "user", "content": "你好"}]
+    assert await provider.generate_text(messages, system_prompt="直接回答") == "自然语言回答"
+    chunks = [
+        chunk
+        async for chunk in provider.stream_text(messages, system_prompt="直接回答")
+    ]
+    assert "".join(chunks) == "你好"
+    assert requests[0]["stream"] is False
+    assert requests[1]["stream"] is True
+    assert provider.last_call_metrics and provider.last_call_metrics.total_tokens == 3
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "status,category,retryable",
     [(401, "auth", False), (403, "auth", False), (400, "service", False)],

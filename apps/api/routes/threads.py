@@ -36,6 +36,7 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             Thread(
                 title=body.title,
                 mode=body.mode,
+                interaction_mode=body.interaction_mode,
                 agent_profile_id=profile.profile_id,
                 agent_profile_version=profile.version,
                 plan_mode=body.plan_mode,
@@ -76,6 +77,8 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             thread.title = body.title.strip()
         if body.archived is not None:
             thread.archived = body.archived
+        if body.interaction_mode is not None:
+            thread.interaction_mode = body.interaction_mode
         thread.updated_at = utcnow()
         return repository.save_thread(thread)
 

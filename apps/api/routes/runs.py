@@ -28,6 +28,7 @@ from yuwang.control import PlanRevision, PlanSource, RunGuidance
 from yuwang.domain.models import (
     ACTIVE_RUN_STATUSES,
     EventType,
+    InteractionMode,
     MemoryRecord,
     Message,
     MessageRole,
@@ -46,6 +47,8 @@ def create_run_router(context: ApiContext) -> APIRouter:
         """创建不可变快照并登记后台 Agent；供两个 HTTP 入口共用。"""
 
         thread = context.require_thread(thread_id)
+        thread.interaction_mode = InteractionMode.AGENT
+        repository.save_thread(thread)
         profile = context.resolve_thread_profile(thread)
         try:
             selected_id = body.provider_config_id or profile.default_provider_id

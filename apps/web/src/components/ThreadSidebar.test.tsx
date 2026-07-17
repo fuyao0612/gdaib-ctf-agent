@@ -8,6 +8,7 @@ const threads: Thread[] = [
     id: "1",
     title: "漏洞分析",
     mode: "normal",
+    interaction_mode: "chat",
     agent_profile_id: null,
     agent_profile_version: null,
     plan_mode: "auto",
@@ -19,6 +20,7 @@ const threads: Thread[] = [
     id: "2",
     title: "历史任务",
     mode: "competition",
+    interaction_mode: "agent",
     agent_profile_id: null,
     agent_profile_version: null,
     plan_mode: "auto",
@@ -63,6 +65,6 @@ describe("ThreadSidebar", () => {
     fireEvent.change(screen.getByLabelText("搜索对话"), {
       target: { value: "不存在的任务" },
     });
-    expect(screen.getByText("没有匹配的任务。")).toBeInTheDocument();
+    expect(screen.getByText("没有匹配的对话。")).toBeInTheDocument();
   });
 });

@@ -87,7 +87,7 @@ def test_v4_migration_is_idempotent(tmp_path) -> None:
         versions = {
             row["version"] for row in database.execute("SELECT version FROM schema_migrations")
         }
-    assert {1, 2, 3, 4, 5, 6}.issubset(versions)
+    assert {1, 2, 3, 4, 5, 6, 7}.issubset(versions)
 
 
 def test_guidance_is_ordered_idempotent_and_consumed_once(tmp_path) -> None:

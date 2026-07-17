@@ -205,3 +205,22 @@ class AgentDefaults(BaseModel):
     provider_retry_budget: int = Field(default=2, ge=0, le=10)
     context_token_budget: int = Field(default=32000, ge=1024, le=2_000_000)
     observation_char_budget: int = Field(default=20000, ge=1000, le=1_000_000)
+
+
+class ChatDefaults(BaseModel):
+    """普通聊天偏好；不包含密钥，也不改变 AgentProfile 的执行语义。"""
+
+    model_config = ConfigDict(extra="forbid")
+    default_provider_id: UUID | None = None
+    default_mode: Literal["chat", "agent"] = "chat"
+    system_prompt: str = Field(
+        default="你是一个可靠、简洁的中文助手。直接回答用户问题，不展示隐藏思维链。",
+        max_length=20_000,
+    )
+    stream_enabled: bool = True
+    recent_message_limit: int = Field(default=30, ge=2, le=200)
+    context_token_limit: int = Field(default=32_000, ge=1024, le=2_000_000)
+    attachment_char_limit: int = Field(default=20_000, ge=1000, le=200_000)
+    sidebar_expanded: bool = True
+    audit_expanded: bool = False
+    theme: Literal["light"] = "light"

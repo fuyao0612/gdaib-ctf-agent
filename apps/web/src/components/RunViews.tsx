@@ -1,4 +1,5 @@
 /** 运行状态、对话时间线与审计抽屉等只读视图。 */
+import { useLayoutEffect, useRef } from "react";
 import { api } from "../api";
 import type {
   Event,
@@ -59,6 +60,8 @@ interface ConversationProps {
   audit: RunAudit | null;
   control: RunControl | null;
   busy: boolean;
+  chatDraft: string;
+  chatFailure: { message: string; retryable: boolean } | null;
   onClarify: (content: string, briefVersion: number) => void;
   onEditPlan: (plan: import("../types").AgentPlan, version: number, reason: string) => void;
   onDecidePlan: (
@@ -79,6 +82,8 @@ export function ConversationView({
   audit,
   control,
   busy,
+  chatDraft,
+  chatFailure,
   onClarify,
   onEditPlan,
   onDecidePlan,
@@ -86,8 +91,39 @@ export function ConversationView({
   onResume,
   onGuidance,
 }: ConversationProps) {
+  const scrollRef = useRef<HTMLElement>(null);
+  const followLatestRef = useRef(true);
+  const previousScrollHeightRef = useRef(0);
+  const userScrollTopRef = useRef(0);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const previousHeight = previousScrollHeightRef.current;
+    const wasNearBottom =
+      previousHeight === 0 ||
+      previousHeight - element.scrollTop - element.clientHeight < 120;
+    if (followLatestRef.current && wasNearBottom) {
+      element.scrollTop = element.scrollHeight;
+    } else if (!followLatestRef.current) {
+      element.scrollTop = userScrollTopRef.current;
+    }
+    previousScrollHeightRef.current = element.scrollHeight;
+  }, [chatDraft, detail.messages.length, events.length]);
+
   return (
-    <section className="conversation" aria-label="对话时间线">
+    <section
+      ref={scrollRef}
+      className="conversation"
+      aria-label="对话时间线"
+      data-testid="conversation-scroll"
+      onScroll={(event) => {
+        const element = event.currentTarget;
+        userScrollTopRef.current = element.scrollTop;
+        followLatestRef.current =
+          element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+      }}
+    >
       {detail.messages.map((message) => (
         <div key={message.id} className={`message ${message.role}`}>
           <span className="avatar">
@@ -102,8 +138,25 @@ export function ConversationView({
           </div>
         </div>
       ))}
-      {run && <RunProgress run={run} events={events} audit={audit} />}
-      {run && control && (
+      {chatDraft && (
+        <div className="message assistant streaming" aria-live="polite">
+          <span className="avatar">智</span>
+          <div>
+            <div className="message-meta">助手 · 正在回复</div>
+            <p>{chatDraft}<span className="typing-caret" aria-hidden="true" /></p>
+          </div>
+        </div>
+      )}
+      {chatFailure && (
+        <div className="timeline-error" role="alert">
+          <strong>回复未完成</strong>
+          <span>{chatFailure.message}</span>
+        </div>
+      )}
+      {detail.interaction_mode === "agent" && run && (
+        <RunProgress run={run} events={events} audit={audit} />
+      )}
+      {detail.interaction_mode === "agent" && run && control && (
         <>
           <TaskPlanControl
             run={run}
@@ -124,7 +177,7 @@ export function ConversationView({
           />
         </>
       )}
-      {run && (
+      {detail.interaction_mode === "agent" && run && (
         <ResultCard
           run={run}
           events={events}

@@ -1,5 +1,6 @@
 /** 与后端公开 JSON 契约一一对应的工作台类型。 */
 export type Mode = "normal" | "competition";
+export type InteractionMode = "chat" | "agent";
 export type PlanMode = "auto" | "approval";
 export type SettingsMode = "beginner" | "advanced";
 export type RunStatus =
@@ -16,6 +17,7 @@ export interface Thread {
   id: string;
   title: string;
   mode: Mode;
+  interaction_mode: InteractionMode;
   agent_profile_id: string | null;
   agent_profile_version: number | null;
   plan_mode: PlanMode;
@@ -191,6 +193,23 @@ export interface AgentDefaults {
   context_token_budget: number;
   observation_char_budget: number;
 }
+export interface ChatDefaults {
+  default_provider_id: string | null;
+  default_mode: InteractionMode;
+  system_prompt: string;
+  stream_enabled: boolean;
+  recent_message_limit: number;
+  context_token_limit: number;
+  attachment_char_limit: number;
+  sidebar_expanded: boolean;
+  audit_expanded: boolean;
+  theme: "light";
+}
+export type ChatEvent =
+  | { type: "reply_start"; data: { request_id: string; user_message: Message } }
+  | { type: "text_delta"; data: { text: string } }
+  | { type: "reply_complete"; data: { message: Message } }
+  | { type: "reply_failed"; data: { message: string; retryable: boolean } };
 export type CompletionMode = "advisory" | "structured" | "evidence";
 export interface AgentProfileSummary {
   profile_id: string;

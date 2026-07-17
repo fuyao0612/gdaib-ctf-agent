@@ -25,6 +25,9 @@ def wait_for_terminal(client, run_id):
 
 @pytest.fixture
 def provider_server():
+    chat_payloads = []
+    chat_attempts = {}
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             encoded = json.dumps({"data": [{"id": "test-model"}, {"id": "test-model-alt"}]}).encode()
@@ -38,7 +41,22 @@ def provider_server():
             length = int(self.headers.get("content-length", "0"))
             body = json.loads(self.rfile.read(length))
             prompt = body["messages"][-1]["content"]
-            if '"status":"ok"' in prompt:
+            if "response_format" not in body:
+                chat_payloads.append(body)
+                chat_attempts[prompt] = chat_attempts.get(prompt, 0) + 1
+                if prompt == "先失败再重试" and chat_attempts[prompt] <= 2:
+                    self.send_response(503)
+                    self.end_headers()
+                    return
+                user_history = [
+                    item["content"] for item in body["messages"] if item["role"] == "user"
+                ]
+                response_content = (
+                    "你好，我是御网智元。"
+                    if len(user_history) == 1
+                    else f"我记得你先说了：{user_history[0]}"
+                )
+            elif '"status":"ok"' in prompt:
                 response_content = '{"status":"ok"}'
             else:
                 context = json.loads(prompt)
@@ -125,7 +143,12 @@ def provider_server():
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    yield f"http://127.0.0.1:{server.server_port}/v1"
+    class ProviderURL(str):
+        pass
+
+    url = ProviderURL(f"http://127.0.0.1:{server.server_port}/v1")
+    url.chat_payloads = chat_payloads
+    yield url
     server.shutdown()
     thread.join(timeout=2)
 
@@ -184,7 +207,7 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
     app.state.registry.register(FakeEchoTool())
     with TestClient(app) as client:
         client.headers.update({"Authorization": "Bearer test-admin-token"})
-        assert client.get("/api/v1/health").json()["version"] == "0.4.2"
+        assert client.get("/api/v1/health").json()["version"] == "0.5.0"
         provider = create_provider(client, provider_server)
         thread = client.post("/api/v1/threads", json={"title": "集成任务", "mode": "normal"}).json()
         uploaded = client.post(
@@ -230,6 +253,130 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         detail = reopened.get(f"/api/v1/threads/{thread['id']}").json()
         assert detail["messages"] and detail["runs"] and detail["artifacts"]
         assert detail["messages"][-1]["role"] == "assistant"
+
+
+def test_plain_chat_is_natural_persistent_and_does_not_create_run(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        provider = create_provider(client, provider_server)
+        thread = client.post("/api/v1/threads", json={"title": "新对话"}).json()
+        assert thread["interaction_mode"] == "chat"
+
+        first_request = str(uuid4())
+        first = client.post(
+            f"/api/v1/threads/{thread['id']}/chat",
+            json={
+                "request_id": first_request,
+                "content": "你好",
+                "provider_config_id": provider["id"],
+            },
+        )
+        assert first.status_code == 200
+        assert "event: reply_start" in first.text
+        assert "event: text_delta" in first.text
+        assert "你好，我是御网智元。" in first.text
+        assert "event: reply_complete" in first.text
+
+        second = client.post(
+            f"/api/v1/threads/{thread['id']}/chat",
+            json={
+                "request_id": str(uuid4()),
+                "content": "我刚才说了什么？",
+                "provider_config_id": provider["id"],
+            },
+        )
+        assert "我记得你先说了：你好" in second.text
+        detail = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert detail["runs"] == []
+        assert [item["role"] for item in detail["messages"]] == [
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+        ]
+        assert detail["title"] == "你好"
+        assert all("response_format" not in item for item in provider_server.chat_payloads)
+        assert provider_server.chat_payloads[0]["stream"] is True
+        assert [
+            item["content"]
+            for item in provider_server.chat_payloads[1]["messages"]
+            if item["role"] == "user"
+        ] == ["你好", "我刚才说了什么？"]
+
+        defaults = client.get("/api/v1/admin/settings/chat").json()
+        saved_defaults = client.put(
+            "/api/v1/admin/settings/chat",
+            json={
+                **defaults,
+                "default_provider_id": provider["id"],
+                "stream_enabled": False,
+                "sidebar_expanded": False,
+            },
+        )
+        assert saved_defaults.status_code == 200
+        uploaded = client.post(
+            f"/api/v1/threads/{thread['id']}/artifacts",
+            files={"upload": ("notes.txt", "附件里的真实文本".encode(), "text/plain")},
+        ).json()
+        attached = client.post(
+            f"/api/v1/threads/{thread['id']}/chat",
+            json={
+                "request_id": str(uuid4()),
+                "content": "解释附件",
+                "artifact_ids": [uploaded["id"]],
+            },
+        )
+        assert "event: reply_complete" in attached.text
+        assert provider_server.chat_payloads[-1]["stream"] is False
+        assert "[不可信附件：notes.txt]" in provider_server.chat_payloads[-1]["messages"][-1][
+            "content"
+        ]
+        assert "附件里的真实文本" in provider_server.chat_payloads[-1]["messages"][-1][
+            "content"
+        ]
+
+    with TestClient(app) as reopened:
+        reopened.headers.update({"Authorization": "Bearer test-admin-token"})
+        restored = reopened.get(f"/api/v1/threads/{thread['id']}").json()
+        assert len(restored["messages"]) == 6
+        assert restored["runs"] == []
+
+
+def test_chat_failure_retry_is_idempotent_and_never_saves_partial_reply(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        provider = create_provider(client, provider_server)
+        thread = client.post("/api/v1/threads", json={"title": "新对话"}).json()
+        request_id = str(uuid4())
+        payload = {
+            "request_id": request_id,
+            "content": "先失败再重试",
+            "provider_config_id": provider["id"],
+        }
+
+        failed = client.post(f"/api/v1/threads/{thread['id']}/chat", json=payload)
+        assert "event: reply_failed" in failed.text
+        detail = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert [item["role"] for item in detail["messages"]] == ["user"]
+
+        retried = client.post(
+            f"/api/v1/threads/{thread['id']}/chat",
+            json={**payload, "retry": True},
+        )
+        assert "event: reply_complete" in retried.text
+        duplicate = client.post(
+            f"/api/v1/threads/{thread['id']}/chat",
+            json={**payload, "retry": True},
+        )
+        assert "event: reply_complete" in duplicate.text
+        detail = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert [item["role"] for item in detail["messages"]] == ["user", "assistant"]
 
 
 def test_unconfigured_provider_and_admin_auth_are_explicit(tmp_path):
@@ -669,7 +816,7 @@ def test_competition_lock_stop_openapi_and_upload_policy(tmp_path):
             files={"upload": ("unsafe.exe", b"x", "application/octet-stream")},
         )
         assert denied.status_code == 400
-        assert client.get("/api/v1/openapi.json").json()["info"]["version"] == "0.4.2"
+        assert client.get("/api/v1/openapi.json").json()["info"]["version"] == "0.5.0"
 
 
 def test_service_lifespan_resumes_active_run_from_checkpoint(tmp_path, provider_server):

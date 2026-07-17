@@ -96,25 +96,26 @@ export function RunProgress({ run, events, audit }: Omit<Props, "report" | "mess
           秒
         </time>
       </header>
-      <ol>
-        {phases.map((phase, index) => (
-          <li className={phase.state} key={phase.label}>
-            <span>{phase.state === "completed" ? "✓" : index + 1}</span>
-            {phase.label}
-          </li>
-        ))}
-      </ol>
       <p>{publicProgressSummary(events)}</p>
-      <dl className="run-resource-grid">
-        <div><dt>Provider / 模型</dt><dd>{audit?.run.provider ?? run.provider} / {model}</dd></div>
-        <div><dt>Agent 配置</dt><dd>{audit?.profile ? `${audit.profile.name} · v${audit.profile.version}` : `v${run.agent_profile_version ?? "?"}`}</dd></div>
-        <div><dt>模型调用</dt><dd>{audit?.usage.model_calls ?? 0} / {audit?.limits.max_model_calls ?? "-"}</dd></div>
-        <div><dt>工具调用</dt><dd>{audit?.usage.tool_calls ?? 0} / {audit?.limits.max_tool_calls ?? "-"}</dd></div>
-        <div><dt>Token</dt><dd>{tokenUsageLabel(audit)}</dd></div>
-        <div><dt>步骤预算</dt><dd>{audit?.usage.steps ?? 0} / {audit?.limits.max_steps ?? "-"}</dd></div>
-        <div><dt>费用预算</dt><dd>{audit?.usage.model_cost ?? 0} / {audit?.limits.max_model_cost ?? "-"}</dd></div>
-        <div><dt>时间预算</dt><dd>{elapsedSeconds(run, events, audit, now || (Number.isFinite(latestKnownTime) ? latestKnownTime : 0))} / {audit?.limits.max_duration_seconds ?? "-"} 秒</dd></div>
-      </dl>
+      <details className="run-details">
+        <summary>查看执行阶段与资源</summary>
+        <ol>
+          {phases.map((phase, index) => (
+            <li className={phase.state} key={phase.label}>
+              <span>{phase.state === "completed" ? "✓" : index + 1}</span>
+              {phase.label}
+            </li>
+          ))}
+        </ol>
+        <dl className="run-resource-grid">
+          <div><dt>Provider / 模型</dt><dd>{audit?.run.provider ?? run.provider} / {model}</dd></div>
+          <div><dt>Agent 配置</dt><dd>{audit?.profile ? `${audit.profile.name} · v${audit.profile.version}` : `v${run.agent_profile_version ?? "?"}`}</dd></div>
+          <div><dt>模型调用</dt><dd>{audit?.usage.model_calls ?? 0} / {audit?.limits.max_model_calls ?? "-"}</dd></div>
+          <div><dt>工具调用</dt><dd>{audit?.usage.tool_calls ?? 0} / {audit?.limits.max_tool_calls ?? "-"}</dd></div>
+          <div><dt>Token</dt><dd>{tokenUsageLabel(audit)}</dd></div>
+          <div><dt>步骤预算</dt><dd>{audit?.usage.steps ?? 0} / {audit?.limits.max_steps ?? "-"}</dd></div>
+        </dl>
+      </details>
     </section>
   );
 }
@@ -136,26 +137,28 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
         <div><span aria-hidden="true">{run.status === "completed" ? "✓" : run.status.startsWith("waiting_") || run.status === "paused" ? "…" : "!"}</span><h3>{copy.title}</h3></div>
         <small>{verifiedLabel(run)}</small>
       </header>
-      <div className="result-answer">
-        <strong>最终答案</strong>
-        <pre>{finalAnswer(run, report, messages)}</pre>
-      </div>
-      <dl className="result-details">
-        <div><dt>证据摘要</dt><dd>{evidenceSummary.length ? evidenceSummary.join("；") : "暂无可展示证据"}</dd></div>
-        <div><dt>消耗</dt><dd>模型 {audit?.usage.model_calls ?? 0} 次 · 工具 {audit?.usage.tool_calls ?? 0} 次 · Token {tokenUsageLabel(audit)} · 费用 {audit?.usage.model_cost ?? 0} · {elapsedSeconds(run, events, audit)} 秒</dd></div>
-        <div><dt>{run.status === "completed" ? "完成说明" : "原因"}</dt><dd>{reason}</dd></div>
-        <div><dt>建议下一步</dt><dd>{copy.next}</dd></div>
-      </dl>
-      {report && (
-        <details className="full-report">
-          <summary>查看完整报告</summary>
+      <p className="result-next">{copy.next}</p>
+      <details className="full-report">
+        <summary>展开结论、证据与任务报告</summary>
+        <div className="result-answer">
+          <strong>结论</strong>
+          <pre>{finalAnswer(run, report, messages)}</pre>
+        </div>
+        <dl className="result-details">
+          <div><dt>证据摘要</dt><dd>{evidenceSummary.length ? evidenceSummary.join("；") : "暂无可展示证据"}</dd></div>
+          <div><dt>消耗</dt><dd>模型 {audit?.usage.model_calls ?? 0} 次 · 工具 {audit?.usage.tool_calls ?? 0} 次 · Token {tokenUsageLabel(audit)} · {elapsedSeconds(run, events, audit)} 秒</dd></div>
+          <div><dt>{run.status === "completed" ? "完成说明" : "原因"}</dt><dd>{reason}</dd></div>
+        </dl>
+        {report && (
+          <>
           <div className="report-downloads">
             <a href={api.reportUrl(run.id, "md")}>下载 Markdown</a>
             <a href={api.reportUrl(run.id, "json")}>下载 JSON</a>
           </div>
           <ReactMarkdown>{report.markdown}</ReactMarkdown>
-        </details>
-      )}
+          </>
+        )}
+      </details>
     </section>
   );
 }

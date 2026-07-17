@@ -10,11 +10,13 @@ import {
   StatusBadge,
 } from "./components/RunViews";
 import ThreadSidebar from "./components/ThreadSidebar";
+import { useChatActions } from "./hooks/useChatActions";
 import { useWorkbenchData } from "./hooks/useWorkbenchData";
 import { useRunControlActions } from "./hooks/useRunControlActions";
 import type {
   AgentPlan,
   Artifact,
+  InteractionMode,
   Mode,
   PlanMode,
   Thread,
@@ -37,6 +39,7 @@ export default function App() {
     agentProfiles,
     selectedProfileId,
     selectedProviderId,
+    chatDefaults,
     setDetail,
     setEvents,
     setActiveRun,
@@ -58,11 +61,16 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [newTitle, setNewTitle] = useState("新的安全任务");
+  const [newTitle, setNewTitle] = useState("新对话");
   const [newMode, setNewMode] = useState<Mode>("normal");
   const [newPlanMode, setNewPlanMode] = useState<PlanMode>("approval");
+  const [newInteractionMode, setNewInteractionMode] =
+    useState<InteractionMode>("chat");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [sidebarExpanded, setSidebarExpanded] = useState(
+    () => window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false",
+  );
   const [initialSetup, setInitialSetup] = useState(false);
   const [supplementalInput, setSupplementalInput] = useState("");
   const runControls = useRunControlActions({
@@ -73,6 +81,7 @@ export default function App() {
     loadControl,
     connect,
   });
+  const chat = useChatActions({ detail, setDetail, loadThreads, setError });
 
   useEffect(() => {
     void bootstrap()
@@ -95,6 +104,21 @@ export default function App() {
     return () => window.removeEventListener("keydown", closeOverlay);
   }, []);
 
+  useEffect(() => {
+    window.localStorage?.setItem(
+      "yuwang.sidebarExpanded",
+      String(sidebarExpanded),
+    );
+  }, [sidebarExpanded]);
+
+  useEffect(() => {
+    if (!chatDefaults) return;
+    setNewInteractionMode(chatDefaults.default_mode);
+    setSidebarExpanded(chatDefaults.sidebar_expanded);
+    if (detail?.interaction_mode === "agent")
+      setInspectorOpen(chatDefaults.audit_expanded);
+  }, [chatDefaults, detail?.interaction_mode]);
+
   async function createThread() {
     setBusy(true);
     setError("");
@@ -104,6 +128,7 @@ export default function App() {
         newMode,
         selectedProfileId,
         newPlanMode,
+        newInteractionMode,
       );
       await loadThreads();
       await selectThread(value.id);
@@ -161,6 +186,31 @@ export default function App() {
       setError(String(cause));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function send() {
+    if (!detail || !message.trim() || !selectedProviderId) return;
+    if (detail.interaction_mode === "agent") {
+      await sendAndRun();
+      return;
+    }
+    const content = message.trim();
+    const artifacts = pendingArtifacts;
+    setMessage("");
+    setPendingArtifacts([]);
+    await chat.send(content, artifacts, selectedProviderId);
+  }
+
+  async function switchInteractionMode(value: InteractionMode) {
+    if (!detail || detail.interaction_mode === value) return;
+    setDetail({ ...detail, interaction_mode: value });
+    try {
+      await api.updateThread(detail.id, { interaction_mode: value });
+      await loadThreads();
+    } catch (cause) {
+      setDetail(detail);
+      setError(String(cause));
     }
   }
 
@@ -313,6 +363,7 @@ export default function App() {
       ].includes(activeRun.status),
   );
   const inputLocked = detail?.mode === "competition" && running;
+  const interactionMode = detail?.interaction_mode ?? "chat";
   const currentProfile = agentProfiles.find(
     (value) => value.profile_id === detail?.agent_profile_id,
   );
@@ -327,7 +378,9 @@ export default function App() {
   );
 
   return (
-    <div className="shell">
+    <div
+      className={`shell ${sidebarExpanded ? "sidebar-expanded" : "sidebar-collapsed"}`}
+    >
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark">御</span>
@@ -335,9 +388,16 @@ export default function App() {
             <h1>御网智元</h1>
             <p>安全 Agent 工作台</p>
           </div>
+          <button
+            className="sidebar-close"
+            aria-label="收起侧栏"
+            onClick={() => setSidebarExpanded(false)}
+          >
+            ‹
+          </button>
         </div>
         <button className="primary full" onClick={() => setCreateOpen(true)}>
-          ＋ 新建任务
+          ＋ 新建对话
         </button>
         <button
           className="settings-button full"
@@ -345,12 +405,13 @@ export default function App() {
         >
           ⚙ 设置中心
         </button>
-        <div className="section-label">任务线程</div>
+        <div className="section-label">历史对话</div>
         <ThreadSidebar
           threads={threads}
           selectedId={detail?.id}
           onSelect={(id) => {
             setError("");
+            chat.reset();
             setPendingArtifacts([]);
             void selectThread(id);
           }}
@@ -369,22 +430,40 @@ export default function App() {
 
       <main className="workspace">
         <header className="topbar">
-          <div className="topbar-title" data-testid="thread-heading">
-            <span className="eyebrow">THREAD</span>
-            <h2>{detail?.title ?? "选择或创建一个任务"}</h2>
-            {detail && (
-              <small>
-                {currentProfile?.name ?? "历史 Agent 配置"} · v
-                {detail.agent_profile_version ?? "?"} ·{" "}
-                {currentProfile?.completion_mode ?? activeRun?.completion_mode}
-              </small>
+          <div className="topbar-heading">
+            {!sidebarExpanded && (
+              <button
+                className="navigation-toggle"
+                aria-label="展开侧栏"
+                onClick={() => setSidebarExpanded(true)}
+              >
+                ☰
+              </button>
             )}
+            <div className="topbar-title" data-testid="thread-heading">
+              <span className="eyebrow">THREAD</span>
+              <h2>{detail?.title ?? "选择或创建一个对话"}</h2>
+              {detail && (
+                <small>
+                  {interactionMode === "chat"
+                    ? "自然语言对话"
+                    : `${currentProfile?.name ?? "Agent 配置"} · v${detail.agent_profile_version ?? "?"}`}
+                </small>
+              )}
+            </div>
           </div>
           <div className="topbar-actions">
             {detail && (
               <div className="top-meta" data-testid="thread-status">
-                <span className="mode">{detail.mode}</span>
-                {activeRun && (
+                <span className="mode">
+                  {interactionMode === "chat" ? "对话" : "Agent 任务"}
+                </span>
+                {interactionMode === "agent" && (
+                  <span className="mode">
+                    {detail.mode === "competition" ? "竞赛限制" : "普通执行"}
+                  </span>
+                )}
+                {interactionMode === "agent" && activeRun && (
                   <>
                     <span className="mode">{activeRun.provider}</span>
                     <span className="mode">{activeRun.evidence_level}</span>
@@ -393,26 +472,27 @@ export default function App() {
                 )}
               </div>
             )}
-            <button
+            {interactionMode === "agent" && activeRun && (
+              <button
               className="inspector-toggle"
               aria-expanded={inspectorOpen}
               aria-controls="run-inspector"
               onClick={() => setInspectorOpen((value) => !value)}
             >
               运行审计
-            </button>
+              </button>
+            )}
           </div>
         </header>
         {!detail ? (
           <section className="empty">
             <div className="radar">⌁</div>
-            <h2>从一个可审计的任务开始</h2>
+            <h2>开始一段新对话</h2>
             <p>
-              创建对话，上传安全样本，并实时观察 Agent
-              的结构化计划、工具证据和策略判断。
+              日常问题直接对话；需要计划、工具和验证时，再切换到 Agent 任务。
             </p>
             <button className="primary" onClick={() => setCreateOpen(true)}>
-              创建第一个任务
+              创建第一个对话
             </button>
           </section>
         ) : (
@@ -425,6 +505,8 @@ export default function App() {
               audit={audit}
               control={control}
               busy={busy}
+              chatDraft={chat.draft}
+              chatFailure={chat.failure}
               onClarify={(content, version) =>
                 void submitClarification(content, version)
               }
@@ -440,6 +522,7 @@ export default function App() {
             />
             <MessageComposer
               activeRun={activeRun}
+              interactionMode={interactionMode}
               events={events}
               message={message}
               supplementalInput={supplementalInput}
@@ -451,15 +534,21 @@ export default function App() {
               advisoryMode={currentProfile?.completion_mode === "advisory"}
               inputLocked={inputLocked}
               running={running}
+              chatGenerating={chat.generating}
+              chatCanRetry={Boolean(chat.failure?.retryable)}
               busy={busy}
               onMessageChange={setMessage}
+              onInteractionModeChange={(value) => void switchInteractionMode(value)}
               onSupplementChange={setSupplementalInput}
               onProviderChange={setSelectedProviderId}
               onPatternChange={setSuccessPattern}
               onUpload={(file) => void upload(file)}
-              onSend={() => void sendAndRun()}
-              onStop={() => void stop()}
+              onSend={() => void send()}
+              onStop={() =>
+                chat.generating ? chat.stop() : void stop()
+              }
               onRetry={() => void retry()}
+              onChatRetry={() => void chat.retry()}
               onSubmitSupplement={() => void submitSupplement()}
             />
           </>
@@ -471,7 +560,8 @@ export default function App() {
         )}
       </main>
 
-      <InspectorPanel
+      {interactionMode === "agent" && activeRun && (
+        <InspectorPanel
         open={inspectorOpen}
         metrics={metrics}
         audit={audit}
@@ -482,19 +572,22 @@ export default function App() {
         onToggleMemory={(value) => void toggleMemory(value)}
         onDeleteMemory={(id) => void removeMemory(id)}
         onClearMemories={() => void clearMemory()}
-      />
+        />
+      )}
 
       {createOpen && (
         <CreateThreadDialog
           title={newTitle}
           mode={newMode}
           planMode={newPlanMode}
+          interactionMode={newInteractionMode}
           profileId={selectedProfileId}
           profiles={agentProfiles}
           busy={busy}
           onTitleChange={setNewTitle}
           onModeChange={setNewMode}
           onPlanModeChange={setNewPlanMode}
+          onInteractionModeChange={setNewInteractionMode}
           onProfileChange={(id, mode) => {
             setSelectedProfileId(id);
             if (mode) setNewMode(mode);

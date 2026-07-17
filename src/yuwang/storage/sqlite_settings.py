@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from yuwang.settings.models import AgentDefaults, ProviderConfig
+from yuwang.settings.models import AgentDefaults, ChatDefaults, ProviderConfig
 from yuwang.settings.profiles import AgentProfileVersion
 from yuwang.storage.sqlite_common import SQLiteStore
 
@@ -58,6 +58,20 @@ class SQLiteSettingsStore(SQLiteStore):
         with self.connect() as db:
             db.execute(
                 "INSERT OR REPLACE INTO app_settings(key,data) VALUES('agent_defaults',?)",
+                (value.model_dump_json(),),
+            )
+
+    def get_chat_defaults(self) -> ChatDefaults:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT data FROM app_settings WHERE key='chat_defaults'"
+            ).fetchone()
+        return ChatDefaults.model_validate_json(row["data"]) if row else ChatDefaults()
+
+    def save_chat_defaults(self, value: ChatDefaults) -> None:
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO app_settings(key,data) VALUES('chat_defaults',?)",
                 (value.model_dump_json(),),
             )
 

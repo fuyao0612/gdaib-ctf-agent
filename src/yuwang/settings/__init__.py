@@ -2,6 +2,7 @@
 
 from .models import (
     AgentDefaults,
+    ChatDefaults,
     ProviderConfig,
     ProviderConfigInput,
     ProviderConfigView,
@@ -19,6 +20,7 @@ from .service import SettingsService
 
 __all__ = [
     "AgentDefaults",
+    "ChatDefaults",
     "AgentProfileExport",
     "AgentProfileInput",
     "AgentProfileService",

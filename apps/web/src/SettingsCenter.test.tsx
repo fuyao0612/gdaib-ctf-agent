@@ -85,7 +85,7 @@ describe("SettingsCenter", () => {
               provider: false,
               agent: false,
             },
-            version: "0.4.2",
+            version: "0.5.0",
           });
         if (
           input.endsWith("/admin/session") &&

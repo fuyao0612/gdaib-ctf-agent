@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from enum import StrEnum
 from typing import Any, Protocol, TypeVar
 
@@ -53,7 +53,7 @@ class ProviderError(RuntimeError):
 
 
 class ModelProvider(Protocol):
-    """Agent 需要的最小模型能力：把提示词转换为通过 Pydantic 校验的对象。"""
+    """模型能力同时覆盖自由文本聊天与 Agent 结构化输出。"""
 
     name: str
 
@@ -66,6 +66,22 @@ class ModelProvider(Protocol):
         attempt: int = 1,
         request_budget: int | None = None,
     ) -> T: ...
+
+    async def generate_text(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        system_prompt: str,
+        timeout: float | None = None,
+    ) -> str: ...
+
+    def stream_text(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        system_prompt: str,
+        timeout: float | None = None,
+    ) -> AsyncIterator[str]: ...
 
 
 class ProviderChain:
@@ -153,6 +169,53 @@ class ProviderChain:
             last_error.metrics = metrics
             raise last_error
         raise ProviderError(ProviderErrorCategory.SERVICE, "没有可用 Provider")
+
+    async def generate_text(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        system_prompt: str,
+        timeout: float | None = None,
+    ) -> str:
+        last_error: ProviderError | None = None
+        for provider in self.providers:
+            try:
+                result = await provider.generate_text(
+                    messages, system_prompt=system_prompt, timeout=timeout
+                )
+                self.last_call_metrics = getattr(provider, "last_call_metrics", None)
+                return result
+            except ProviderError as exc:
+                last_error = exc
+                if exc.category.value not in set(getattr(provider, "fallback_on", [])):
+                    break
+        raise last_error or ProviderError(ProviderErrorCategory.SERVICE, "没有可用 Provider")
+
+    async def stream_text(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        system_prompt: str,
+        timeout: float | None = None,
+    ) -> AsyncIterator[str]:
+        last_error: ProviderError | None = None
+        for provider in self.providers:
+            emitted = False
+            try:
+                async for chunk in provider.stream_text(
+                    messages, system_prompt=system_prompt, timeout=timeout
+                ):
+                    emitted = True
+                    yield chunk
+                self.last_call_metrics = getattr(provider, "last_call_metrics", None)
+                return
+            except ProviderError as exc:
+                last_error = exc
+                if emitted or exc.category.value not in set(
+                    getattr(provider, "fallback_on", [])
+                ):
+                    break
+        raise last_error or ProviderError(ProviderErrorCategory.SERVICE, "没有可用 Provider")
 
 
 class ConnectionProbe(BaseModel):
@@ -262,6 +325,184 @@ class OpenAICompatibleProvider:
                     raise
                 await asyncio.sleep(min(0.25 * (2**request_index), 4.0))
         raise last_error or ProviderError(ProviderErrorCategory.SERVICE, "Provider 调用失败")
+
+    async def generate_text(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        system_prompt: str,
+        timeout: float | None = None,
+    ) -> str:
+        """自由文本聊天不发送 response_format，兼容国内 OpenAI 协议服务。"""
+
+        effective_timeout = timeout or self.timeout_seconds
+        started = time.perf_counter()
+        last_error: ProviderError | None = None
+        for request_index in range(self.max_retries + 1):
+            try:
+                content, usage = await self._request_text(
+                    messages, system_prompt, effective_timeout
+                )
+                self.last_call_metrics = self._metrics(request_index + 1, started, usage)
+                return content
+            except ProviderError as exc:
+                last_error = exc
+                if not exc.retryable or request_index >= self.max_retries:
+                    metrics = self._metrics(request_index + 1, started, None)
+                    self.last_call_metrics = metrics
+                    exc.metrics = metrics
+                    raise
+                await asyncio.sleep(min(0.25 * (2**request_index), 4.0))
+        raise last_error or ProviderError(ProviderErrorCategory.SERVICE, "Provider 调用失败")
+
+    async def stream_text(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        system_prompt: str,
+        timeout: float | None = None,
+    ) -> AsyncIterator[str]:
+        """优先读取标准 SSE；厂商忽略 stream 时自动接受其完整 JSON 响应。"""
+
+        effective_timeout = timeout or self.timeout_seconds
+        started = time.perf_counter()
+        self.last_call_metrics = None
+        emitted = False
+        try:
+            async for chunk, usage in self._request_stream(
+                messages, system_prompt, effective_timeout
+            ):
+                if chunk:
+                    emitted = True
+                    yield chunk
+                if usage is not None:
+                    self.last_call_metrics = self._metrics(1, started, usage)
+            if self.last_call_metrics is None:
+                self.last_call_metrics = self._metrics(1, started, None)
+        except ProviderError:
+            if emitted:
+                raise
+            # 部分兼容接口不接受 stream 参数；只在尚未输出文本时安全降级。
+            content = await self.generate_text(
+                messages, system_prompt=system_prompt, timeout=effective_timeout
+            )
+            yield content
+
+    def _chat_payload(
+        self,
+        messages: list[dict[str, str]],
+        system_prompt: str,
+        *,
+        stream: bool,
+    ) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                *messages,
+            ],
+            "stream": stream,
+            **self.request_overrides,
+        }
+
+    async def _request_text(
+        self,
+        messages: list[dict[str, str]],
+        system_prompt: str,
+        timeout: float,
+    ) -> tuple[str, dict[str, int] | None]:
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                verify=True,
+                follow_redirects=False,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=self._chat_payload(messages, system_prompt, stream=False),
+                )
+        except httpx.TimeoutException as exc:
+            raise ProviderError(ProviderErrorCategory.TIMEOUT, "模型请求超时", True) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(ProviderErrorCategory.SERVICE, "模型网络请求失败") from exc
+        self._raise_for_status(response.status_code)
+        return self._parse_text_response(response.json())
+
+    async def _request_stream(
+        self,
+        messages: list[dict[str, str]],
+        system_prompt: str,
+        timeout: float,
+    ) -> AsyncIterator[tuple[str, dict[str, int] | None]]:
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                verify=True,
+                follow_redirects=False,
+                transport=self._transport,
+            ) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=self._chat_payload(messages, system_prompt, stream=True),
+                ) as response:
+                    self._raise_for_status(response.status_code)
+                    if "text/event-stream" not in response.headers.get("content-type", ""):
+                        body = json.loads((await response.aread()).decode())
+                        content, complete_usage = self._parse_text_response(body)
+                        yield content, complete_usage
+                        return
+                    usage: dict[str, int] | None = None
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if not data or data == "[DONE]":
+                            continue
+                        try:
+                            item = json.loads(data)
+                            usage = self._parse_usage(item.get("usage")) or usage
+                            delta = item["choices"][0].get("delta", {}).get("content", "")
+                        except (KeyError, TypeError, ValueError) as exc:
+                            raise ProviderError(
+                                ProviderErrorCategory.INVALID_OUTPUT,
+                                "模型流式响应格式不兼容",
+                            ) from exc
+                        if isinstance(delta, str) and delta:
+                            yield delta, None
+                    yield "", usage
+        except httpx.TimeoutException as exc:
+            raise ProviderError(ProviderErrorCategory.TIMEOUT, "模型请求超时", True) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(ProviderErrorCategory.SERVICE, "模型网络请求失败") from exc
+
+    @classmethod
+    def _parse_text_response(
+        cls, body: Any
+    ) -> tuple[str, dict[str, int] | None]:
+        try:
+            message = body["choices"][0]["message"]
+            if message.get("refusal"):
+                raise ProviderError(ProviderErrorCategory.REFUSAL, "模型出于安全策略拒绝请求")
+            content = message["content"]
+            if not isinstance(content, str) or not content.strip():
+                raise TypeError("content is empty")
+            return content, cls._parse_usage(body.get("usage"))
+        except ProviderError:
+            raise
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProviderError(
+                ProviderErrorCategory.INVALID_OUTPUT, "模型未返回可用的自然语言文本"
+            ) from exc
 
     async def _request(
         self, prompt: str, output_type: type[T], timeout: float
