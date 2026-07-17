@@ -1,5 +1,19 @@
 # 升级指南
 
+## 从 v0.4.2 升级到 v0.5.0
+
+v0.5.0 新增独立普通聊天链与 `Thread.interaction_mode`。旧 Thread 缺少该字段时继续按
+Agent 任务读取，避免把历史运行误当成普通聊天；新建对话默认使用 `chat`。SQLite 启动
+迁移新增聊天请求幂等记录，不删除或重写历史 Message、Run、Event、Report 和 Provider。
+
+1. 执行 `scripts/backup.ps1`，同时保留原 `.env`、SQLite 和附件目录。
+2. 拉取 v0.5.0 后运行 `.\yuwang.ps1 check`，再使用 `start -Build` 重建镜像。
+3. 登录设置中心，保存默认聊天模型与默认回复方式，重新执行一次真实 Provider 连接测试。
+4. 抽查旧 Agent Thread 的 Task Brief、计划、暂停状态、指引、报告和审计仍可读取。
+5. 新建“对话”，发送普通消息并刷新，确认助手消息存在且没有创建 Run；再切换 Agent 任务完成一次暂停/继续验收。
+
+回滚应用前必须恢复升级前一致性备份，不能用删除新表或清空数据库代替回滚。
+
 ## 从 v0.3 升级到 v0.4
 
 v0.4 保持原 SQLite JSON 行可读，并在模型校验时为新增的 Provider 连接状态、上下文计数和助手角色提供兼容默认值。原 v0.3 工作流节点列表会映射为最接近的 `direct`、`planned` 或 `verified` 安全预设。升级前必须备份 `data/` 与 `.env`，升级后应重新对默认 Provider 执行真实连接测试；在此之前就绪探针会保持 `not_ready`，避免把“已启用但不可用”的模型投入生产。

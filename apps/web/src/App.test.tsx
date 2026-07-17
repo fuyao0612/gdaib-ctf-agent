@@ -40,7 +40,7 @@ describe("App", () => {
               provider: true,
               agent: true,
             },
-            version: "0.4.2",
+            version: "0.5.0",
           });
         if (input.endsWith("/threads") && !init?.method)
           return Response.json([]);
@@ -149,7 +149,7 @@ describe("App", () => {
         const url = String(input);
         requestedUrls.push(url);
         if (url.endsWith("/setup/status"))
-          return Response.json({ configured: true, checks: {}, version: "0.4.2" });
+          return Response.json({ configured: true, checks: {}, version: "0.5.0" });
         if (url.endsWith("/admin/session"))
           return Response.json({ authenticated: true, csrf_token: "csrf-test" });
         if (url.endsWith("/providers"))
@@ -277,7 +277,7 @@ describe("App", () => {
             provider: true,
             agent: true,
           },
-          version: "0.4.2",
+          version: "0.5.0",
         });
       if (url.endsWith("/admin/session"))
         return Response.json({
@@ -410,7 +410,7 @@ describe("App", () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/setup/status"))
-        return Response.json({ configured: true, checks: {}, version: "0.4.2" });
+        return Response.json({ configured: true, checks: {}, version: "0.5.0" });
       if (url.endsWith("/admin/session"))
         return Response.json({ authenticated: true, csrf_token: "csrf-test" });
       if (url.endsWith("/providers")) return Response.json([]);

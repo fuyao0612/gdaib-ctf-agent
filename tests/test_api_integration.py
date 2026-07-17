@@ -207,7 +207,7 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
     app.state.registry.register(FakeEchoTool())
     with TestClient(app) as client:
         client.headers.update({"Authorization": "Bearer test-admin-token"})
-        assert client.get("/api/v1/health").json()["version"] == "0.4.2"
+        assert client.get("/api/v1/health").json()["version"] == "0.5.0"
         provider = create_provider(client, provider_server)
         thread = client.post("/api/v1/threads", json={"title": "集成任务", "mode": "normal"}).json()
         uploaded = client.post(
@@ -816,7 +816,7 @@ def test_competition_lock_stop_openapi_and_upload_policy(tmp_path):
             files={"upload": ("unsafe.exe", b"x", "application/octet-stream")},
         )
         assert denied.status_code == 400
-        assert client.get("/api/v1/openapi.json").json()["info"]["version"] == "0.4.2"
+        assert client.get("/api/v1/openapi.json").json()["info"]["version"] == "0.5.0"
 
 
 def test_service_lifespan_resumes_active_run_from_checkpoint(tmp_path, provider_server):
