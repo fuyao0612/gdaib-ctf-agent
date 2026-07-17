@@ -12,6 +12,10 @@ import type {
   Report,
   Run,
   RunAudit,
+  RunControl,
+  RunGuidance,
+  AgentPlan,
+  PlanRevision,
   SetupStatus,
   Thread,
   ThreadDetail,
@@ -57,10 +61,20 @@ export const api = {
   setupStatus: () => request<SetupStatus>("/setup/status"),
   listThreads: () => request<Thread[]>("/threads"),
   listAgentProfiles: () => request<AgentProfileSummary[]>("/agent-profiles"),
-  createThread: (title: string, mode: string, agentProfileId: string) =>
+  createThread: (
+    title: string,
+    mode: string,
+    agentProfileId: string,
+    planMode: "auto" | "approval",
+  ) =>
     request<Thread>("/threads", {
       method: "POST",
-      body: JSON.stringify({ title, mode, agent_profile_id: agentProfileId }),
+      body: JSON.stringify({
+        title,
+        mode,
+        agent_profile_id: agentProfileId,
+        plan_mode: planMode,
+      }),
     }),
   detail: (id: string) => request<ThreadDetail>(`/threads/${id}`),
   message: (id: string, content: string, artifactIds: string[]) =>
@@ -110,6 +124,67 @@ export const api = {
     request<Run>(`/runs/${id}/input`, {
       method: "POST",
       body: JSON.stringify({ content }),
+    }),
+  control: (id: string) => request<RunControl>(`/runs/${id}/control`),
+  pause: (id: string, requestId: string) =>
+    request<Run>(`/runs/${id}/pause`, {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId }),
+    }),
+  resume: (id: string, requestId: string) =>
+    request<Run>(`/runs/${id}/resume`, {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId }),
+    }),
+  queueGuidance: (id: string, content: string, requestId: string) =>
+    request<RunGuidance>(`/runs/${id}/guidance`, {
+      method: "POST",
+      body: JSON.stringify({ content, request_id: requestId }),
+    }),
+  submitClarification: (
+    id: string,
+    content: string,
+    expectedBriefVersion: number,
+    requestId: string,
+  ) =>
+    request<Run>(`/runs/${id}/clarification`, {
+      method: "POST",
+      body: JSON.stringify({
+        content,
+        expected_brief_version: expectedBriefVersion,
+        request_id: requestId,
+      }),
+    }),
+  editPlan: (
+    id: string,
+    plan: AgentPlan,
+    expectedVersion: number,
+    reason: string,
+    requestId: string,
+  ) =>
+    request<PlanRevision>(`/runs/${id}/plan`, {
+      method: "PUT",
+      body: JSON.stringify({
+        plan,
+        expected_version: expectedVersion,
+        reason,
+        request_id: requestId,
+      }),
+    }),
+  decidePlan: (
+    id: string,
+    decision: "approve" | "reject",
+    expectedVersion: number,
+    reason: string,
+    requestId: string,
+  ) =>
+    request<Run>(`/runs/${id}/plan/${decision}`, {
+      method: "POST",
+      body: JSON.stringify({
+        expected_version: expectedVersion,
+        reason,
+        request_id: requestId,
+      }),
     }),
   events: (id: string) => request<Event[]>(`/runs/${id}/events`),
   audit: (id: string) => request<RunAudit>(`/runs/${id}/audit`),

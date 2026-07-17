@@ -7,23 +7,24 @@ from typing import Any
 from uuid import UUID
 
 from yuwang.domain.models import (
+    ACTIVE_RUN_STATUSES,
     Event,
     EventType,
     EvidenceRecord,
     ModelCall,
     Run,
     RunCheckpoint,
-    RunStatus,
     TaskSpec,
     ToolCall,
 )
 from yuwang.settings.models import ProviderConfig
 from yuwang.settings.profiles import AgentProfileVersion
+from yuwang.storage.sqlite_control import SQLiteControlStore
 from yuwang.storage.sqlite_settings import SQLiteSettingsStore
 from yuwang.storage.sqlite_workspace import SQLiteWorkspaceStore
 
 
-class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore):
+class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlStore):
     """显式 SQLite 数据访问层。
 
     输入和输出均为领域模型，调用方看不到 SQL 行。未来替换数据库时实现
@@ -57,6 +58,14 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore):
                 CREATE TABLE IF NOT EXISTS agent_profile_versions(profile_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(profile_id,version));
                 CREATE TABLE IF NOT EXISTS run_agent_profiles(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, kind TEXT NOT NULL, enabled INTEGER NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS task_briefs(run_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(run_id,version));
+                CREATE TABLE IF NOT EXISTS run_plan_revisions(run_id TEXT NOT NULL, version INTEGER NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(run_id,version));
+                CREATE TABLE IF NOT EXISTS run_control_requests(run_id TEXT NOT NULL, request_id TEXT NOT NULL, action TEXT NOT NULL, payload_hash TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(run_id,request_id));
+                CREATE TABLE IF NOT EXISTS run_guidance(run_id TEXT NOT NULL, sequence INTEGER NOT NULL, request_id TEXT NOT NULL, data TEXT NOT NULL, consumed_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY(run_id,sequence), UNIQUE(run_id,request_id));
+                CREATE TABLE IF NOT EXISTS run_pause_requests(run_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, requested_at TEXT NOT NULL, consumed_at TEXT);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (4);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
                 """
@@ -64,9 +73,11 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore):
 
     def save_run(self, value: Run) -> Run:
         with self._lock, self.connect() as db:
-            if value.status in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}:
+            if value.status in ACTIVE_RUN_STATUSES:
                 active = db.execute(
-                    "SELECT id FROM runs WHERE thread_id=? AND status IN ('queued','running','waiting_input') AND id<>?",
+                    "SELECT id FROM runs WHERE thread_id=? AND status IN "
+                    "('queued','running','waiting_input','waiting_clarification',"
+                    "'waiting_approval','paused') AND id<>?",
                     (str(value.thread_id), str(value.id)),
                 ).fetchone()
                 if active:

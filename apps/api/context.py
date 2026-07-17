@@ -21,6 +21,7 @@ from apps.api.config import Settings
 from apps.api.schemas import MessageCreate, RunCreate
 from yuwang.agent import AgentEngine, AgentStateModel
 from yuwang.domain.models import (
+    ACTIVE_RUN_STATUSES,
     Message,
     MessageRole,
     Run,
@@ -181,7 +182,7 @@ class ApiContext:
         active = [
             run
             for run in self.repository.list_runs(thread_id)
-            if run.status in {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}
+            if run.status in ACTIVE_RUN_STATUSES
         ]
         if thread.mode == ThreadMode.COMPETITION and active:
             raise HTTPException(409, "competition 模式运行中禁止补充提示")

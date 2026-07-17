@@ -9,11 +9,18 @@ import type {
   Report,
   Run,
   RunAudit,
+  RunControl,
   Thread,
   ThreadDetail,
 } from "../types";
 
 const terminalStatuses = new Set(["completed", "failed", "stopped"]);
+const waitingEvents = new Set([
+  "run_waiting_input",
+  "clarification_requested",
+  "plan_approval_requested",
+  "run_paused",
+]);
 
 export function useWorkbenchData() {
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -22,12 +29,15 @@ export function useWorkbenchData() {
   const [activeRun, setActiveRun] = useState<Run | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [audit, setAudit] = useState<RunAudit | null>(null);
+  const [control, setControl] = useState<RunControl | null>(null);
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
   const [agentProfiles, setAgentProfiles] = useState<AgentProfileSummary[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState("");
   const sourceRef = useRef<EventSource | null>(null);
+  const streamRunRef = useRef("");
+  const latestSequenceRef = useRef(0);
 
   const loadThreads = useCallback(async () => {
     const values = await api.listThreads();
@@ -61,21 +71,39 @@ export function useWorkbenchData() {
     await Promise.all([loadProviders(), loadProfiles()]);
   }, [loadProviders, loadProfiles]);
 
+  const loadControl = useCallback(async (runId: string) => {
+    const value = await api.control(runId);
+    setControl(value);
+    return value;
+  }, []);
+
   const connect = useCallback(
     (run: Run) => {
       // SSE 只传递追加事件，刷新后的权威状态仍从持久化详情和审计接口恢复。
       sourceRef.current?.close();
-      const source = new EventSource(`/api/v1/runs/${run.id}/events/stream`);
+      if (streamRunRef.current !== run.id) {
+        streamRunRef.current = run.id;
+        latestSequenceRef.current = 0;
+      }
+      const source = new EventSource(
+        `/api/v1/runs/${run.id}/events/stream?after=${latestSequenceRef.current}`,
+      );
       sourceRef.current = source;
       source.onmessage = (messageEvent) => {
         const event = JSON.parse(messageEvent.data) as Event;
+        latestSequenceRef.current = Math.max(
+          latestSequenceRef.current,
+          event.sequence,
+        );
         setEvents((previous) =>
           previous.some((item) => item.sequence === event.sequence)
             ? previous
             : [...previous, event],
         );
         void api.audit(run.id).then(setAudit);
-        if (event.type === "run_waiting_input") {
+        void loadControl(run.id);
+        if (waitingEvents.has(event.type)) {
+          source.close();
           void api.detail(run.thread_id).then((value) => {
             setDetail(value);
             setActiveRun(value.runs.find((item) => item.id === run.id) ?? run);
@@ -98,13 +126,14 @@ export function useWorkbenchData() {
         if (source.readyState === EventSource.CLOSED) source.close();
       };
     },
-    [loadThreads],
+    [loadControl, loadThreads],
   );
 
   const selectThread = useCallback(
     async (id: string) => {
       sourceRef.current?.close();
       setReport(null);
+      setControl(null);
       window.localStorage?.setItem("yuwang.currentThreadId", id);
       const value = await api.detail(id);
       setDetail(value);
@@ -112,12 +141,21 @@ export function useWorkbenchData() {
       const run = value.runs.at(-1) ?? null;
       setActiveRun(run);
       if (!run) {
+        streamRunRef.current = "";
+        latestSequenceRef.current = 0;
         setEvents([]);
         setAudit(null);
         return;
       }
-      setEvents(await api.events(run.id));
-      setAudit(await api.audit(run.id));
+      const [runEvents, runAudit] = await Promise.all([
+        api.events(run.id),
+        api.audit(run.id),
+        loadControl(run.id),
+      ]);
+      streamRunRef.current = run.id;
+      latestSequenceRef.current = runEvents.at(-1)?.sequence ?? 0;
+      setEvents(runEvents);
+      setAudit(runAudit);
       if (["completed", "failed"].includes(run.status)) {
         setReport(await api.report(run.id).catch(() => null));
       } else if (["queued", "running"].includes(run.status)) {
@@ -125,7 +163,7 @@ export function useWorkbenchData() {
         connect(run);
       }
     },
-    [connect],
+    [connect, loadControl],
   );
 
   const bootstrap = useCallback(async () => {
@@ -155,6 +193,7 @@ export function useWorkbenchData() {
     activeRun,
     report,
     audit,
+    control,
     memories,
     providers,
     agentProfiles,
@@ -164,11 +203,13 @@ export function useWorkbenchData() {
     setEvents,
     setActiveRun,
     setReport,
+    setControl,
     setMemories,
     setSelectedProfileId,
     setSelectedProviderId,
     loadThreads,
     refreshSettings,
+    loadControl,
     selectThread,
     connect,
     bootstrap,

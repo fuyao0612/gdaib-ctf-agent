@@ -13,6 +13,13 @@ from jsonschema import ValidationError as JsonSchemaValidationError  # type: ign
 from jsonschema import validate as validate_json_schema
 
 from yuwang.agent.state import AgentDeclaredFailure, GraphState
+from yuwang.control import (
+    PlanRevision,
+    PlanSource,
+    TaskBrief,
+    TaskBriefDraft,
+    TaskBriefSource,
+)
 from yuwang.domain.models import (
     AgentAction,
     AgentPlan,
@@ -40,6 +47,63 @@ class WorkflowNodes:
         engine.events.emit(state.run_id, EventType.STATUS_UPDATE, "已载入不可变任务快照")
         return engine._result("ingest", state)
 
+    async def create_task_brief(self, raw: GraphState) -> GraphState:
+        """用正式 Provider 生成公开 Task Brief，服务端负责不可伪造的版本字段。"""
+
+        engine = self.engine
+        state = engine._state(raw)
+        draft = await engine._model_call(
+            state,
+            TaskBriefDraft,
+            "生成公开 Task Brief；信息不足时只提出必要澄清问题，不输出隐藏思维链",
+        )
+        previous = engine.repository.latest_task_brief(state.run_id)
+        brief = TaskBrief(
+            run_id=state.run_id,
+            version=1 if previous is None else previous.version + 1,
+            original_request=state.task.body,
+            source=(
+                TaskBriefSource.AGENT
+                if previous is None
+                else TaskBriefSource.USER_CLARIFICATION
+            ),
+            **draft.model_dump(),
+        )
+        engine.repository.save_task_brief(brief)
+        state.task_brief = brief
+        engine.events.emit(
+            state.run_id,
+            EventType.TASK_BRIEF_CREATED,
+            "Task Brief 已生成" if previous is None else "Task Brief 已根据补充更新",
+            {
+                "version": brief.version,
+                "needs_clarification": brief.needs_clarification,
+                "question_count": len(brief.clarification_questions),
+            },
+        )
+        return engine._result("create_task_brief", state)
+
+    async def await_clarification(self, raw: GraphState) -> GraphState:
+        engine = self.engine
+        state = engine._state(raw)
+        if not state.task_brief or not state.task_brief.needs_clarification:
+            raise AgentDeclaredFailure("Task Brief 未要求澄清")
+        run = engine.repository.get_run(state.run_id)
+        if not run:
+            raise AgentDeclaredFailure("运行记录不存在")
+        run.transition(RunStatus.WAITING_CLARIFICATION)
+        engine.repository.save_run(run)
+        engine.events.emit(
+            state.run_id,
+            EventType.CLARIFICATION_REQUESTED,
+            "任务信息不足，等待用户补充",
+            {
+                "brief_version": state.task_brief.version,
+                "question_count": len(state.task_brief.clarification_questions),
+            },
+        )
+        return engine._result("await_clarification", state)
+
     async def normalize_task(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
@@ -57,6 +121,15 @@ class WorkflowNodes:
         state = engine._state(raw)
         plan = await engine.planner.plan(state, cast(Any, engine._model_call))
         state.plan = AgentPlan.model_validate(plan)
+        previous = engine.repository.latest_plan_revision(state.run_id)
+        revision = PlanRevision(
+            run_id=state.run_id,
+            version=1 if previous is None else previous.version + 1,
+            plan=state.plan,
+            source=(PlanSource.AGENT_INITIAL if previous is None else PlanSource.AGENT_REPLAN),
+            based_on_version=previous.version if previous else None,
+        )
+        engine.repository.save_plan_revision(revision)
         engine._track_plan_progress(state)
         engine.events.emit(
             state.run_id,
@@ -64,7 +137,32 @@ class WorkflowNodes:
             state.plan.summary,
             {"steps": state.plan.steps, "success_approach": state.plan.success_approach},
         )
+        engine.events.emit(
+            state.run_id,
+            EventType.PLAN_CREATED,
+            "执行计划已生成" if previous is None else "执行计划已重新生成",
+            {"version": revision.version, "source": str(revision.source)},
+        )
         return engine._result("plan", state)
+
+    async def await_plan_approval(self, raw: GraphState) -> GraphState:
+        engine = self.engine
+        state = engine._state(raw)
+        if not state.plan:
+            raise AgentDeclaredFailure("没有可确认的计划")
+        run = engine.repository.get_run(state.run_id)
+        if not run:
+            raise AgentDeclaredFailure("运行记录不存在")
+        run.transition(RunStatus.WAITING_APPROVAL)
+        engine.repository.save_run(run)
+        revision = engine.repository.latest_plan_revision(state.run_id)
+        engine.events.emit(
+            state.run_id,
+            EventType.PLAN_APPROVAL_REQUESTED,
+            "计划等待用户确认",
+            {"plan_version": revision.version if revision else None},
+        )
+        return engine._result("await_plan_approval", state)
 
     async def select_action(self, raw: GraphState) -> GraphState:
         engine = self.engine
@@ -205,9 +303,19 @@ class WorkflowNodes:
     async def replan(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
+        state.guidance_replan_required = False
         state.replan_count += 1
         plan = await engine._model_call(state, AgentPlan, "根据历史观察重新规划")
         state.plan = AgentPlan.model_validate(plan)
+        previous = engine.repository.latest_plan_revision(state.run_id)
+        revision = PlanRevision(
+            run_id=state.run_id,
+            version=1 if previous is None else previous.version + 1,
+            plan=state.plan,
+            source=PlanSource.AGENT_REPLAN,
+            based_on_version=previous.version if previous else None,
+        )
+        engine.repository.save_plan_revision(revision)
         engine._track_plan_progress(state)
         engine.events.emit(
             state.run_id,
@@ -216,6 +324,26 @@ class WorkflowNodes:
             {"steps": state.plan.steps, "replan_count": state.replan_count},
         )
         return engine._result("replan", state)
+
+    def route_task_brief(self, raw: GraphState) -> str:
+        brief = self.engine._state(raw).task_brief
+        return "await_clarification" if brief and brief.needs_clarification else "normalize_task"
+
+    def route_plan(self, raw: GraphState) -> str:
+        state = self.engine._state(raw)
+        run = self.engine.repository.get_run(state.run_id)
+        if run and run.plan_mode == "approval" and not state.plan_approved:
+            return "await_plan_approval"
+        return "select_action"
+
+    def route_initial_planning(self, raw: GraphState) -> str:
+        """旧自动执行保留直接策略；计划确认模式始终生成可审核计划。"""
+
+        state = self.engine._state(raw)
+        run = self.engine.repository.get_run(state.run_id)
+        if run and run.plan_mode == "approval":
+            return "plan"
+        return "plan" if self.should_plan() else "select_action"
 
     async def verify(self, raw: GraphState) -> GraphState:
         engine = self.engine
@@ -309,6 +437,8 @@ class WorkflowNodes:
     def route_action(self, raw: GraphState) -> str:
         engine = self.engine
         state = engine._state(raw)
+        if state.guidance_replan_required:
+            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
         action = state.action
         if not action:
             return "fail"
@@ -341,20 +471,29 @@ class WorkflowNodes:
 
     def route_policy(self, raw: GraphState) -> str:
         engine = self.engine
-        action = engine._state(raw).action
+        state = engine._state(raw)
+        if state.guidance_replan_required:
+            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+        action = state.action
         if action and action.kind == "replan":
             return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
         return "execute_tool"
 
     def route_verify(self, raw: GraphState) -> str:
         engine = self.engine
-        if engine._state(raw).verified:
+        state = engine._state(raw)
+        if state.guidance_replan_required:
+            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+        if state.verified:
             return "complete"
         return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
 
     def route_observe(self, raw: GraphState) -> str:
         engine = self.engine
-        observations = engine._state(raw).observations
+        state = engine._state(raw)
+        if state.guidance_replan_required:
+            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+        observations = state.observations
         if observations and observations[-1].success:
             return "select_action"
         return "replan" if "replan" in engine.profile.workflow.nodes else "fail"

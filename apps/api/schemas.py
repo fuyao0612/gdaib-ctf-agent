@@ -6,18 +6,19 @@ FastAPI 的表单细节渗入 Agent 核心。
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from yuwang.domain.models import ThreadMode, VerificationRule
+from yuwang.domain.models import AgentPlan, ThreadMode, VerificationRule
 
 
 class ThreadCreate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     mode: ThreadMode = ThreadMode.NORMAL
     agent_profile_id: UUID | None = None
+    plan_mode: Literal["auto", "approval"] = "auto"
 
 
 class ThreadUpdate(BaseModel):
@@ -35,6 +36,7 @@ class RunCreate(BaseModel):
     authorized_targets: list[str] = Field(default_factory=list)
     success_conditions: list[str] = Field(default_factory=lambda: ["reference_tool_succeeded"])
     verification_rules: list[VerificationRule] = Field(default_factory=list)
+    plan_mode: Literal["auto", "approval"] | None = None
 
 
 class TurnCreate(MessageCreate, RunCreate):
@@ -43,6 +45,32 @@ class TurnCreate(MessageCreate, RunCreate):
 
 class RunInput(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
+
+
+class ClarificationSubmit(RunInput):
+    request_id: UUID
+    expected_brief_version: int = Field(ge=1)
+
+
+class PlanEdit(BaseModel):
+    request_id: UUID
+    expected_version: int = Field(ge=1)
+    plan: AgentPlan
+    reason: str = Field(default="用户编辑", max_length=2000)
+
+
+class PlanDecision(BaseModel):
+    request_id: UUID
+    expected_version: int = Field(ge=1)
+    reason: str = Field(default="", max_length=2000)
+
+
+class ControlRequest(BaseModel):
+    request_id: UUID
+
+
+class GuidanceSubmit(ControlRequest):
+    content: str = Field(min_length=1, max_length=10_000)
 
 
 class MemoryToggle(BaseModel):

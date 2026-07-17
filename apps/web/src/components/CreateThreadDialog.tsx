@@ -1,15 +1,17 @@
 /** 创建对话弹窗；表单内容较高时自身滚动，按钮始终可访问。 */
-import type { AgentProfileSummary, Mode } from "../types";
+import type { AgentProfileSummary, Mode, PlanMode } from "../types";
 
 interface Props {
   title: string;
   mode: Mode;
   profileId: string;
+  planMode: PlanMode;
   profiles: AgentProfileSummary[];
   busy: boolean;
   onTitleChange: (value: string) => void;
   onModeChange: (value: Mode) => void;
   onProfileChange: (id: string, mode?: Mode) => void;
+  onPlanModeChange: (value: PlanMode) => void;
   onCancel: () => void;
   onSubmit: () => void;
 }
@@ -67,6 +69,19 @@ export default function CreateThreadDialog(props: Props) {
           >
             <option value="normal">normal · 可继续交流</option>
             <option value="competition">competition · 运行中锁定输入</option>
+          </select>
+        </label>
+        <label>
+          计划控制
+          <select
+            aria-label="计划控制"
+            value={props.planMode}
+            onChange={(event) =>
+              props.onPlanModeChange(event.target.value as PlanMode)
+            }
+          >
+            <option value="approval">计划确认 · 推荐新手</option>
+            <option value="auto">自动执行 · 适合熟悉配置后使用</option>
           </select>
         </label>
         <p>Thread 将绑定当前 Agent 配置版本；后续编辑不会改变历史运行。</p>

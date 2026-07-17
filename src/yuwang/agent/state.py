@@ -11,6 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from yuwang.control import TaskBrief
 from yuwang.domain.models import AgentAction, AgentPlan, Observation, TaskSpec
 
 
@@ -20,6 +21,10 @@ class BudgetExceeded(RuntimeError):
 
 class RunStopped(RuntimeError):
     """用户请求停止，运行循环应安全退出。"""
+
+
+class RunPaused(RuntimeError):
+    """暂停请求已在安全检查点生效，运行可从下一节点继续。"""
 
 
 class AgentDeclaredFailure(RuntimeError):
@@ -39,6 +44,8 @@ class AgentStateModel(BaseModel):
     tokens: int = 0
     model_cost: float = Field(default=0, ge=0)
     elapsed_seconds: float = Field(default=0, ge=0)
+    task_brief: TaskBrief | None = None
+    plan_approved: bool = False
     plan: AgentPlan | None = None
     action: AgentAction | None = None
     observations: list[Observation] = Field(default_factory=list)
@@ -52,6 +59,7 @@ class AgentStateModel(BaseModel):
     validation_status: str = "pending"
     evidence_level: str = "none"
     supplemental_inputs: list[str] = Field(default_factory=list)
+    guidance_replan_required: bool = False
     context_tokens: int = 0
     observation_chars: int = 0
     context_truncations: int = 0
@@ -73,6 +81,8 @@ class GraphState(TypedDict, total=False):
     tokens: int
     model_cost: float
     elapsed_seconds: float
+    task_brief: dict[str, Any] | None
+    plan_approved: bool
     plan: dict[str, Any] | None
     action: dict[str, Any] | None
     observations: list[dict[str, Any]]
@@ -86,6 +96,7 @@ class GraphState(TypedDict, total=False):
     validation_status: str
     evidence_level: str
     supplemental_inputs: list[str]
+    guidance_replan_required: bool
     context_tokens: int
     observation_chars: int
     context_truncations: int

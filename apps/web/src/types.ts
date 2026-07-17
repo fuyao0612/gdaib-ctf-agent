@@ -1,10 +1,14 @@
 /** 与后端公开 JSON 契约一一对应的工作台类型。 */
 export type Mode = "normal" | "competition";
+export type PlanMode = "auto" | "approval";
 export type SettingsMode = "beginner" | "advanced";
 export type RunStatus =
   | "queued"
   | "running"
   | "waiting_input"
+  | "waiting_clarification"
+  | "waiting_approval"
+  | "paused"
   | "completed"
   | "failed"
   | "stopped";
@@ -14,6 +18,7 @@ export interface Thread {
   mode: Mode;
   agent_profile_id: string | null;
   agent_profile_version: number | null;
+  plan_mode: PlanMode;
   archived: boolean;
   created_at: string;
   updated_at: string;
@@ -32,6 +37,7 @@ export interface Run {
   provider: string;
   agent_profile_id: string | null;
   agent_profile_version: number | null;
+  plan_mode: PlanMode;
   completion_mode: CompletionMode;
   validation_status: "pending" | "unverified" | "validated" | "failed";
   evidence_level: "none" | "model" | "structured" | "external";
@@ -67,6 +73,58 @@ export interface ThreadDetail extends Thread {
 export interface Report {
   markdown: string;
   data: Record<string, unknown>;
+}
+export interface AgentPlan {
+  summary: string;
+  steps: string[];
+  success_approach: string;
+  expected_results: string[];
+  verification_methods: string[];
+  risks: string[];
+  dependencies: string[];
+}
+export interface TaskBrief {
+  id: string;
+  run_id: string;
+  version: number;
+  original_request: string;
+  goal: string;
+  authorized_scope: string[];
+  constraints: string[];
+  success_criteria: string[];
+  expected_output: string;
+  known_information: string[];
+  assumptions: string[];
+  risks: string[];
+  needs_clarification: boolean;
+  clarification_questions: string[];
+  source: "agent" | "user_clarification";
+  created_at: string;
+}
+export interface PlanRevision {
+  id: string;
+  run_id: string;
+  version: number;
+  plan: AgentPlan;
+  source: "agent_initial" | "user_edit" | "agent_replan";
+  change_reason: string;
+  based_on_version: number | null;
+  created_at: string;
+}
+export interface RunGuidance {
+  id: string;
+  run_id: string;
+  sequence: number;
+  content: string;
+  created_at: string;
+  consumed_at: string | null;
+}
+export interface RunControl {
+  status: RunStatus;
+  plan_mode: PlanMode;
+  task_briefs: TaskBrief[];
+  plans: PlanRevision[];
+  guidance: RunGuidance[];
 }
 export type ProviderPreset = "deepseek" | "qwen" | "glm" | "custom";
 export type StructuredMode =

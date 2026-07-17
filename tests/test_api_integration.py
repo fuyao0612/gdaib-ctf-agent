@@ -2,6 +2,7 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from uuid import uuid4
 
 import pytest
 from cryptography.fernet import Fernet
@@ -41,7 +42,30 @@ def provider_server():
                 response_content = '{"status":"ok"}'
             else:
                 context = json.loads(prompt)
-                if "生成动态计划" in context["purpose"] or "重新规划" in context["purpose"]:
+                if "slow-control" in context.get("untrusted_task", ""):
+                    time.sleep(0.12)
+                if "生成公开 Task Brief" in context["purpose"]:
+                    needs_clarification = (
+                        "需要澄清任务" in context["untrusted_task"]
+                        and not context.get("supplemental_inputs")
+                    )
+                    response_content = json.dumps(
+                        {
+                            "goal": "完成协议集成任务",
+                            "authorized_scope": context.get("authorized_targets", []),
+                            "constraints": context.get("constraints", []),
+                            "success_criteria": context.get("success_conditions", []),
+                            "expected_output": "可审核结果",
+                            "known_information": ["原始要求已保存"],
+                            "assumptions": [],
+                            "risks": ["不得扩大授权范围"],
+                            "needs_clarification": needs_clarification,
+                            "clarification_questions": (
+                                ["请补充目标受众"] if needs_clarification else []
+                            ),
+                        }
+                    )
+                elif "生成动态计划" in context["purpose"] or "重新规划" in context["purpose"]:
                     response_content = json.dumps(
                         {
                             "summary": "协议服务生成的计划",
@@ -430,6 +454,197 @@ def test_waiting_input_api_persists_memory_and_resumes(tmp_path, provider_server
             f"/api/v1/threads/{thread['id']}/memories", json={"enabled": False}
         ).status_code == 204
         assert client.delete(f"/api/v1/threads/{thread['id']}/memories").status_code == 204
+
+
+def test_task_brief_clarification_persists_versions_and_resumes(tmp_path, provider_server):
+    app = configured_app(tmp_path)
+    app.state.registry.register(FakeEchoTool())
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        provider = create_provider(client, provider_server)
+        thread = client.post("/api/v1/threads", json={"title": "clarify"}).json()
+        run_id = client.post(
+            f"/api/v1/threads/{thread['id']}/turns",
+            json={
+                "content": "需要澄清任务：整理方案",
+                "provider_config_id": provider["id"],
+                "verification_rules": [{"kind": "regex", "value": "verified"}],
+            },
+        ).json()["id"]
+        assert wait_for_terminal(client, run_id)["status"] == "waiting_clarification"
+        control = client.get(f"/api/v1/runs/{run_id}/control").json()
+        assert control["task_briefs"][0]["clarification_questions"] == ["请补充目标受众"]
+
+        resumed = client.post(
+            f"/api/v1/runs/{run_id}/clarification",
+            json={
+                "request_id": str(uuid4()),
+                "expected_brief_version": 1,
+                "content": "目标受众是新成员",
+            },
+        )
+        assert resumed.status_code == 202, resumed.text
+        assert wait_for_terminal(client, run_id)["status"] == "completed"
+        control = client.get(f"/api/v1/runs/{run_id}/control").json()
+        assert [item["version"] for item in control["task_briefs"]] == [1, 2]
+        assert control["task_briefs"][1]["needs_clarification"] is False
+
+
+def test_plan_edit_approve_and_duplicate_request_are_idempotent(tmp_path, provider_server):
+    app = configured_app(tmp_path)
+    app.state.registry.register(FakeEchoTool())
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        provider = create_provider(client, provider_server)
+        thread = client.post(
+            "/api/v1/threads", json={"title": "approval", "plan_mode": "approval"}
+        ).json()
+        run_id = client.post(
+            f"/api/v1/threads/{thread['id']}/turns",
+            json={
+                "content": "执行需确认的计划",
+                "provider_config_id": provider["id"],
+                "verification_rules": [{"kind": "regex", "value": "verified"}],
+            },
+        ).json()["id"]
+        assert wait_for_terminal(client, run_id)["status"] == "waiting_approval"
+        control = client.get(f"/api/v1/runs/{run_id}/control").json()
+        edited_plan = {
+            **control["plans"][0]["plan"],
+            "steps": ["先核对授权范围", "调用测试工具", "验证候选"],
+            "expected_results": ["范围有效", "获得结果", "候选通过验证"],
+            "verification_methods": ["策略检查", "工具返回", "正则验证"],
+        }
+        edit_body = {
+            "request_id": str(uuid4()),
+            "expected_version": 1,
+            "plan": edited_plan,
+            "reason": "增加授权检查",
+        }
+        first_edit = client.put(f"/api/v1/runs/{run_id}/plan", json=edit_body)
+        second_edit = client.put(f"/api/v1/runs/{run_id}/plan", json=edit_body)
+        assert first_edit.status_code == second_edit.status_code == 200
+        assert first_edit.json()["version"] == second_edit.json()["version"] == 2
+
+        decision = {
+            "request_id": str(uuid4()),
+            "expected_version": 2,
+            "reason": "范围和验证方式已确认",
+        }
+        approved = client.post(f"/api/v1/runs/{run_id}/plan/approve", json=decision)
+        duplicate = client.post(f"/api/v1/runs/{run_id}/plan/approve", json=decision)
+        assert approved.status_code == duplicate.status_code == 202
+        assert wait_for_terminal(client, run_id)["status"] == "completed"
+        events = client.get(f"/api/v1/runs/{run_id}/events").json()
+        assert sum(item["type"] == "plan_edited" for item in events) == 1
+        assert sum(item["type"] == "plan_approved" for item in events) == 1
+
+
+def test_plan_rejection_creates_agent_replan_version(tmp_path, provider_server):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        provider = create_provider(client, provider_server)
+        thread = client.post(
+            "/api/v1/threads", json={"title": "reject", "plan_mode": "approval"}
+        ).json()
+        run_id = client.post(
+            f"/api/v1/threads/{thread['id']}/turns",
+            json={"content": "仅生成建议", "provider_config_id": provider["id"]},
+        ).json()["id"]
+        assert wait_for_terminal(client, run_id)["status"] == "waiting_approval"
+        rejected = client.post(
+            f"/api/v1/runs/{run_id}/plan/reject",
+            json={
+                "request_id": str(uuid4()),
+                "expected_version": 1,
+                "reason": "请增加回滚步骤",
+            },
+        )
+        assert rejected.status_code == 202, rejected.text
+        assert wait_for_terminal(client, run_id)["status"] == "waiting_approval"
+        control = client.get(f"/api/v1/runs/{run_id}/control").json()
+        assert [item["version"] for item in control["plans"]] == [1, 2]
+        assert control["plans"][1]["source"] == "agent_replan"
+
+
+def test_waiting_plan_can_be_stopped_without_background_task(tmp_path, provider_server):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        provider = create_provider(client, provider_server)
+        thread = client.post(
+            "/api/v1/threads", json={"title": "stop wait", "plan_mode": "approval"}
+        ).json()
+        run_id = client.post(
+            f"/api/v1/threads/{thread['id']}/turns",
+            json={"content": "等待后停止", "provider_config_id": provider["id"]},
+        ).json()["id"]
+        assert wait_for_terminal(client, run_id)["status"] == "waiting_approval"
+
+        stopped = client.post(f"/api/v1/runs/{run_id}/stop")
+
+        assert stopped.status_code == 200
+        assert stopped.json()["status"] == "stopped"
+
+
+def test_pause_guidance_resume_is_idempotent_and_survives_restart(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    app.state.registry.register(FakeEchoTool())
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        provider = create_provider(client, provider_server)
+        thread = client.post("/api/v1/threads", json={"title": "run control"}).json()
+        run_id = client.post(
+            f"/api/v1/threads/{thread['id']}/turns",
+            json={
+                "content": "slow-control 运行控制测试",
+                "provider_config_id": provider["id"],
+                "verification_rules": [{"kind": "regex", "value": "verified"}],
+            },
+        ).json()["id"]
+        for _ in range(50):
+            if client.get(f"/api/v1/runs/{run_id}").json()["status"] == "running":
+                break
+            time.sleep(0.01)
+
+        guidance_request = str(uuid4())
+        guidance_body = {
+            "request_id": guidance_request,
+            "content": "保持原授权范围，并在完成前重新核对证据",
+        }
+        first_guidance = client.post(
+            f"/api/v1/runs/{run_id}/guidance", json=guidance_body
+        )
+        duplicate_guidance = client.post(
+            f"/api/v1/runs/{run_id}/guidance", json=guidance_body
+        )
+        assert first_guidance.status_code == duplicate_guidance.status_code == 202
+        assert first_guidance.json()["sequence"] == duplicate_guidance.json()["sequence"] == 1
+
+        pause_request = {"request_id": str(uuid4())}
+        assert client.post(f"/api/v1/runs/{run_id}/pause", json=pause_request).status_code == 202
+        assert client.post(f"/api/v1/runs/{run_id}/pause", json=pause_request).status_code == 202
+        assert wait_for_terminal(client, run_id)["status"] == "paused"
+        control = client.get(f"/api/v1/runs/{run_id}/control").json()
+        assert control["guidance"][0]["consumed_at"] is not None
+
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        assert client.get(f"/api/v1/runs/{run_id}").json()["status"] == "paused"
+        resume_request = {"request_id": str(uuid4())}
+        first_resume = client.post(f"/api/v1/runs/{run_id}/resume", json=resume_request)
+        duplicate_resume = client.post(f"/api/v1/runs/{run_id}/resume", json=resume_request)
+        assert first_resume.status_code == duplicate_resume.status_code == 202
+        assert wait_for_terminal(client, run_id)["status"] == "completed"
+        events = client.get(f"/api/v1/runs/{run_id}/events").json()
+        assert sum(item["type"] == "guidance_queued" for item in events) == 1
+        assert sum(item["type"] == "guidance_applied" for item in events) == 1
+        assert sum(item["type"] == "pause_requested" for item in events) == 1
+        assert sum(item["type"] == "run_paused" for item in events) == 1
+        assert sum(item["type"] == "run_resumed" for item in events) == 1
 
 
 def test_competition_lock_stop_openapi_and_upload_policy(tmp_path):

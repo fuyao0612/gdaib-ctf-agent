@@ -1,4 +1,6 @@
 import asyncio
+from typing import Any
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -36,6 +38,12 @@ class NonIdempotentFakeEchoTool(FakeEchoTool):
         value = super().spec
         value.idempotent = False
         return value
+
+
+class SlowFakeModelProvider(FakeModelProvider):
+    async def generate_structured(self, *args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(0.03)
+        return await super().generate_structured(*args, **kwargs)
 
 
 def build_engine(tmp_path, scenario="success", profile=None, components: AgentComponents | None = None):
@@ -77,7 +85,7 @@ async def test_complete_failure_replan_success_report(tmp_path):
     tool_events = [event for event in events if event.type == EventType.TOOL_FINISHED]
     assert [event.payload["success"] for event in tool_events] == [False, True]
     assert repository.get_report(run.id)[1]["tool_metrics"] == {"calls": 2, "failures": 1}
-    assert len(repository.list_model_calls(run.id)) == 6
+    assert len(repository.list_model_calls(run.id)) == 7
     assert [call.status for call in repository.list_tool_calls(run.id)] == [
         CallStatus.FAILED,
         CallStatus.SUCCEEDED,
@@ -87,6 +95,92 @@ async def test_complete_failure_replan_success_report(tmp_path):
     assert [item.checkpoint_sequence for item in checkpoints] == list(
         range(1, len(checkpoints) + 1)
     )
+
+
+@pytest.mark.asyncio
+async def test_pause_waits_for_safe_checkpoint_and_resume_continues(tmp_path):
+    repository = SQLiteRepository(tmp_path / "pause.db")
+    registry = ToolRegistry()
+    registry.register(FakeEchoTool())
+    engine = AgentEngine(
+        repository,
+        SlowFakeModelProvider(),
+        registry,
+        PolicyEngine(),
+        artifact_root=tmp_path / "artifacts",
+    )
+    thread = repository.save_thread(Thread(title="pause"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    task_spec = TaskSpec(
+        body="在安全检查点暂停",
+        verification_rules=[{"kind": "regex", "value": "verified"}],
+    )
+
+    running = asyncio.create_task(engine.run(run.id, task_spec))
+    for _ in range(20):
+        if repository.get_run(run.id).status == RunStatus.RUNNING:
+            break
+        await asyncio.sleep(0.005)
+    repository.request_pause(run.id, uuid4())
+    await running
+
+    paused = repository.get_run(run.id)
+    assert paused and paused.status == RunStatus.PAUSED
+    assert repository.latest_checkpoint(run.id).node in {
+        "select_action",
+        "policy_check",
+        "observe",
+        "verify",
+        "replan",
+    }
+    paused.transition(RunStatus.RUNNING)
+    repository.save_run(paused)
+    await engine.resume(run.id, task_spec)
+    assert repository.get_run(run.id).status == RunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_guidance_queued_while_paused_is_applied_before_resume_action(tmp_path):
+    repository = SQLiteRepository(tmp_path / "paused-guidance.db")
+    registry = ToolRegistry()
+    registry.register(FakeEchoTool())
+    engine = AgentEngine(
+        repository,
+        SlowFakeModelProvider(),
+        registry,
+        PolicyEngine(),
+        artifact_root=tmp_path / "artifacts",
+    )
+    thread = repository.save_thread(Thread(title="paused guidance"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    task_spec = TaskSpec(
+        body="暂停后追加指引",
+        verification_rules=[{"kind": "regex", "value": "verified"}],
+    )
+
+    running = asyncio.create_task(engine.run(run.id, task_spec))
+    for _ in range(20):
+        if repository.get_run(run.id).status == RunStatus.RUNNING:
+            break
+        await asyncio.sleep(0.005)
+    repository.request_pause(run.id, uuid4())
+    await running
+    assert repository.get_run(run.id).status == RunStatus.PAUSED
+
+    before_resume = len(repository.list_events(run.id))
+    repository.queue_guidance(run.id, uuid4(), "恢复后先核对新增约束")
+    paused = repository.get_run(run.id)
+    paused.transition(RunStatus.RUNNING)
+    repository.save_run(paused)
+    await engine.resume(run.id, task_spec)
+
+    resumed_events = repository.list_events(run.id)[before_resume:]
+    resumed_types = [event.type for event in resumed_events]
+    assert resumed_types.index(EventType.GUIDANCE_APPLIED) < resumed_types.index(
+        EventType.REPLANNED
+    )
+    assert repository.list_guidance(run.id)[0].consumed_at is not None
+    assert repository.get_run(run.id).status == RunStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -330,7 +424,7 @@ async def test_disabling_important_fact_extraction_skips_extra_model_call(tmp_pa
     run = repository.save_run(Run(thread_id=thread.id))
     await engine.run(run.id, TaskSpec(body="do not remember facts"))
     assert [item.kind for item in repository.list_memories(thread.id)] == ["run_summary"]
-    assert len(repository.list_model_calls(run.id)) == 1
+    assert len(repository.list_model_calls(run.id)) == 2
 
 
 @pytest.mark.asyncio

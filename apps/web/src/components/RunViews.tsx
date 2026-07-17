@@ -6,15 +6,21 @@ import type {
   Report,
   Run,
   RunAudit,
+  RunControl,
   ThreadDetail,
 } from "../types";
 import { ResultCard, RunProgress } from "./RunSummary";
+import TaskPlanControl from "./TaskPlanControl";
+import RunControlPanel from "./RunControlPanel";
 
 export function StatusBadge({ status }: { status: string }) {
   const labels: Record<string, string> = {
     queued: "排队中",
     running: "运行中",
     waiting_input: "等待补充",
+    waiting_clarification: "等待澄清",
+    waiting_approval: "等待计划确认",
+    paused: "已暂停",
     completed: "已完成",
     failed: "失败",
     stopped: "已停止",
@@ -51,6 +57,18 @@ interface ConversationProps {
   report: Report | null;
   run: Run | null;
   audit: RunAudit | null;
+  control: RunControl | null;
+  busy: boolean;
+  onClarify: (content: string, briefVersion: number) => void;
+  onEditPlan: (plan: import("../types").AgentPlan, version: number, reason: string) => void;
+  onDecidePlan: (
+    decision: "approve" | "reject",
+    version: number,
+    reason: string,
+  ) => void;
+  onPause: () => Promise<boolean>;
+  onResume: () => Promise<boolean>;
+  onGuidance: (content: string) => Promise<boolean>;
 }
 
 export function ConversationView({
@@ -59,6 +77,14 @@ export function ConversationView({
   report,
   run,
   audit,
+  control,
+  busy,
+  onClarify,
+  onEditPlan,
+  onDecidePlan,
+  onPause,
+  onResume,
+  onGuidance,
 }: ConversationProps) {
   return (
     <section className="conversation" aria-label="对话时间线">
@@ -77,6 +103,27 @@ export function ConversationView({
         </div>
       ))}
       {run && <RunProgress run={run} events={events} audit={audit} />}
+      {run && control && (
+        <>
+          <TaskPlanControl
+            run={run}
+            control={control}
+            busy={busy}
+            onClarify={onClarify}
+            onEdit={onEditPlan}
+            onDecide={onDecidePlan}
+          />
+          <RunControlPanel
+            run={run}
+            control={control}
+            events={events}
+            busy={busy}
+            onPause={onPause}
+            onResume={onResume}
+            onGuidance={onGuidance}
+          />
+        </>
+      )}
       {run && (
         <ResultCard
           run={run}

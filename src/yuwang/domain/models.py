@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def utcnow() -> datetime:
@@ -28,12 +28,22 @@ class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     WAITING_INPUT = "waiting_input"
+    WAITING_CLARIFICATION = "waiting_clarification"
+    WAITING_APPROVAL = "waiting_approval"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     STOPPED = "stopped"
 
 
-ACTIVE_RUN_STATUSES = {RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING_INPUT}
+ACTIVE_RUN_STATUSES = {
+    RunStatus.QUEUED,
+    RunStatus.RUNNING,
+    RunStatus.WAITING_INPUT,
+    RunStatus.WAITING_CLARIFICATION,
+    RunStatus.WAITING_APPROVAL,
+    RunStatus.PAUSED,
+}
 
 
 class MessageRole(StrEnum):
@@ -59,6 +69,19 @@ class EventType(StrEnum):
     RUN_WAITING_INPUT = "run_waiting_input"
     INPUT_RECEIVED = "input_received"
     CONTEXT_TRUNCATED = "context_truncated"
+    TASK_BRIEF_CREATED = "task_brief_created"
+    CLARIFICATION_REQUESTED = "clarification_requested"
+    CLARIFICATION_RECEIVED = "clarification_received"
+    PLAN_CREATED = "plan_created"
+    PLAN_APPROVAL_REQUESTED = "plan_approval_requested"
+    PLAN_EDITED = "plan_edited"
+    PLAN_APPROVED = "plan_approved"
+    PLAN_REJECTED = "plan_rejected"
+    GUIDANCE_QUEUED = "guidance_queued"
+    GUIDANCE_APPLIED = "guidance_applied"
+    PAUSE_REQUESTED = "pause_requested"
+    RUN_PAUSED = "run_paused"
+    RUN_RESUMED = "run_resumed"
 
 
 class Budget(BaseModel):
@@ -78,6 +101,7 @@ class Thread(DomainModel):
     mode: ThreadMode = ThreadMode.NORMAL
     agent_profile_id: UUID | None = None
     agent_profile_version: int | None = Field(default=None, ge=1)
+    plan_mode: Literal["auto", "approval"] = "auto"
     archived: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -100,6 +124,7 @@ class Run(DomainModel):
     provider_config_id: UUID | None = None
     agent_profile_id: UUID | None = None
     agent_profile_version: int | None = Field(default=None, ge=1)
+    plan_mode: Literal["auto", "approval"] = "auto"
     attempt: int = Field(1, ge=1)
     stop_requested: bool = False
     error: str | None = None
@@ -115,11 +140,29 @@ class Run(DomainModel):
             RunStatus.QUEUED: {RunStatus.RUNNING, RunStatus.FAILED, RunStatus.STOPPED},
             RunStatus.RUNNING: {
                 RunStatus.WAITING_INPUT,
+                RunStatus.WAITING_CLARIFICATION,
+                RunStatus.WAITING_APPROVAL,
+                RunStatus.PAUSED,
                 RunStatus.COMPLETED,
                 RunStatus.FAILED,
                 RunStatus.STOPPED,
             },
             RunStatus.WAITING_INPUT: {
+                RunStatus.RUNNING,
+                RunStatus.FAILED,
+                RunStatus.STOPPED,
+            },
+            RunStatus.WAITING_CLARIFICATION: {
+                RunStatus.RUNNING,
+                RunStatus.FAILED,
+                RunStatus.STOPPED,
+            },
+            RunStatus.WAITING_APPROVAL: {
+                RunStatus.RUNNING,
+                RunStatus.FAILED,
+                RunStatus.STOPPED,
+            },
+            RunStatus.PAUSED: {
                 RunStatus.RUNNING,
                 RunStatus.FAILED,
                 RunStatus.STOPPED,
@@ -292,6 +335,24 @@ class AgentPlan(BaseModel):
     summary: str = Field(min_length=1, max_length=500)
     steps: list[str] = Field(min_length=1, max_length=30)
     success_approach: str = Field(min_length=1, max_length=500)
+    expected_results: list[str] = Field(default_factory=list, max_length=30)
+    verification_methods: list[str] = Field(default_factory=list, max_length=30)
+    risks: list[str] = Field(default_factory=list, max_length=30)
+    dependencies: list[str] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="after")
+    def complete_step_contracts(self) -> AgentPlan:
+        """旧计划缺少新字段时安全补齐；显式字段则必须与步骤一一对应。"""
+
+        if not self.expected_results:
+            self.expected_results = [f"完成：{step}" for step in self.steps]
+        if not self.verification_methods:
+            self.verification_methods = [self.success_approach for _ in self.steps]
+        if len(self.expected_results) != len(self.steps):
+            raise ValueError("每个计划步骤必须有一个预期结果")
+        if len(self.verification_methods) != len(self.steps):
+            raise ValueError("每个计划步骤必须有一个验证方式")
+        return self
 
 
 class Observation(BaseModel):

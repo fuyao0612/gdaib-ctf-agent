@@ -43,6 +43,27 @@ class Handler(BaseHTTPRequestHandler):
         if schema_name == "connectionprobe" or '"status":"ok"' in prompt:
             return {"status": "ok"}
         context = json.loads(prompt)
+        if schema_name == "taskbriefdraft" or "生成公开 Task Brief" in context.get(
+            "purpose", ""
+        ):
+            task = context.get("untrusted_task", "").lower()
+            needs_clarification = (
+                "clarify-first" in task and not context.get("supplemental_inputs")
+            )
+            return {
+                "goal": "Complete the authorized task with an auditable result.",
+                "authorized_scope": context.get("authorized_targets", []),
+                "constraints": context.get("constraints", []),
+                "success_criteria": context.get("success_conditions", []),
+                "expected_output": "A concise auditable result.",
+                "known_information": ["The original request is preserved."],
+                "assumptions": [],
+                "risks": ["Do not expand the authorized scope."],
+                "needs_clarification": needs_clarification,
+                "clarification_questions": (
+                    ["Please clarify the intended audience."] if needs_clarification else []
+                ),
+            }
         if "slow" in context.get("untrusted_task", "").lower():
             time.sleep(1.2)
         if schema_name == "agentplan" or "计划" in context.get("purpose", ""):

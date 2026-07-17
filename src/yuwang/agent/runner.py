@@ -17,6 +17,7 @@ from yuwang.agent.state import (
     AgentDeclaredFailure,
     AgentStateModel,
     GraphState,
+    RunPaused,
     RunStopped,
 )
 from yuwang.domain.models import CallStatus, EventType, Run, RunStatus, TaskSpec
@@ -39,8 +40,11 @@ class AgentRunCoordinator:
         add_node = cast(Any, graph.add_node)
         node_functions = [
             ("ingest", engine._ingest),
+            ("create_task_brief", engine._create_task_brief),
+            ("await_clarification", engine._await_clarification),
             ("normalize_task", engine._normalize_task),
             ("plan", engine._plan),
+            ("await_plan_approval", engine._await_plan_approval),
             ("select_action", engine._select_action),
             ("policy_check", engine._policy_check),
             ("execute_tool", engine._execute_tool),
@@ -55,12 +59,30 @@ class AgentRunCoordinator:
         for name, function in node_functions:
             add_node(name, function)
         graph.set_entry_point(entry_point)
-        graph.add_edge("ingest", "normalize_task")
-        graph.add_edge(
-            "normalize_task",
-            "plan" if engine._should_plan() else "select_action",
+        graph.add_edge("ingest", "create_task_brief")
+        graph.add_conditional_edges(
+            "create_task_brief",
+            engine._route_task_brief,
+            {
+                "await_clarification": "await_clarification",
+                "normalize_task": "normalize_task",
+            },
         )
-        graph.add_edge("plan", "select_action")
+        graph.add_edge("await_clarification", END)
+        graph.add_conditional_edges(
+            "normalize_task",
+            engine._route_initial_planning,
+            {"plan": "plan", "select_action": "select_action"},
+        )
+        graph.add_conditional_edges(
+            "plan",
+            engine._route_plan,
+            {
+                "await_plan_approval": "await_plan_approval",
+                "select_action": "select_action",
+            },
+        )
+        graph.add_edge("await_plan_approval", END)
         graph.add_conditional_edges(
             "select_action",
             engine._route_action,
@@ -156,6 +178,11 @@ class AgentRunCoordinator:
             call.status = CallStatus.FAILED
             call.error = "服务中断；幂等调用将在恢复流程重新执行"
             engine.repository.save_tool_call(call)
+        if engine._apply_guidance(state):
+            # 暂停期间到达的指引必须先进入持久化状态，恢复后才能安全地直接重规划。
+            engine.repository.save_checkpoint(
+                run_id, checkpoint.node, state.model_dump(mode="json")
+            )
         target = self.resume_target(checkpoint.node, state)
         engine.events.emit(
             run.id,
@@ -184,6 +211,11 @@ class AgentRunCoordinator:
             run.transition(RunStatus.STOPPED, str(exc))
             engine.repository.save_run(run)
             engine.events.emit(run.id, EventType.RUN_STOPPED, "运行已按请求安全停止")
+        except RunPaused as exc:
+            run = engine.repository.get_run(run.id) or run
+            run.transition(RunStatus.PAUSED, str(exc))
+            engine.repository.save_run(run)
+            engine.events.emit(run.id, EventType.RUN_PAUSED, "运行已在安全检查点暂停")
         except asyncio.CancelledError:
             run = engine.repository.get_run(run.id) or run
             if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
@@ -239,9 +271,16 @@ class AgentRunCoordinator:
         if node == "verify":
             return engine._route_verify(raw)
         mapping = {
-            "ingest": "normalize_task",
+            "ingest": "create_task_brief",
+            "create_task_brief": "normalize_task",
+            "await_clarification": "create_task_brief",
+            "clarification_received": "create_task_brief",
             "normalize_task": "plan",
             "plan": "select_action",
+            "await_plan_approval": "select_action",
+            "plan_edited": "await_plan_approval",
+            "plan_approved": "select_action",
+            "plan_rejected": "plan",
             "execute_tool": "observe",
             "replan": "select_action",
             "complete": "generate_report",

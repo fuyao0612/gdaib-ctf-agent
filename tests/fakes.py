@@ -6,6 +6,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
 
+from yuwang.control import TaskBriefDraft
 from yuwang.domain.models import AgentAction, AgentPlan, ImportantFacts
 from yuwang.model_providers import ProviderError
 from yuwang.model_providers.providers import ProviderErrorCategory
@@ -54,6 +55,27 @@ class FakeModelProvider:
                     steps=["执行测试工具", "核对候选证据", "提交验证"],
                     success_approach="从工具输出提取候选并交由确定性验证器",
                 ).model_dump()
+            )
+        if output_type is TaskBriefDraft:
+            context = json.loads(prompt)
+            needs_clarification = (
+                self.scenario == "clarification" and not context.get("supplemental_inputs")
+            )
+            return output_type.model_validate(
+                {
+                    "goal": "完成用户提交的安全任务",
+                    "authorized_scope": context.get("authorized_targets", []),
+                    "constraints": context.get("constraints", []),
+                    "success_criteria": context.get("success_conditions", []),
+                    "expected_output": "可审核结果",
+                    "known_information": ["已保存原始任务"],
+                    "assumptions": [],
+                    "risks": ["不得扩大授权范围"],
+                    "needs_clarification": needs_clarification,
+                    "clarification_questions": (
+                        ["请补充目标受众"] if needs_clarification else []
+                    ),
+                }
             )
         if output_type is ImportantFacts:
             return output_type.model_validate(

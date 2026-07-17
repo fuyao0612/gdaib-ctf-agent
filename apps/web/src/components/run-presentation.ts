@@ -58,7 +58,13 @@ export function presentPhases(
   return RUN_PHASES.map((label, index) => {
     let state: PhaseState = "pending";
     if (completed || index < current) state = "completed";
-    else if (index === current && run.status === "waiting_input") state = "waiting";
+    else if (
+      index === current &&
+      ["waiting_input", "waiting_clarification", "waiting_approval", "paused"].includes(
+        run.status,
+      )
+    )
+      state = "waiting";
     else if (index === current && interrupted) state = "interrupted";
     else if (index === current && ["queued", "running"].includes(run.status))
       state = "active";

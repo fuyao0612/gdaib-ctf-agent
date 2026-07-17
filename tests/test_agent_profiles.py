@@ -166,4 +166,4 @@ def test_v02_database_and_json_rows_migrate_without_profile_fields(tmp_path):
     assert service.ensure_default().is_default
     with sqlite3.connect(path) as db:
         versions = {row[0] for row in db.execute("SELECT version FROM schema_migrations")}
-    assert versions == {1, 2, 3}
+    assert versions == {1, 2, 3, 4, 5, 6}

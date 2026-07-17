@@ -45,6 +45,11 @@ class SQLiteWorkspaceStore(SQLiteStore):
                     "evidence",
                     "provider_snapshots",
                     "run_agent_profiles",
+                    "task_briefs",
+                    "run_plan_revisions",
+                    "run_control_requests",
+                    "run_guidance",
+                    "run_pause_requests",
                 ):
                     db.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))
             db.execute("DELETE FROM messages WHERE thread_id=?", (key,))

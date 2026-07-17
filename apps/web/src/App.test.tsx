@@ -122,6 +122,13 @@ describe("App", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("新建任务默认选择计划确认", async () => {
+    render(<App />);
+    await screen.findByText("从一个可审计的任务开始");
+    fireEvent.click(screen.getByText("创建第一个任务"));
+    expect(screen.getByLabelText("计划控制")).toHaveValue("approval");
+  });
+
   it("刷新后为运行中的任务恢复事件订阅", async () => {
     const now = new Date().toISOString();
     window.localStorage.setItem("yuwang.currentThreadId", "t-running");
@@ -233,9 +240,119 @@ describe("App", () => {
     await waitFor(() =>
       expect(
         FakeEventSource.instances.some(
-          (source) => source.url === "/api/v1/runs/r-running/events/stream",
+          (source) =>
+            source.url === "/api/v1/runs/r-running/events/stream?after=0",
         ),
       ).toBe(true),
     );
+  });
+
+  it("刷新后恢复暂停状态和按序指引且不重开事件订阅", async () => {
+    const now = new Date().toISOString();
+    window.localStorage.setItem("yuwang.currentThreadId", "t-paused");
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/setup/status"))
+        return Response.json({ configured: true, checks: {}, version: "0.4.2" });
+      if (url.endsWith("/admin/session"))
+        return Response.json({ authenticated: true, csrf_token: "csrf-test" });
+      if (url.endsWith("/providers")) return Response.json([]);
+      if (url.endsWith("/agent-profiles")) return Response.json([]);
+      if (url.endsWith("/threads"))
+        return Response.json([
+          {
+            id: "t-paused",
+            title: "暂停中的任务",
+            mode: "normal",
+            agent_profile_id: null,
+            agent_profile_version: null,
+            plan_mode: "approval",
+            archived: false,
+            created_at: now,
+            updated_at: now,
+          },
+        ]);
+      if (url.endsWith("/threads/t-paused/memories")) return Response.json([]);
+      if (url.endsWith("/threads/t-paused"))
+        return Response.json({
+          id: "t-paused",
+          title: "暂停中的任务",
+          mode: "normal",
+          agent_profile_id: null,
+          agent_profile_version: null,
+          plan_mode: "approval",
+          archived: false,
+          messages: [],
+          runs: [
+            {
+              id: "r-paused",
+              thread_id: "t-paused",
+              status: "paused",
+              provider: "测试 Provider",
+              agent_profile_id: null,
+              agent_profile_version: null,
+              plan_mode: "approval",
+              completion_mode: "advisory",
+              validation_status: "pending",
+              evidence_level: "none",
+              attempt: 1,
+              stop_requested: false,
+              created_at: now,
+              started_at: now,
+              finished_at: null,
+            },
+          ],
+          artifacts: [],
+          created_at: now,
+          updated_at: now,
+        });
+      if (url.endsWith("/runs/r-paused/events"))
+        return Response.json([
+          {
+            event_id: "event-paused",
+            run_id: "r-paused",
+            sequence: 1,
+            type: "run_paused",
+            timestamp: now,
+            summary: "运行已在安全检查点暂停",
+            payload: {},
+          },
+        ]);
+      if (url.endsWith("/runs/r-paused/audit"))
+        return Response.json({
+          run: { provider: "测试 Provider" },
+          usage: {},
+          limits: {},
+          model_calls: [],
+          tool_calls: [],
+          evidence: [],
+          checkpoints: [],
+        });
+      if (url.endsWith("/runs/r-paused/control"))
+        return Response.json({
+          status: "paused",
+          plan_mode: "approval",
+          task_briefs: [],
+          plans: [],
+          guidance: [
+            {
+              id: "guidance-1",
+              run_id: "r-paused",
+              sequence: 1,
+              content: "刷新后仍需保留这条指引",
+              created_at: now,
+              consumed_at: null,
+            },
+          ],
+        });
+      return Response.json({});
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "从检查点继续" })).toBeEnabled();
+    expect(screen.getByText("刷新后仍需保留这条指引")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "任务已暂停" })).toBeInTheDocument();
+    expect(FakeEventSource.instances).toHaveLength(0);
   });
 });
