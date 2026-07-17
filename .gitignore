@@ -14,6 +14,8 @@ apps/web/node_modules/
 apps/web/dist/
 apps/web/test-results/
 apps/web/playwright-report/
+.playwright-cli/
+output/playwright/
 *.tsbuildinfo
 uv.lock
 .DS_Store

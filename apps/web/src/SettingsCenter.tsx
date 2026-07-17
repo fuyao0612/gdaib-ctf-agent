@@ -7,6 +7,7 @@ import SetupProgress from "./components/SetupProgress";
 import { useAdminSession } from "./hooks/useAdminSession";
 import type {
   AgentDefaults,
+  ChatDefaults,
   ProviderConfig,
   SettingsMode,
   SetupStatus,
@@ -29,6 +30,7 @@ export default function SettingsCenter({
   const [agentDefaults, setAgentDefaults] = useState<AgentDefaults | null>(
     null,
   );
+  const [chatDefaults, setChatDefaults] = useState<ChatDefaults | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -37,13 +39,15 @@ export default function SettingsCenter({
   const session = useAdminSession();
 
   const load = useCallback(async (csrf: string) => {
-    const [items, defaults, status] = await Promise.all([
+    const [items, defaults, chat, status] = await Promise.all([
       api.adminProviders(csrf),
       api.agentDefaults(csrf),
+      api.chatDefaults(csrf),
       api.setupStatus(),
     ]);
     setProviders(items);
     setAgentDefaults(defaults);
+    setChatDefaults(chat);
     setSetupStatus(status);
   }, []);
 
@@ -88,6 +92,22 @@ export default function SettingsCenter({
         await api.saveAgentDefaults(session.csrf, agentDefaults),
       );
       setNotice("Agent 默认预算已保存");
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveChatDefaults(event: FormEvent) {
+    event.preventDefault();
+    if (!chatDefaults) return;
+    setBusy(true);
+    setError("");
+    try {
+      setChatDefaults(await api.saveChatDefaults(session.csrf, chatDefaults));
+      setNotice("聊天与界面偏好已保存");
+      await onChanged();
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -193,6 +213,163 @@ export default function SettingsCenter({
                 onError={setError}
                 mode={mode}
               />
+              {chatDefaults && (
+                <section>
+                  <div className="settings-title">
+                    <div>
+                      <h3>聊天与界面</h3>
+                      <small>日常对话默认直接回复；需要工具时再切换 Agent 任务。</small>
+                    </div>
+                  </div>
+                  <form className="settings-form" onSubmit={saveChatDefaults}>
+                    <div className="form-grid">
+                      <label>
+                        默认聊天模型
+                        <select
+                          aria-label="默认聊天模型"
+                          value={chatDefaults.default_provider_id ?? ""}
+                          onChange={(event) =>
+                            setChatDefaults({
+                              ...chatDefaults,
+                              default_provider_id: event.target.value || null,
+                            })
+                          }
+                        >
+                          <option value="">使用默认 Provider</option>
+                          {providers.filter((item) => item.enabled).map((provider) => (
+                            <option key={provider.id} value={provider.id}>
+                              {provider.name} · {provider.model}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        新对话默认模式
+                        <select
+                          aria-label="新对话默认模式"
+                          value={chatDefaults.default_mode}
+                          onChange={(event) =>
+                            setChatDefaults({
+                              ...chatDefaults,
+                              default_mode: event.target.value as "chat" | "agent",
+                            })
+                          }
+                        >
+                          <option value="chat">对话</option>
+                          <option value="agent">Agent 任务</option>
+                        </select>
+                      </label>
+                      <label>
+                        外观
+                        <select aria-label="外观" value="light" disabled>
+                          <option value="light">浅色</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="check-row">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={chatDefaults.stream_enabled}
+                          onChange={(event) =>
+                            setChatDefaults({
+                              ...chatDefaults,
+                              stream_enabled: event.target.checked,
+                            })
+                          }
+                        />
+                        流式输出
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={chatDefaults.sidebar_expanded}
+                          onChange={(event) =>
+                            setChatDefaults({
+                              ...chatDefaults,
+                              sidebar_expanded: event.target.checked,
+                            })
+                          }
+                        />
+                        默认展开侧栏
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={chatDefaults.audit_expanded}
+                          onChange={(event) =>
+                            setChatDefaults({
+                              ...chatDefaults,
+                              audit_expanded: event.target.checked,
+                            })
+                          }
+                        />
+                        Agent 默认展开审计
+                      </label>
+                    </div>
+                    <details className="advanced-settings">
+                      <summary>高级聊天设置</summary>
+                      <div className="form-grid">
+                        <label className="wide">
+                          普通聊天系统提示词
+                          <textarea
+                            aria-label="普通聊天系统提示词"
+                            value={chatDefaults.system_prompt}
+                            onChange={(event) =>
+                              setChatDefaults({
+                                ...chatDefaults,
+                                system_prompt: event.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          上下文消息数
+                          <input
+                            type="number"
+                            value={chatDefaults.recent_message_limit}
+                            onChange={(event) =>
+                              setChatDefaults({
+                                ...chatDefaults,
+                                recent_message_limit: Number(event.target.value),
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          上下文 Token 限制
+                          <input
+                            type="number"
+                            value={chatDefaults.context_token_limit}
+                            onChange={(event) =>
+                              setChatDefaults({
+                                ...chatDefaults,
+                                context_token_limit: Number(event.target.value),
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          附件字符限制
+                          <input
+                            type="number"
+                            value={chatDefaults.attachment_char_limit}
+                            onChange={(event) =>
+                              setChatDefaults({
+                                ...chatDefaults,
+                                attachment_char_limit: Number(event.target.value),
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+                    </details>
+                    <button className="primary" disabled={busy}>
+                      保存聊天设置
+                    </button>
+                  </form>
+                </section>
+              )}
               <AgentProfileCenter
                 csrf={session.csrf}
                 providers={providers}

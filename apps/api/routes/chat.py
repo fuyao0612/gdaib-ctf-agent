@@ -56,6 +56,10 @@ def create_chat_router(context: ApiContext) -> APIRouter:
     async def get_chat_defaults() -> ChatDefaults:
         return context.get_settings_service().get_chat_defaults()
 
+    @router.get("/settings/chat", response_model=ChatDefaults)
+    async def get_workbench_chat_defaults() -> ChatDefaults:
+        return context.get_settings_service().get_chat_defaults()
+
     @router.put(
         "/admin/settings/chat",
         response_model=ChatDefaults,

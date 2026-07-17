@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type {
   AgentProfileSummary,
+  ChatDefaults,
   Event,
   MemoryRecord,
   ProviderConfig,
@@ -35,6 +36,7 @@ export function useWorkbenchData() {
   const [agentProfiles, setAgentProfiles] = useState<AgentProfileSummary[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState("");
+  const [chatDefaults, setChatDefaults] = useState<ChatDefaults | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
   const streamRunRef = useRef("");
   const latestSequenceRef = useRef(0);
@@ -53,6 +55,7 @@ export function useWorkbenchData() {
         ? current
         : (values.find((value) => value.is_default)?.id ?? values[0]?.id ?? ""),
     );
+    return values;
   }, []);
 
   const loadProfiles = useCallback(async () => {
@@ -68,7 +71,17 @@ export function useWorkbenchData() {
   }, []);
 
   const refreshSettings = useCallback(async () => {
-    await Promise.all([loadProviders(), loadProfiles()]);
+    const [values, , preferences] = await Promise.all([
+      loadProviders(),
+      loadProfiles(),
+      api.chatPreferences(),
+    ]);
+    setChatDefaults(preferences);
+    if (
+      preferences.default_provider_id &&
+      values.some((value) => value.id === preferences.default_provider_id)
+    )
+      setSelectedProviderId(preferences.default_provider_id);
   }, [loadProviders, loadProfiles]);
 
   const loadControl = useCallback(async (runId: string) => {
@@ -100,6 +113,16 @@ export function useWorkbenchData() {
             ? previous
             : [...previous, event],
         );
+        if (event.type === "run_started")
+          setActiveRun((current) =>
+            current?.id === run.id
+              ? {
+                  ...current,
+                  status: "running",
+                  started_at: current.started_at ?? event.timestamp,
+                }
+              : current,
+          );
         void api.audit(run.id).then(setAudit);
         void loadControl(run.id);
         if (waitingEvents.has(event.type)) {
@@ -170,11 +193,15 @@ export function useWorkbenchData() {
     const status = await api.setupStatus();
     try {
       await api.adminSession();
-      const [values] = await Promise.all([
+      const [values, , , preferences] = await Promise.all([
         loadThreads(),
         loadProviders(),
         loadProfiles(),
+        api.chatPreferences(),
       ]);
+      setChatDefaults(preferences);
+      if (preferences.default_provider_id)
+        setSelectedProviderId(preferences.default_provider_id);
       const remembered = window.localStorage?.getItem("yuwang.currentThreadId");
       if (remembered && values.some((item) => item.id === remembered))
         await selectThread(remembered);
@@ -199,6 +226,7 @@ export function useWorkbenchData() {
     agentProfiles,
     selectedProfileId,
     selectedProviderId,
+    chatDefaults,
     setDetail,
     setEvents,
     setActiveRun,

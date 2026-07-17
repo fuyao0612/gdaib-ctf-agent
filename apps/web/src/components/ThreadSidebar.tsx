@@ -45,7 +45,7 @@ export default function ThreadSidebar({
         />
         显示已归档
       </label>
-      <nav className="thread-list" aria-label="任务线程">
+      <nav className="thread-list" aria-label="历史对话">
         {visible.map((thread) => (
           <div
             key={thread.id}
@@ -53,7 +53,15 @@ export default function ThreadSidebar({
           >
             <button className="thread-item" onClick={() => onSelect(thread.id)}>
               <span>{thread.title}</span>
-              <small>{thread.archived ? "已归档" : thread.mode}</small>
+              <small>
+                {thread.archived
+                  ? "已归档"
+                  : thread.interaction_mode === "chat"
+                    ? "对话"
+                    : thread.mode === "competition"
+                      ? "Agent · 竞赛限制"
+                      : "Agent 任务"}
+              </small>
             </button>
             <div className="thread-actions">
               <button
@@ -79,7 +87,7 @@ export default function ThreadSidebar({
         ))}
         {visible.length === 0 && (
           <p className="thread-empty">
-            {query ? "没有匹配的任务。" : "暂无任务，点击上方按钮创建。"}
+            {query ? "没有匹配的对话。" : "暂无对话，点击上方按钮创建。"}
           </p>
         )}
       </nav>

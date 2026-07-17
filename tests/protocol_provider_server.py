@@ -24,6 +24,20 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         request = json.loads(self.rfile.read(length))
         prompt = request["messages"][-1]["content"]
+        if "response_format" not in request:
+            user_messages = [
+                item["content"] for item in request["messages"] if item["role"] == "user"
+            ]
+            text = (
+                "你好，我是御网智元。普通对话不会创建 Agent 任务。"
+                if len(user_messages) == 1
+                else f"我记得前文：{user_messages[0][:60]}"
+            )
+            if request.get("stream"):
+                self._stream(text)
+            else:
+                self._chat_json(text)
+            return
         schema_name = request.get("response_format", {}).get("json_schema", {}).get("name")
         content = self._completion(schema_name, prompt)
         self._json(
@@ -66,15 +80,32 @@ class Handler(BaseHTTPRequestHandler):
             }
         if "slow" in context.get("untrusted_task", "").lower():
             time.sleep(1.2)
-        if schema_name == "agentplan" or "计划" in context.get("purpose", ""):
+        purpose = context.get("purpose", "")
+        if schema_name == "agentplan" or any(word in purpose for word in ("计划", "规划")):
             task = context.get("untrusted_task", "").lower()
+            guidance = context.get("supplemental_inputs", [])
             return {
                 "summary": (
                     "超长事件内容用于验证工作台在连续中文、路径和摘要混排时仍会正确换行。" * 8
                     if "long-event" in task
-                    else "Inspect the uploaded artifact metadata and verify its digest."
+                    else (
+                        f"Apply {len(guidance)} queued guidance items, then verify the artifact digest."
+                        if guidance
+                        else "Inspect the uploaded artifact metadata and verify its digest."
+                    )
                 ),
-                "steps": ["Read controlled attachment metadata", "Return sourced digest evidence"],
+                "steps": (
+                    [
+                        "Apply queued guidance without expanding scope",
+                        "Reuse controlled attachment evidence",
+                        "Return sourced digest evidence",
+                    ]
+                    if guidance
+                    else [
+                        "Read controlled attachment metadata",
+                        "Return sourced digest evidence",
+                    ]
+                ),
                 "success_approach": "Bind the SHA-256 candidate to the successful tool call.",
             }
         if schema_name == "importantfacts":
@@ -98,7 +129,16 @@ class Handler(BaseHTTPRequestHandler):
         if "hard-fail" in task:
             return {"kind": "fail", "summary": "测试要求明确失败"}
         if not observations:
-            attachment = context.get("attachments_untrusted", context.get("attachments", []))[0]
+            attachments = context.get(
+                "attachments_untrusted", context.get("attachments", [])
+            )
+            if not attachments:
+                return {
+                    "kind": "finish",
+                    "summary": "Complete the advisory task without a tool call.",
+                    "answer": "The requested advisory task completed successfully.",
+                }
+            attachment = attachments[0]
             return {
                 "kind": "call_tool",
                 "summary": "Compute metadata for the controlled attachment.",
@@ -124,6 +164,33 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionAbortedError):
+            return
+
+    def _chat_json(self, content: str) -> None:
+        self._json(
+            200,
+            {
+                "choices": [{"message": {"role": "assistant", "content": content}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18},
+            },
+        )
+
+    def _stream(self, content: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        midpoint = max(1, len(content) // 2)
+        chunks = [content[:midpoint], content[midpoint:]]
+        try:
+            for chunk in chunks:
+                item = {"choices": [{"delta": {"content": chunk}}]}
+                self.wfile.write(f"data: {json.dumps(item, ensure_ascii=False)}\n\n".encode())
+                self.wfile.flush()
+                time.sleep(0.04)
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
         except (BrokenPipeError, ConnectionAbortedError):
             return
 
