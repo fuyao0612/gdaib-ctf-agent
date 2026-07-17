@@ -147,9 +147,15 @@ test("long chat scrolls inside the workspace at every target viewport", async ({
   }
 
   const conversation = page.getByTestId("conversation-scroll");
-  await conversation.evaluate((element) => {
-    element.scrollTop = Math.floor(element.scrollHeight / 3);
-  });
+  await conversation.hover();
+  await page.mouse.wheel(0, -1000);
+  await expect
+    .poll(() =>
+      conversation.evaluate(
+        (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+      ),
+    )
+    .toBeGreaterThan(120);
   const before = await conversation.evaluate((element) => element.scrollTop);
   await sendChat(page, "用户正在向上阅读时不要强制滚到底部。", 21);
   const after = await conversation.evaluate((element) => element.scrollTop);

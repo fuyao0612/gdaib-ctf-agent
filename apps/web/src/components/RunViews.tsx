@@ -1,5 +1,5 @@
 /** 运行状态、对话时间线与审计抽屉等只读视图。 */
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { api } from "../api";
 import type {
   Event,
@@ -93,14 +93,22 @@ export function ConversationView({
 }: ConversationProps) {
   const scrollRef = useRef<HTMLElement>(null);
   const followLatestRef = useRef(true);
+  const previousScrollHeightRef = useRef(0);
+  const userScrollTopRef = useRef(0);
 
-  useEffect(() => {
-    if (!followLatestRef.current) return;
-    const frame = window.requestAnimationFrame(() => {
-      const element = scrollRef.current;
-      if (element) element.scrollTop = element.scrollHeight;
-    });
-    return () => window.cancelAnimationFrame(frame);
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const previousHeight = previousScrollHeightRef.current;
+    const wasNearBottom =
+      previousHeight === 0 ||
+      previousHeight - element.scrollTop - element.clientHeight < 120;
+    if (followLatestRef.current && wasNearBottom) {
+      element.scrollTop = element.scrollHeight;
+    } else if (!followLatestRef.current) {
+      element.scrollTop = userScrollTopRef.current;
+    }
+    previousScrollHeightRef.current = element.scrollHeight;
   }, [chatDraft, detail.messages.length, events.length]);
 
   return (
@@ -111,6 +119,7 @@ export function ConversationView({
       data-testid="conversation-scroll"
       onScroll={(event) => {
         const element = event.currentTarget;
+        userScrollTopRef.current = element.scrollTop;
         followLatestRef.current =
           element.scrollHeight - element.scrollTop - element.clientHeight < 120;
       }}
