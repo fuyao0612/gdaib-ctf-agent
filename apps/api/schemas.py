@@ -65,6 +65,14 @@ class PlanDecision(BaseModel):
     reason: str = Field(default="", max_length=2000)
 
 
+class ControlRequest(BaseModel):
+    request_id: UUID
+
+
+class GuidanceSubmit(ControlRequest):
+    content: str = Field(min_length=1, max_length=10_000)
+
+
 class MemoryToggle(BaseModel):
     enabled: bool
 

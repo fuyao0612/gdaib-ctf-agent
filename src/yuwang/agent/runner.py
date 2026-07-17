@@ -17,6 +17,7 @@ from yuwang.agent.state import (
     AgentDeclaredFailure,
     AgentStateModel,
     GraphState,
+    RunPaused,
     RunStopped,
 )
 from yuwang.domain.models import CallStatus, EventType, Run, RunStatus, TaskSpec
@@ -177,6 +178,11 @@ class AgentRunCoordinator:
             call.status = CallStatus.FAILED
             call.error = "服务中断；幂等调用将在恢复流程重新执行"
             engine.repository.save_tool_call(call)
+        if engine._apply_guidance(state):
+            # 暂停期间到达的指引必须先进入持久化状态，恢复后才能安全地直接重规划。
+            engine.repository.save_checkpoint(
+                run_id, checkpoint.node, state.model_dump(mode="json")
+            )
         target = self.resume_target(checkpoint.node, state)
         engine.events.emit(
             run.id,
@@ -205,6 +211,11 @@ class AgentRunCoordinator:
             run.transition(RunStatus.STOPPED, str(exc))
             engine.repository.save_run(run)
             engine.events.emit(run.id, EventType.RUN_STOPPED, "运行已按请求安全停止")
+        except RunPaused as exc:
+            run = engine.repository.get_run(run.id) or run
+            run.transition(RunStatus.PAUSED, str(exc))
+            engine.repository.save_run(run)
+            engine.events.emit(run.id, EventType.RUN_PAUSED, "运行已在安全检查点暂停")
         except asyncio.CancelledError:
             run = engine.repository.get_run(run.id) or run
             if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:

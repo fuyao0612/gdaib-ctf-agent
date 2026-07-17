@@ -451,9 +451,75 @@ button:hover,
   gap: 8px;
 }
 
+.run-control-panel {
+  display: grid;
+  gap: 12px;
+  margin: 0 24px 18px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.run-control-heading,
+.guidance-form,
+.guidance-list li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.run-control-heading {
+  justify-content: space-between;
+}
+
+.run-control-heading small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.guidance-form textarea {
+  min-height: 72px;
+  flex: 1;
+}
+
+.guidance-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 24px;
+}
+
+.guidance-list li {
+  align-items: baseline;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 3%);
+}
+
+.guidance-list p {
+  flex: 1;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.guidance-list time,
+.guidance-list strong {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 @media (max-width: 900px) {
   .task-brief-grid {
     grid-template-columns: 1fr;
+  }
+
+  .run-control-heading,
+  .guidance-form,
+  .guidance-list li {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 .result-card.result-completed {
@@ -464,6 +530,11 @@ button:hover,
   border-color: #85414c;
 }
 .result-card.result-waiting_input {
+  border-color: #8f6ad8;
+}
+.result-card.result-waiting_clarification,
+.result-card.result-waiting_approval,
+.result-card.result-paused {
   border-color: #8f6ad8;
 }
 .result-card h3 {

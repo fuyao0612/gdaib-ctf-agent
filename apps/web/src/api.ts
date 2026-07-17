@@ -13,6 +13,7 @@ import type {
   Run,
   RunAudit,
   RunControl,
+  RunGuidance,
   AgentPlan,
   PlanRevision,
   SetupStatus,
@@ -125,6 +126,21 @@ export const api = {
       body: JSON.stringify({ content }),
     }),
   control: (id: string) => request<RunControl>(`/runs/${id}/control`),
+  pause: (id: string, requestId: string) =>
+    request<Run>(`/runs/${id}/pause`, {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId }),
+    }),
+  resume: (id: string, requestId: string) =>
+    request<Run>(`/runs/${id}/resume`, {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId }),
+    }),
+  queueGuidance: (id: string, content: string, requestId: string) =>
+    request<RunGuidance>(`/runs/${id}/guidance`, {
+      method: "POST",
+      body: JSON.stringify({ content, request_id: requestId }),
+    }),
   submitClarification: (
     id: string,
     content: string,

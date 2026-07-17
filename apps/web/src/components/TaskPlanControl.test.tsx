@@ -61,6 +61,7 @@ const control: RunControl = {
       },
     },
   ],
+  guidance: [],
 };
 
 describe("TaskPlanControl", () => {

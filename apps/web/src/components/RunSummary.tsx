@@ -23,6 +23,9 @@ const STATUS_COPY = {
   failed: { title: "任务失败", next: "根据失败原因调整配置或任务信息，然后点击重试。" },
   stopped: { title: "任务已停止", next: "确认任务范围后可安全重试，原审计记录会保留。" },
   waiting_input: { title: "等待用户补充", next: "在下方补充缺少的信息，Agent 会从检查点继续。" },
+  waiting_clarification: { title: "等待任务澄清", next: "回答 Task Brief 中的澄清问题后继续。" },
+  waiting_approval: { title: "等待计划确认", next: "检查计划范围、步骤和验证方式，再批准或提出修改。" },
+  paused: { title: "任务已暂停", next: "检查已保存的计划、指引和预算，然后从安全检查点继续。" },
 } as const;
 
 function reportArray(report: Report | null, key: string): string[] {
@@ -130,7 +133,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
   return (
     <section className={`result-card result-${run.status}`} data-testid={`result-${run.status}`}>
       <header>
-        <div><span aria-hidden="true">{run.status === "completed" ? "✓" : run.status === "waiting_input" ? "…" : "!"}</span><h3>{copy.title}</h3></div>
+        <div><span aria-hidden="true">{run.status === "completed" ? "✓" : run.status.startsWith("waiting_") || run.status === "paused" ? "…" : "!"}</span><h3>{copy.title}</h3></div>
         <small>{verifiedLabel(run)}</small>
       </header>
       <div className="result-answer">

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 from uuid import UUID
 
-from yuwang.control import PlanRevision, TaskBrief
+from yuwang.control import PlanRevision, RunGuidance, TaskBrief
 from yuwang.domain.models import (
     Artifact,
     Event,
@@ -68,3 +68,12 @@ class AgentRepository(Protocol):
     def save_user_plan_revision(
         self, value: PlanRevision, request_id: UUID | str, payload_hash: str
     ) -> tuple[PlanRevision, bool]: ...
+    def queue_guidance(
+        self, run_id: UUID | str, request_id: UUID | str, content: str
+    ) -> tuple[RunGuidance, bool]: ...
+    def list_guidance(self, run_id: UUID | str) -> list[RunGuidance]: ...
+    def consume_guidance(self, run_id: UUID | str) -> list[RunGuidance]: ...
+    def request_pause(
+        self, run_id: UUID | str, request_id: UUID | str
+    ) -> tuple[Run, bool]: ...
+    def consume_pause_request(self, run_id: UUID | str) -> bool: ...

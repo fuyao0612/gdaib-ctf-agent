@@ -14,6 +14,8 @@ from fastapi.responses import StreamingResponse
 from apps.api.context import ApiContext
 from apps.api.schemas import (
     ClarificationSubmit,
+    ControlRequest,
+    GuidanceSubmit,
     MessageCreate,
     PlanDecision,
     PlanEdit,
@@ -22,7 +24,7 @@ from apps.api.schemas import (
     TurnCreate,
 )
 from yuwang.agent import AgentEngine, AgentStateModel
-from yuwang.control import PlanRevision, PlanSource
+from yuwang.control import PlanRevision, PlanSource, RunGuidance
 from yuwang.domain.models import (
     ACTIVE_RUN_STATUSES,
     EventType,
@@ -134,7 +136,62 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 value.model_dump(mode="json")
                 for value in repository.list_plan_revisions(run_id)
             ],
+            "guidance": [
+                value.model_dump(mode="json") for value in repository.list_guidance(run_id)
+            ],
         }
+
+    @router.post("/runs/{run_id}/pause", response_model=Run, status_code=202)
+    async def pause_run(run_id: UUID, body: ControlRequest) -> Run:
+        context.require_run(run_id)
+        try:
+            run, claimed = repository.request_pause(run_id, body.request_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if claimed:
+            repository.create_event(
+                run_id,
+                EventType.PAUSE_REQUESTED,
+                "暂停请求已排队，将在安全检查点生效",
+                {},
+            )
+        return run
+
+    @router.post("/runs/{run_id}/resume", response_model=Run, status_code=202)
+    async def resume_run(run_id: UUID, body: ControlRequest) -> Run:
+        payload_hash = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+        try:
+            run, claimed = repository.claim_run_control(
+                run_id, body.request_id, "resume", payload_hash, RunStatus.PAUSED
+            )
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if claimed:
+            repository.create_event(
+                run_id, EventType.RUN_RESUMED, "运行已从暂停检查点继续", {}
+            )
+            schedule_resume(run)
+        return run
+
+    @router.post("/runs/{run_id}/guidance", response_model=RunGuidance, status_code=202)
+    async def queue_guidance(run_id: UUID, body: GuidanceSubmit) -> RunGuidance:
+        run = context.require_run(run_id)
+        if run.status not in {RunStatus.RUNNING, RunStatus.PAUSED}:
+            raise HTTPException(409, "只有运行中或已暂停的任务可以追加指引")
+        try:
+            guidance, claimed = repository.queue_guidance(
+                run_id, body.request_id, body.content
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if claimed:
+            repository.create_event(
+                run_id,
+                EventType.GUIDANCE_QUEUED,
+                "追加指引已排队",
+                {"sequence": guidance.sequence, "content_length": len(guidance.content)},
+            )
+        return guidance
 
     @router.post("/runs/{run_id}/clarification", response_model=Run, status_code=202)
     async def submit_clarification(run_id: UUID, body: ClarificationSubmit) -> Run:

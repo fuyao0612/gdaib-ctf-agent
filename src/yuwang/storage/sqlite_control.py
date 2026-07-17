@@ -6,12 +6,102 @@ import sqlite3
 from datetime import UTC, datetime
 from uuid import UUID
 
-from yuwang.control import PlanRevision, TaskBrief
+from yuwang.control import PlanRevision, RunGuidance, TaskBrief
 from yuwang.domain.models import Run, RunStatus
 from yuwang.storage.sqlite_common import SQLiteStore
 
 
 class SQLiteControlStore(SQLiteStore):
+    def request_pause(
+        self, run_id: UUID | str, request_id: UUID | str
+    ) -> tuple[Run, bool]:
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT data FROM runs WHERE id=?", (str(run_id),)).fetchone()
+            if not row:
+                raise KeyError("run not found")
+            run = self._load(Run, row["data"])
+            existing = db.execute(
+                "SELECT request_id,consumed_at FROM run_pause_requests WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()
+            if existing and existing["request_id"] == str(request_id):
+                return run, False
+            if run.status != RunStatus.RUNNING:
+                raise ValueError("只有运行中的任务可以请求暂停")
+            if existing and existing["consumed_at"] is None:
+                raise ValueError("暂停请求已排队")
+            db.execute(
+                "INSERT OR REPLACE INTO run_pause_requests VALUES(?,?,?,NULL)",
+                (str(run_id), str(request_id), datetime.now(UTC).isoformat()),
+            )
+        return run, True
+
+    def consume_pause_request(self, run_id: UUID | str) -> bool:
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT consumed_at FROM run_pause_requests WHERE run_id=?", (str(run_id),)
+            ).fetchone()
+            if not row or row["consumed_at"] is not None:
+                return False
+            db.execute(
+                "UPDATE run_pause_requests SET consumed_at=? WHERE run_id=?",
+                (datetime.now(UTC).isoformat(), str(run_id)),
+            )
+        return True
+
+    def queue_guidance(
+        self, run_id: UUID | str, request_id: UUID | str, content: str
+    ) -> tuple[RunGuidance, bool]:
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT data FROM run_guidance WHERE run_id=? AND request_id=?",
+                (str(run_id), str(request_id)),
+            ).fetchone()
+            if row:
+                existing = self._load(RunGuidance, row["data"])
+                if existing.content != content:
+                    raise ValueError("请求 ID 已用于不同的追加指引")
+                return existing, False
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence),0)+1 AS n FROM run_guidance WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()["n"]
+            value = RunGuidance(run_id=UUID(str(run_id)), sequence=sequence, content=content)
+            db.execute(
+                "INSERT INTO run_guidance(run_id,sequence,request_id,data,consumed_at,created_at) VALUES(?,?,?,?,?,?)",
+                (str(run_id), sequence, str(request_id), self._dump(value), None, value.created_at.isoformat()),
+            )
+        return value, True
+
+    def list_guidance(self, run_id: UUID | str) -> list[RunGuidance]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM run_guidance WHERE run_id=? ORDER BY sequence", (str(run_id),)
+            ).fetchall()
+        return [self._load(RunGuidance, row["data"]) for row in rows]
+
+    def consume_guidance(self, run_id: UUID | str) -> list[RunGuidance]:
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT sequence,data FROM run_guidance WHERE run_id=? AND consumed_at IS NULL ORDER BY sequence",
+                (str(run_id),),
+            ).fetchall()
+            consumed_at = datetime.now(UTC)
+            values = [
+                self._load(RunGuidance, row["data"]).model_copy(update={"consumed_at": consumed_at})
+                for row in rows
+            ]
+            for row, value in zip(rows, values, strict=True):
+                db.execute(
+                    "UPDATE run_guidance SET data=?,consumed_at=? WHERE run_id=? AND sequence=?",
+                    (self._dump(value), consumed_at.isoformat(), str(run_id), row["sequence"]),
+                )
+        return values
+
     @staticmethod
     def _check_control_request(
         db: sqlite3.Connection,

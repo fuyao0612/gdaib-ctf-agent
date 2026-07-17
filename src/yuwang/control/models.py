@@ -89,3 +89,14 @@ class PlanRevision(DomainModel):
         if self.based_on_version != expected:
             raise ValueError("计划版本必须指向直接前一版本")
         return self
+
+
+class RunGuidance(DomainModel):
+    """运行中按提交顺序持久化的用户指引；消费时间存在即表示不可再次应用。"""
+
+    id: UUID = Field(default_factory=uuid4)
+    run_id: UUID
+    sequence: int = Field(ge=1)
+    content: str = Field(min_length=1, max_length=10_000)
+    created_at: datetime = Field(default_factory=utcnow)
+    consumed_at: datetime | None = None

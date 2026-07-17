@@ -26,6 +26,7 @@ from yuwang.agent.state import (
     AgentStateModel,
     BudgetExceeded,
     GraphState,
+    RunPaused,
     RunStopped,
 )
 from yuwang.domain.models import (
@@ -116,8 +117,32 @@ class AgentEngine:
             raise BudgetExceeded("超过总时长预算")
         self.repository.save_checkpoint(state.run_id, node, state.model_dump(mode="json"))
 
+    def _apply_guidance(self, state: AgentStateModel) -> bool:
+        guidance = self.repository.consume_guidance(state.run_id)
+        if not guidance:
+            return False
+        state.supplemental_inputs.extend(item.content for item in guidance)
+        # 人工介入带来了新信息，介入前的重复指纹不再代表当前路径无进展。
+        state.action_fingerprints.clear()
+        state.plan_fingerprints.clear()
+        state.no_progress_count = 0
+        state.guidance_replan_required = True
+        for item in guidance:
+            self.events.emit(
+                state.run_id,
+                EventType.GUIDANCE_APPLIED,
+                "追加指引已在安全检查点应用",
+                {"sequence": item.sequence},
+            )
+        return True
+
     def _result(self, node: str, state: AgentStateModel) -> GraphState:
+        safe_nodes = {"select_action", "policy_check", "observe", "verify", "replan"}
+        if node in safe_nodes:
+            self._apply_guidance(state)
         self._checkpoint(node, state)
+        if node in safe_nodes and self.repository.consume_pause_request(state.run_id):
+            raise RunPaused("已在安全检查点暂停")
         return cast(GraphState, state.model_dump(mode="python"))
 
     def _context(self, state: AgentStateModel, purpose: str) -> str:

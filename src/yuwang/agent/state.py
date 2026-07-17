@@ -23,6 +23,10 @@ class RunStopped(RuntimeError):
     """用户请求停止，运行循环应安全退出。"""
 
 
+class RunPaused(RuntimeError):
+    """暂停请求已在安全检查点生效，运行可从下一节点继续。"""
+
+
 class AgentDeclaredFailure(RuntimeError):
     """Agent 检测到循环、漂移或不安全状态并主动失败。"""
 
@@ -55,6 +59,7 @@ class AgentStateModel(BaseModel):
     validation_status: str = "pending"
     evidence_level: str = "none"
     supplemental_inputs: list[str] = Field(default_factory=list)
+    guidance_replan_required: bool = False
     context_tokens: int = 0
     observation_chars: int = 0
     context_truncations: int = 0
@@ -91,6 +96,7 @@ class GraphState(TypedDict, total=False):
     validation_status: str
     evidence_level: str
     supplemental_inputs: list[str]
+    guidance_replan_required: bool
     context_tokens: int
     observation_chars: int
     context_truncations: int

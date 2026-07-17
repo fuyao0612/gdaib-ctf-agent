@@ -111,11 +111,20 @@ export interface PlanRevision {
   based_on_version: number | null;
   created_at: string;
 }
+export interface RunGuidance {
+  id: string;
+  run_id: string;
+  sequence: number;
+  content: string;
+  created_at: string;
+  consumed_at: string | null;
+}
 export interface RunControl {
   status: RunStatus;
   plan_mode: PlanMode;
   task_briefs: TaskBrief[];
   plans: PlanRevision[];
+  guidance: RunGuidance[];
 }
 export type ProviderPreset = "deepseek" | "qwen" | "glm" | "custom";
 export type StructuredMode =

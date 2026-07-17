@@ -139,6 +139,9 @@ describe("统一任务结果卡片", () => {
     ["failed", "任务失败", "模型服务不可用"],
     ["stopped", "任务已停止", "确认任务范围"],
     ["waiting_input", "等待用户补充", "在下方补充"],
+    ["waiting_clarification", "等待任务澄清", "Task Brief"],
+    ["waiting_approval", "等待计划确认", "检查计划范围"],
+    ["paused", "任务已暂停", "安全检查点"],
   ] as const)("展示 %s 状态", (status, title, expected) => {
     const run = makeRun(status);
     render(

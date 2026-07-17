@@ -87,7 +87,43 @@ def test_v4_migration_is_idempotent(tmp_path) -> None:
         versions = {
             row["version"] for row in database.execute("SELECT version FROM schema_migrations")
         }
-    assert {1, 2, 3, 4, 5}.issubset(versions)
+    assert {1, 2, 3, 4, 5, 6}.issubset(versions)
+
+
+def test_guidance_is_ordered_idempotent_and_consumed_once(tmp_path) -> None:
+    repository = SQLiteRepository(tmp_path / "control.db")
+    run_id = uuid4()
+    request_id = uuid4()
+
+    first, created = repository.queue_guidance(run_id, request_id, "先保留原授权范围")
+    duplicate, duplicated = repository.queue_guidance(
+        run_id, request_id, "先保留原授权范围"
+    )
+    second, _ = repository.queue_guidance(run_id, uuid4(), "再核对验证证据")
+
+    assert created and not duplicated and duplicate == first
+    assert [first.sequence, second.sequence] == [1, 2]
+    with pytest.raises(ValueError, match="请求 ID"):
+        repository.queue_guidance(run_id, request_id, "替换内容")
+    assert [item.sequence for item in repository.consume_guidance(run_id)] == [1, 2]
+    assert repository.consume_guidance(run_id) == []
+    assert all(item.consumed_at for item in repository.list_guidance(run_id))
+
+
+def test_pause_request_is_idempotent_and_consumed_once(tmp_path) -> None:
+    repository = SQLiteRepository(tmp_path / "control.db")
+    run = Run(thread_id=uuid4())
+    run.transition(RunStatus.RUNNING)
+    repository.save_run(run)
+    request_id = uuid4()
+
+    _, created = repository.request_pause(run.id, request_id)
+    _, duplicated = repository.request_pause(run.id, request_id)
+    assert created and not duplicated
+    assert repository.consume_pause_request(run.id)
+    assert not repository.consume_pause_request(run.id)
+    _, created_again = repository.request_pause(run.id, uuid4())
+    assert created_again
 
 
 def test_concurrent_plan_decisions_only_claim_once(tmp_path) -> None:

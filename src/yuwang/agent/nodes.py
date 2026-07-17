@@ -303,6 +303,7 @@ class WorkflowNodes:
     async def replan(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
+        state.guidance_replan_required = False
         state.replan_count += 1
         plan = await engine._model_call(state, AgentPlan, "根据历史观察重新规划")
         state.plan = AgentPlan.model_validate(plan)
@@ -436,6 +437,8 @@ class WorkflowNodes:
     def route_action(self, raw: GraphState) -> str:
         engine = self.engine
         state = engine._state(raw)
+        if state.guidance_replan_required:
+            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
         action = state.action
         if not action:
             return "fail"
@@ -468,20 +471,29 @@ class WorkflowNodes:
 
     def route_policy(self, raw: GraphState) -> str:
         engine = self.engine
-        action = engine._state(raw).action
+        state = engine._state(raw)
+        if state.guidance_replan_required:
+            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+        action = state.action
         if action and action.kind == "replan":
             return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
         return "execute_tool"
 
     def route_verify(self, raw: GraphState) -> str:
         engine = self.engine
-        if engine._state(raw).verified:
+        state = engine._state(raw)
+        if state.guidance_replan_required:
+            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+        if state.verified:
             return "complete"
         return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
 
     def route_observe(self, raw: GraphState) -> str:
         engine = self.engine
-        observations = engine._state(raw).observations
+        state = engine._state(raw)
+        if state.guidance_replan_required:
+            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+        observations = state.observations
         if observations and observations[-1].success:
             return "select_action"
         return "replan" if "replan" in engine.profile.workflow.nodes else "fail"

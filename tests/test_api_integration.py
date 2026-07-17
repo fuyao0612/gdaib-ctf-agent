@@ -42,6 +42,8 @@ def provider_server():
                 response_content = '{"status":"ok"}'
             else:
                 context = json.loads(prompt)
+                if "slow-control" in context.get("untrusted_task", ""):
+                    time.sleep(0.12)
                 if "生成公开 Task Brief" in context["purpose"]:
                     needs_clarification = (
                         "需要澄清任务" in context["untrusted_task"]
@@ -584,6 +586,65 @@ def test_waiting_plan_can_be_stopped_without_background_task(tmp_path, provider_
 
         assert stopped.status_code == 200
         assert stopped.json()["status"] == "stopped"
+
+
+def test_pause_guidance_resume_is_idempotent_and_survives_restart(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    app.state.registry.register(FakeEchoTool())
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        provider = create_provider(client, provider_server)
+        thread = client.post("/api/v1/threads", json={"title": "run control"}).json()
+        run_id = client.post(
+            f"/api/v1/threads/{thread['id']}/turns",
+            json={
+                "content": "slow-control 运行控制测试",
+                "provider_config_id": provider["id"],
+                "verification_rules": [{"kind": "regex", "value": "verified"}],
+            },
+        ).json()["id"]
+        for _ in range(50):
+            if client.get(f"/api/v1/runs/{run_id}").json()["status"] == "running":
+                break
+            time.sleep(0.01)
+
+        guidance_request = str(uuid4())
+        guidance_body = {
+            "request_id": guidance_request,
+            "content": "保持原授权范围，并在完成前重新核对证据",
+        }
+        first_guidance = client.post(
+            f"/api/v1/runs/{run_id}/guidance", json=guidance_body
+        )
+        duplicate_guidance = client.post(
+            f"/api/v1/runs/{run_id}/guidance", json=guidance_body
+        )
+        assert first_guidance.status_code == duplicate_guidance.status_code == 202
+        assert first_guidance.json()["sequence"] == duplicate_guidance.json()["sequence"] == 1
+
+        pause_request = {"request_id": str(uuid4())}
+        assert client.post(f"/api/v1/runs/{run_id}/pause", json=pause_request).status_code == 202
+        assert client.post(f"/api/v1/runs/{run_id}/pause", json=pause_request).status_code == 202
+        assert wait_for_terminal(client, run_id)["status"] == "paused"
+        control = client.get(f"/api/v1/runs/{run_id}/control").json()
+        assert control["guidance"][0]["consumed_at"] is not None
+
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        assert client.get(f"/api/v1/runs/{run_id}").json()["status"] == "paused"
+        resume_request = {"request_id": str(uuid4())}
+        first_resume = client.post(f"/api/v1/runs/{run_id}/resume", json=resume_request)
+        duplicate_resume = client.post(f"/api/v1/runs/{run_id}/resume", json=resume_request)
+        assert first_resume.status_code == duplicate_resume.status_code == 202
+        assert wait_for_terminal(client, run_id)["status"] == "completed"
+        events = client.get(f"/api/v1/runs/{run_id}/events").json()
+        assert sum(item["type"] == "guidance_queued" for item in events) == 1
+        assert sum(item["type"] == "guidance_applied" for item in events) == 1
+        assert sum(item["type"] == "pause_requested" for item in events) == 1
+        assert sum(item["type"] == "run_paused" for item in events) == 1
+        assert sum(item["type"] == "run_resumed" for item in events) == 1
 
 
 def test_competition_lock_stop_openapi_and_upload_policy(tmp_path):

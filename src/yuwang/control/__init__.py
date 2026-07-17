@@ -3,6 +3,7 @@
 from yuwang.control.models import (
     PlanRevision,
     PlanSource,
+    RunGuidance,
     TaskBrief,
     TaskBriefDraft,
     TaskBriefSource,
@@ -11,6 +12,7 @@ from yuwang.control.models import (
 __all__ = [
     "PlanRevision",
     "PlanSource",
+    "RunGuidance",
     "TaskBrief",
     "TaskBriefDraft",
     "TaskBriefSource",

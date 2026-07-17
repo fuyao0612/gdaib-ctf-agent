@@ -11,6 +11,7 @@ import {
 } from "./components/RunViews";
 import ThreadSidebar from "./components/ThreadSidebar";
 import { useWorkbenchData } from "./hooks/useWorkbenchData";
+import { useRunControlActions } from "./hooks/useRunControlActions";
 import type {
   AgentPlan,
   Artifact,
@@ -64,6 +65,14 @@ export default function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [initialSetup, setInitialSetup] = useState(false);
   const [supplementalInput, setSupplementalInput] = useState("");
+  const runControls = useRunControlActions({
+    run: activeRun,
+    setRun: setActiveRun,
+    setBusy,
+    setError,
+    loadControl,
+    connect,
+  });
 
   useEffect(() => {
     void bootstrap()
@@ -425,6 +434,9 @@ export default function App() {
               onDecidePlan={(decision, version, reason) =>
                 void decidePlan(decision, version, reason)
               }
+              onPause={runControls.pause}
+              onResume={runControls.resume}
+              onGuidance={runControls.queueGuidance}
             />
             <MessageComposer
               activeRun={activeRun}
