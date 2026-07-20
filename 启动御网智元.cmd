@@ -17,6 +17,24 @@ if errorlevel 1 (
     exit /b 1
 )
 
+where docker.exe >nul 2>&1
+if not errorlevel 1 (
+    docker info >nul 2>&1
+    if errorlevel 1 (
+        if exist "%ProgramFiles%\Docker\Docker\Docker Desktop.exe" (
+            echo Docker Desktop is not ready. Starting it now...
+            start "" "%ProgramFiles%\Docker\Docker\Docker Desktop.exe"
+            for /l %%N in (1,1,60) do (
+                docker info >nul 2>&1
+                if not errorlevel 1 goto docker_ready
+                timeout /t 2 /nobreak >nul
+            )
+        )
+    )
+)
+
+:docker_ready
+
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0yuwang.ps1" start %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
