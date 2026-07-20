@@ -13,7 +13,7 @@
 
 ## 三步启动（Windows）
 
-先安装并启动 Docker Desktop，然后在项目根目录打开 PowerShell：
+首次使用请先安装 Docker Desktop。之后可以在项目根目录打开 PowerShell：
 
 ```powershell
 # 1. 生成本机配置；已有 .env 时绝不覆盖
