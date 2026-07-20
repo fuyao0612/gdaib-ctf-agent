@@ -4,6 +4,18 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $envFile = Join-Path $root '.env'
 
+function Test-NativeCommand([scriptblock]$Command) {
+    # PowerShell 5.1 会把原生程序 stderr 包装成错误记录；启动前检查只需要退出码。
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $Command *> $null
+        return $LASTEXITCODE -eq 0
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+}
+
 if (-not (Test-Path -LiteralPath $envFile)) {
     throw '项目缺少 .env。请先运行 .\scripts\first-setup.ps1。'
 }
@@ -17,18 +29,15 @@ foreach ($name in 'YUWANG_ADMIN_TOKEN','YUWANG_MASTER_KEY') {
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw '未找到 Docker。请安装并启动 Docker Desktop，然后重新打开 PowerShell。'
 }
-docker info *> $null
-if ($LASTEXITCODE) {
+if (-not (Test-NativeCommand { docker info })) {
     throw 'Docker 服务未运行。请启动 Docker Desktop，等待状态正常后重试。'
 }
-docker compose version *> $null
-if ($LASTEXITCODE) {
+if (-not (Test-NativeCommand { docker compose version })) {
     throw '未找到 Docker Compose v2。请更新 Docker Desktop。'
 }
 Push-Location $root
 try {
-    docker compose config --quiet
-    if ($LASTEXITCODE) {
+    if (-not (Test-NativeCommand { docker compose config --quiet })) {
         throw 'compose.yaml 或 .env 配置无效，请运行 docker compose config 查看具体错误。'
     }
 } finally {

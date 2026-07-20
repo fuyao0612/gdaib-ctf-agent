@@ -32,6 +32,10 @@
 .\yuwang.ps1 help
 ```
 
+不想打开 PowerShell 时，直接双击项目根目录的 `启动御网智元.cmd` 即可。它会执行同一套
+配置、Docker、端口和健康检查；启动成功后自动打开浏览器，失败时保留窗口并显示原因。
+关闭这个窗口不会停止服务，停止仍运行 `.\yuwang.ps1 stop`。
+
 > 第一次使用建议继续阅读 [5 分钟快速入门](docs/quickstart.md)。Linux/macOS
 > 可使用 `./scripts/first-setup.sh --start`，详见[部署文档](docs/deployment.md)。
 
