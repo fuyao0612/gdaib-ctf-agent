@@ -92,7 +92,12 @@ class PlanRevision(DomainModel):
 
 
 class RunGuidance(DomainModel):
-    """运行中按提交顺序持久化的用户指引；消费时间存在即表示不可再次应用。"""
+    """运行中按提交顺序持久化的用户指引。
+
+    ``consumed_at`` 表示该记录已经结算、不会再次进入 Agent；正常在安全检查点
+    应用时只设置它。若任务已进入终态而没有剩余检查点，``discarded_at`` 会同时
+    记录原因，界面必须明确显示“未应用”，不能把它伪装成已应用。
+    """
 
     id: UUID = Field(default_factory=uuid4)
     run_id: UUID
@@ -101,3 +106,4 @@ class RunGuidance(DomainModel):
     artifact_ids: list[UUID] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utcnow)
     consumed_at: datetime | None = None
+    discarded_at: datetime | None = None

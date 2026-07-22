@@ -61,6 +61,137 @@ class SQLiteControlStore(SQLiteStore):
             )
         return True
 
+    def _persist_user_message(
+        self, db: sqlite3.Connection, thread_id: UUID, message: Message
+    ) -> Message:
+        """在控制事务中复用或写入同一条用户时间线消息。"""
+
+        if message.thread_id != thread_id or message.role != MessageRole.USER:
+            raise ValueError("控制消息不属于当前运行")
+        row = db.execute("SELECT data FROM messages WHERE id=?", (str(message.id),)).fetchone()
+        if row:
+            persisted = self._load(Message, row["data"])
+            if (
+                persisted.thread_id != message.thread_id
+                or persisted.role != MessageRole.USER
+                or persisted.content != message.content
+                or persisted.artifact_ids != message.artifact_ids
+            ):
+                raise ValueError("请求 ID 已用于不同的消息内容")
+            return persisted
+        db.execute(
+            "INSERT INTO messages VALUES(?,?,?,?)",
+            (
+                str(message.id),
+                str(message.thread_id),
+                self._dump(message),
+                message.created_at.isoformat(),
+            ),
+        )
+        return message
+
+    def commit_guidance_interaction(
+        self,
+        *,
+        run_id: UUID | str,
+        message: Message,
+    ) -> tuple[Run, RunGuidance, bool, Message]:
+        """原子提交可接受状态校验、时间线消息、指引和公开排队事件。
+
+        指引在安全检查点才会被 Agent 消费；因此不能把消息和指引分开写入，
+        否则 Run 恰好终止时会留下界面永远显示“已排队”的半成品记录。
+        """
+
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            run_row = db.execute("SELECT data FROM runs WHERE id=?", (str(run_id),)).fetchone()
+            if not run_row:
+                raise KeyError("run not found")
+            run = self._load(Run, run_row["data"])
+            guidance_row = db.execute(
+                "SELECT data FROM run_guidance WHERE run_id=? AND request_id=?",
+                (str(run_id), str(message.id)),
+            ).fetchone()
+            if guidance_row:
+                guidance = self._load(RunGuidance, guidance_row["data"])
+                if (
+                    guidance.content != message.content
+                    or guidance.artifact_ids != message.artifact_ids
+                ):
+                    raise ValueError("请求 ID 已用于不同的追加指引")
+                message_row = db.execute(
+                    "SELECT data FROM messages WHERE id=?", (str(message.id),)
+                ).fetchone()
+                if not message_row:
+                    raise ValueError("幂等追加指引缺少时间线消息")
+                persisted_message = self._persist_user_message(db, run.thread_id, message)
+                return run, guidance, False, persisted_message
+
+            if run.status not in {
+                RunStatus.QUEUED,
+                RunStatus.RUNNING,
+                RunStatus.PAUSED,
+                RunStatus.WAITING_APPROVAL,
+            }:
+                raise ValueError("当前状态不能追加指引")
+            # 停止请求比终态更早抵达时，状态仍可能是 running。此时继续接收
+            # 新指引只会让它在收尾时失去应用机会，因此必须在同一事务中拒绝。
+            if run.stop_requested:
+                raise ValueError("任务已收到停止请求，不能追加指引")
+            persisted_message = self._persist_user_message(db, run.thread_id, message)
+            sequence = int(
+                db.execute(
+                    "SELECT COALESCE(MAX(sequence),0)+1 AS n FROM run_guidance WHERE run_id=?",
+                    (str(run_id),),
+                ).fetchone()["n"]
+            )
+            guidance = RunGuidance(
+                run_id=UUID(str(run_id)),
+                sequence=sequence,
+                content=message.content,
+                artifact_ids=message.artifact_ids,
+            )
+            event_sequence = int(
+                db.execute(
+                    "SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE run_id=?",
+                    (str(run_id),),
+                ).fetchone()["n"]
+            )
+            event = Event(
+                run_id=UUID(str(run_id)),
+                sequence=event_sequence,
+                type=EventType.GUIDANCE_QUEUED,
+                summary="追加指引已排队",
+                payload={
+                    "sequence": guidance.sequence,
+                    "content_length": len(message.content),
+                    "artifact_count": len(message.artifact_ids),
+                },
+            )
+            db.execute(
+                "INSERT INTO run_guidance(run_id,sequence,request_id,data,consumed_at,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (
+                    str(run_id),
+                    sequence,
+                    str(message.id),
+                    self._dump(guidance),
+                    None,
+                    guidance.created_at.isoformat(),
+                ),
+            )
+            db.execute(
+                "INSERT INTO events VALUES(?,?,?,?,?)",
+                (
+                    str(event.event_id),
+                    str(run_id),
+                    event.sequence,
+                    str(event.type),
+                    self._dump(event),
+                ),
+            )
+        return run, guidance, True, persisted_message
+
     def queue_guidance(
         self,
         run_id: UUID | str,
@@ -102,6 +233,74 @@ class SQLiteControlStore(SQLiteStore):
             ).fetchall()
         return [self._load(RunGuidance, row["data"]) for row in rows]
 
+    def list_pending_guidance(self, run_id: UUID | str) -> list[RunGuidance]:
+        """只读取尚未结算的指引，供安全检查点在事务中认领。"""
+
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM run_guidance WHERE run_id=? AND consumed_at IS NULL "
+                "ORDER BY sequence",
+                (str(run_id),),
+            ).fetchall()
+        return [self._load(RunGuidance, row["data"]) for row in rows]
+
+    def _settle_terminal_guidance(
+        self, db: sqlite3.Connection, run: Run
+    ) -> list[RunGuidance]:
+        """在写入终态的同一事务中结算最后一个检查点之后到达的指引。
+
+        这些记录已真实写入时间线，不能删除；但 Agent 已无安全检查点可应用。
+        同时写入明确审计和 ``discarded_at``，避免 UI 长期停留在“已排队”或
+        把未应用的内容误报成已应用。
+        """
+
+        rows = db.execute(
+            "SELECT sequence,data FROM run_guidance WHERE run_id=? AND consumed_at IS NULL "
+            "ORDER BY sequence",
+            (str(run.id),),
+        ).fetchall()
+        if not rows:
+            return []
+        settled_at = datetime.now(UTC)
+        event_sequence = int(
+            db.execute(
+                "SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE run_id=?",
+                (str(run.id),),
+            ).fetchone()["n"]
+        )
+        values: list[RunGuidance] = []
+        for row in rows:
+            value = self._load(RunGuidance, row["data"]).model_copy(
+                update={"consumed_at": settled_at, "discarded_at": settled_at}
+            )
+            db.execute(
+                "UPDATE run_guidance SET data=?,consumed_at=? WHERE run_id=? AND sequence=?",
+                (self._dump(value), settled_at.isoformat(), str(run.id), row["sequence"]),
+            )
+            event = Event(
+                run_id=run.id,
+                sequence=event_sequence,
+                type=EventType.GUIDANCE_SKIPPED,
+                summary="任务结束，追加指引未应用",
+                payload={
+                    "sequence": value.sequence,
+                    "terminal_status": str(run.status),
+                },
+            )
+            db.execute(
+                "INSERT INTO events VALUES(?,?,?,?,?)",
+                (
+                    str(event.event_id),
+                    str(run.id),
+                    event.sequence,
+                    str(event.type),
+                    self._dump(event),
+                ),
+            )
+            event_sequence += 1
+            values.append(value)
+        return values
+
     def find_guidance_request(
         self, thread_id: UUID | str, request_id: UUID | str
     ) -> tuple[Run, RunGuidance] | None:
@@ -138,6 +337,95 @@ class SQLiteControlStore(SQLiteStore):
                     (self._dump(value), consumed_at.isoformat(), str(run_id), row["sequence"]),
                 )
         return values
+
+    def commit_guidance_checkpoint(
+        self,
+        *,
+        run_id: UUID | str,
+        node: str,
+        state: dict[str, Any],
+        guidance: list[RunGuidance],
+    ) -> None:
+        """原子保存“已应用指引、公开事件和恢复检查点”。
+
+        先标记 ``consumed_at`` 再单独保存检查点会在进程异常时丢失指引；这里将
+        三者放入一个 SQLite 写事务，重启时要么完整恢复新状态，要么仍可再次应用。
+        """
+
+        if not guidance:
+            raise ValueError("没有可提交的追加指引")
+        expected = {item.sequence for item in guidance}
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT sequence,data FROM run_guidance WHERE run_id=? AND consumed_at IS NULL "
+                "ORDER BY sequence",
+                (str(run_id),),
+            ).fetchall()
+            pending = {
+                int(row["sequence"]): self._load(RunGuidance, row["data"]) for row in rows
+            }
+            if not expected.issubset(pending):
+                raise ValueError("追加指引已被其他安全检查点结算")
+
+            consumed_at = datetime.now(UTC)
+            event_sequence = int(
+                db.execute(
+                    "SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE run_id=?",
+                    (str(run_id),),
+                ).fetchone()["n"]
+            )
+            for sequence in sorted(expected):
+                value = pending[sequence].model_copy(update={"consumed_at": consumed_at})
+                db.execute(
+                    "UPDATE run_guidance SET data=?,consumed_at=? WHERE run_id=? AND sequence=?",
+                    (self._dump(value), consumed_at.isoformat(), str(run_id), sequence),
+                )
+                event = Event(
+                    run_id=UUID(str(run_id)),
+                    sequence=event_sequence,
+                    type=EventType.GUIDANCE_APPLIED,
+                    summary="追加指引已在安全检查点应用",
+                    payload={"sequence": sequence},
+                )
+                db.execute(
+                    "INSERT INTO events VALUES(?,?,?,?,?)",
+                    (
+                        str(event.event_id),
+                        str(run_id),
+                        event.sequence,
+                        str(event.type),
+                        self._dump(event),
+                    ),
+                )
+                event_sequence += 1
+
+            checkpoint_sequence = int(
+                db.execute(
+                    "SELECT COALESCE(MAX(checkpoint_sequence),0)+1 AS n "
+                    "FROM run_checkpoints WHERE run_id=?",
+                    (str(run_id),),
+                ).fetchone()["n"]
+            )
+            checkpoint = RunCheckpoint(
+                run_id=UUID(str(run_id)),
+                checkpoint_sequence=checkpoint_sequence,
+                node=node,
+                state=state,
+                elapsed_seconds=float(state.get("elapsed_seconds", 0.0)),
+            )
+            db.execute(
+                "INSERT INTO run_checkpoints(run_id,checkpoint_sequence,node,state_schema_version,"
+                "elapsed_seconds,data) VALUES(?,?,?,?,?,?)",
+                (
+                    str(run_id),
+                    checkpoint.checkpoint_sequence,
+                    checkpoint.node,
+                    checkpoint.state_schema_version,
+                    checkpoint.elapsed_seconds,
+                    self._dump(checkpoint),
+                ),
+            )
 
     @staticmethod
     def _check_control_request(
@@ -259,8 +547,6 @@ class SQLiteControlStore(SQLiteStore):
             run = self._load(Run, row["data"])
             if run.status != expected_status:
                 raise ValueError(f"运行状态必须为 {expected_status}")
-            if message.thread_id != run.thread_id or message.role != MessageRole.USER:
-                raise ValueError("控制消息不属于当前运行")
             if expected_brief_version is not None:
                 latest = db.execute(
                     "SELECT MAX(version) AS version FROM task_briefs WHERE run_id=?",
@@ -269,29 +555,7 @@ class SQLiteControlStore(SQLiteStore):
                 if latest != expected_brief_version:
                     raise ValueError(f"Task Brief 版本已变化，当前为 {latest}")
 
-            message_row = db.execute(
-                "SELECT data FROM messages WHERE id=?", (str(message.id),)
-            ).fetchone()
-            if message_row:
-                persisted_message = self._load(Message, message_row["data"])
-                if (
-                    persisted_message.thread_id != message.thread_id
-                    or persisted_message.role != MessageRole.USER
-                    or persisted_message.content != message.content
-                    or persisted_message.artifact_ids != message.artifact_ids
-                ):
-                    raise ValueError("请求 ID 已用于不同的消息内容")
-            else:
-                db.execute(
-                    "INSERT INTO messages VALUES(?,?,?,?)",
-                    (
-                        str(message.id),
-                        str(message.thread_id),
-                        self._dump(message),
-                        message.created_at.isoformat(),
-                    ),
-                )
-                persisted_message = message
+            persisted_message = self._persist_user_message(db, run.thread_id, message)
 
             if memory is not None:
                 if memory.thread_id != run.thread_id or memory.source_run_id != run.id:

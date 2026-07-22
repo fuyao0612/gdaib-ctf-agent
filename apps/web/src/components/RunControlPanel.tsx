@@ -11,6 +11,7 @@ interface Props {
 }
 
 function guidanceState(item: RunGuidance, events: Event[]): string {
+  if (item.discarded_at) return "任务已结束，未应用";
   if (!item.consumed_at) return "已排队";
   // 后端在 `replanned` 事件中写入真正触发该次重规划的 guidance_sequences。
   // 只接受这个显式关联，不能从“已消费”或时间先后推断因果。

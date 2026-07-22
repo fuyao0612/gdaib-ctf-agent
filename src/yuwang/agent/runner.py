@@ -178,10 +178,14 @@ class AgentRunCoordinator:
             call.status = CallStatus.FAILED
             call.error = "服务中断；幂等调用将在恢复流程重新执行"
             engine.repository.save_tool_call(call)
-        if engine._apply_guidance(state):
+        guidance = engine._apply_guidance(state)
+        if guidance:
             # 暂停期间到达的指引必须先进入持久化状态，恢复后才能安全地直接重规划。
-            engine.repository.save_checkpoint(
-                run_id, checkpoint.node, state.model_dump(mode="json")
+            engine.repository.commit_guidance_checkpoint(
+                run_id=run_id,
+                node=checkpoint.node,
+                state=state.model_dump(mode="json"),
+                guidance=guidance,
             )
         target = self.resume_target(checkpoint.node, state)
         engine.events.emit(

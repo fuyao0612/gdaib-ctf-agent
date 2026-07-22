@@ -5,8 +5,9 @@ from uuid import uuid4
 
 import pytest
 
+from yuwang.agent.state import AgentStateModel
 from yuwang.control import PlanRevision, PlanSource, TaskBrief, TaskBriefSource
-from yuwang.domain.models import AgentPlan, Run, RunStatus, Thread
+from yuwang.domain.models import AgentPlan, EventType, Run, RunStatus, TaskSpec, Thread
 from yuwang.storage import SQLiteRepository
 
 
@@ -108,6 +109,57 @@ def test_guidance_is_ordered_idempotent_and_consumed_once(tmp_path) -> None:
     assert [item.sequence for item in repository.consume_guidance(run_id)] == [1, 2]
     assert repository.consume_guidance(run_id) == []
     assert all(item.consumed_at for item in repository.list_guidance(run_id))
+
+
+def test_guidance_checkpoint_is_committed_with_application_audit(tmp_path) -> None:
+    """安全检查点不能先消费指引、再在崩溃窗口外单独保存恢复状态。"""
+
+    repository = SQLiteRepository(tmp_path / "control.db")
+    run = Run(thread_id=uuid4())
+    run.transition(RunStatus.RUNNING)
+    repository.save_run(run)
+    queued, _ = repository.queue_guidance(run.id, uuid4(), "在报告前再次核对证据")
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="原始任务"))
+    state.supplemental_inputs.append(queued.content)
+    state.guidance_replan_required = True
+    state.guidance_replan_sequences.append(queued.sequence)
+
+    repository.commit_guidance_checkpoint(
+        run_id=run.id,
+        node="verify",
+        state=state.model_dump(mode="json"),
+        guidance=repository.list_pending_guidance(run.id),
+    )
+
+    assert repository.list_pending_guidance(run.id) == []
+    assert repository.latest_checkpoint(run.id).node == "verify"
+    events = repository.list_events(run.id)
+    assert [(event.type, event.payload["sequence"]) for event in events] == [
+        (EventType.GUIDANCE_APPLIED, queued.sequence)
+    ]
+
+
+def test_terminal_run_marks_pending_guidance_as_unapplied(tmp_path) -> None:
+    """最后一个安全检查点之后的真实输入必须可审计且不能永久显示为排队。"""
+
+    repository = SQLiteRepository(tmp_path / "control.db")
+    run = Run(thread_id=uuid4())
+    run.transition(RunStatus.RUNNING)
+    repository.save_run(run)
+    queued, _ = repository.queue_guidance(run.id, uuid4(), "收尾前追加的指引")
+
+    run.transition(RunStatus.STOPPED, "测试终态窗口")
+    repository.save_run(run)
+
+    [settled] = repository.list_guidance(run.id)
+    assert settled.sequence == queued.sequence
+    assert settled.consumed_at is not None
+    assert settled.discarded_at is not None
+    assert repository.list_pending_guidance(run.id) == []
+    events = repository.list_events(run.id)
+    assert [(event.type, event.payload["sequence"]) for event in events] == [
+        (EventType.GUIDANCE_SKIPPED, queued.sequence)
+    ]
 
 
 def test_pause_request_is_idempotent_and_consumed_once(tmp_path) -> None:

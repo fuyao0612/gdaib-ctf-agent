@@ -29,6 +29,7 @@ from yuwang.agent.state import (
     RunPaused,
     RunStopped,
 )
+from yuwang.control import RunGuidance
 from yuwang.domain.models import (
     AgentAction,
     CallStatus,
@@ -91,7 +92,12 @@ class AgentEngine:
 
         return AgentStateModel.model_validate(raw)
 
-    def _checkpoint(self, node: str, state: AgentStateModel) -> None:
+    def _checkpoint(
+        self,
+        node: str,
+        state: AgentStateModel,
+        applied_guidance: list[RunGuidance] | None = None,
+    ) -> None:
         """累计真实消耗、检查全部预算并写入追加式检查点。"""
 
         now = time.monotonic()
@@ -115,12 +121,23 @@ class AgentEngine:
             raise BudgetExceeded("超过模型费用预算")
         if state.elapsed_seconds > budget.max_duration_seconds:
             raise BudgetExceeded("超过总时长预算")
-        self.repository.save_checkpoint(state.run_id, node, state.model_dump(mode="json"))
+        checkpoint_state = state.model_dump(mode="json")
+        if applied_guidance:
+            self.repository.commit_guidance_checkpoint(
+                run_id=state.run_id,
+                node=node,
+                state=checkpoint_state,
+                guidance=applied_guidance,
+            )
+            return
+        self.repository.save_checkpoint(state.run_id, node, checkpoint_state)
 
-    def _apply_guidance(self, state: AgentStateModel) -> bool:
-        guidance = self.repository.consume_guidance(state.run_id)
+    def _apply_guidance(self, state: AgentStateModel) -> list[RunGuidance]:
+        """先把指引并入内存状态，随后由检查点事务一次性落库。"""
+
+        guidance = self.repository.list_pending_guidance(state.run_id)
         if not guidance:
-            return False
+            return []
         state.supplemental_inputs.extend(item.content for item in guidance)
         for item in guidance:
             for artifact_id in item.artifact_ids:
@@ -134,19 +151,12 @@ class AgentEngine:
         for item in guidance:
             if item.sequence not in state.guidance_replan_sequences:
                 state.guidance_replan_sequences.append(item.sequence)
-            self.events.emit(
-                state.run_id,
-                EventType.GUIDANCE_APPLIED,
-                "追加指引已在安全检查点应用",
-                {"sequence": item.sequence},
-            )
-        return True
+        return guidance
 
     def _result(self, node: str, state: AgentStateModel) -> GraphState:
         safe_nodes = {"select_action", "policy_check", "observe", "verify", "replan"}
-        if node in safe_nodes:
-            self._apply_guidance(state)
-        self._checkpoint(node, state)
+        guidance = self._apply_guidance(state) if node in safe_nodes else []
+        self._checkpoint(node, state, guidance)
         if node in safe_nodes and self.repository.consume_pause_request(state.run_id):
             raise RunPaused("已在安全检查点暂停")
         return cast(GraphState, state.model_dump(mode="python"))

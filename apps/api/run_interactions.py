@@ -14,7 +14,6 @@ from uuid import UUID
 from fastapi import HTTPException
 
 from apps.api.context import ApiContext
-from apps.api.schemas import MessageCreate
 from yuwang.agent import AgentEngine, AgentStateModel
 from yuwang.control import RunGuidance
 from yuwang.domain.models import (
@@ -171,36 +170,24 @@ class RunInteractionService:
     ) -> RunInteraction:
         artifact_ids = artifact_ids or []
         run = self.context.require_run(run_id)
-        if run.status not in {
-            RunStatus.QUEUED,
-            RunStatus.RUNNING,
-            RunStatus.PAUSED,
-            RunStatus.WAITING_APPROVAL,
-        }:
-            raise HTTPException(409, "当前状态不能追加指引")
         self.context.validate_user_message_artifacts(run.thread_id, artifact_ids)
-        # 先固化时间线消息。若后续队列写入意外失败，用户仍能用同一 request_id
-        # 重试；反过来先入队会留下“指引可能已生效、但时间线没有该消息”的孤儿记录。
-        message = self.context.save_user_message(
-            run.thread_id,
-            MessageCreate(content=content, artifact_ids=artifact_ids),
-            message_id=request_id,
+        message = Message(
+            id=request_id,
+            thread_id=run.thread_id,
+            role=MessageRole.USER,
+            content=content,
+            artifact_ids=artifact_ids,
         )
         try:
-            guidance, claimed = self.repository.queue_guidance(
-                run_id, request_id, content, artifact_ids
+            run, guidance, _claimed, persisted_message = (
+                self.repository.commit_guidance_interaction(
+                    run_id=run_id,
+                    message=message,
+                )
             )
-        except ValueError as exc:
+        except (KeyError, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
-        if not claimed:
-            return RunInteraction(run=run, message=message, guidance=guidance)
-        self.repository.create_event(
-            run_id,
-            EventType.GUIDANCE_QUEUED,
-            "追加指引已排队",
-            {"sequence": guidance.sequence, "content_length": len(content), "artifact_count": len(artifact_ids)},
-        )
-        return RunInteraction(run=run, message=message, guidance=guidance)
+        return RunInteraction(run=run, message=persisted_message, guidance=guidance)
 
     def submit_input(
         self,

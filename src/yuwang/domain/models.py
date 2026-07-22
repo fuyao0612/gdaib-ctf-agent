@@ -84,6 +84,7 @@ class EventType(StrEnum):
     PLAN_REJECTED = "plan_rejected"
     GUIDANCE_QUEUED = "guidance_queued"
     GUIDANCE_APPLIED = "guidance_applied"
+    GUIDANCE_SKIPPED = "guidance_skipped"
     PAUSE_REQUESTED = "pause_requested"
     RUN_PAUSED = "run_paused"
     RUN_RESUMED = "run_resumed"

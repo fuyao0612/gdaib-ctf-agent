@@ -120,6 +120,8 @@ export interface RunGuidance {
   content: string;
   created_at: string;
   consumed_at: string | null;
+  /** 任务已在最后一个安全检查点后结束时的明确结算时间。 */
+  discarded_at?: string | null;
 }
 export interface RunControl {
   status: RunStatus;
