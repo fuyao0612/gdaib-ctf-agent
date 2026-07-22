@@ -7,6 +7,7 @@ import {
   changeWorkflowPreset,
   createEmptyProfile,
   profileToInput,
+  replaceRegexEvidenceRules,
 } from "./model";
 
 describe("Agent 配置纯转换规则", () => {
@@ -55,5 +56,22 @@ describe("Agent 配置纯转换规则", () => {
     };
     expect(profileToInput(profile)).not.toHaveProperty("profile_id");
     expect(profileToInput(profile).name).toBe("新的 Agent");
+  });
+
+  it("编辑证据正则时保留未编辑的 SHA-256 规则", () => {
+    const result = replaceRegexEvidenceRules(
+      [
+        { kind: "regex", value: "FLAG\\{旧规则\\}" },
+        { kind: "sha256", value: "a".repeat(64) },
+        { kind: "regex", value: "旧的第二条" },
+      ],
+      "FLAG\\{新规则\\}\nTOKEN-[A-Z]+",
+    );
+
+    expect(result).toEqual([
+      { kind: "regex", value: "FLAG\\{新规则\\}" },
+      { kind: "sha256", value: "a".repeat(64) },
+      { kind: "regex", value: "TOKEN-[A-Z]+" },
+    ]);
   });
 });

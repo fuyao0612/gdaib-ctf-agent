@@ -28,7 +28,7 @@ if (Test-Path -LiteralPath $envFile) {
         throw '系统随机数生成失败，未写入 .env。请重试或检查系统加密服务。'
     }
     $newline = [Environment]::NewLine
-    $content = "YUWANG_ADMIN_TOKEN=$firstValue${newline}YUWANG_MASTER_KEY=$secondValue${newline}YUWANG_CORS_ORIGINS=http://localhost:8080${newline}YUWANG_COOKIE_SECURE=false${newline}YUWANG_WEB_PORT=8080${newline}YUWANG_DATA_PATH=./data${newline}YUWANG_API_CPUS=1.0${newline}YUWANG_API_MEMORY=768M${newline}YUWANG_WEB_CPUS=0.5${newline}YUWANG_WEB_MEMORY=192M"
+    $content = "YUWANG_ADMIN_TOKEN=$firstValue${newline}YUWANG_MASTER_KEY=$secondValue${newline}YUWANG_CORS_ORIGINS=http://127.0.0.1:8080,http://localhost:8080${newline}YUWANG_COOKIE_SECURE=false${newline}YUWANG_WEB_PORT=8080${newline}YUWANG_DATA_PATH=./data${newline}YUWANG_API_CPUS=1.0${newline}YUWANG_API_MEMORY=768M${newline}YUWANG_WEB_CPUS=0.5${newline}YUWANG_WEB_MEMORY=192M"
     [IO.File]::WriteAllText($envFile, $content, (New-Object Text.UTF8Encoding($false)))
     Write-Host '已创建 .env。密钥未输出到终端，请在本机安全保存。'
 }

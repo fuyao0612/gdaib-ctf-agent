@@ -26,15 +26,24 @@
 
 也可以直接双击项目根目录的 `启动御网智元.cmd`。它会调用同一个 Docker 启动流程；如果
 检测到默认位置的 Docker Desktop 尚未启动，会先尝试启动并等待引擎就绪。健康检查通过后
-打开 `http://localhost:8080`；如果失败，窗口不会立即关闭，方便查看 Docker 未启动、
-端口占用或配置错误。停止服务仍使用：
+使用系统默认浏览器打开实际 Web 地址。默认是 `http://127.0.0.1:8080`；如果在 `.env`
+修改了 `YUWANG_WEB_PORT`，双击入口会自动使用新端口。若浏览器没有弹出，直接使用窗口
+中显示的 `Web` 地址；失败时窗口不会立即关闭，方便查看 Docker 未启动、端口占用或配置
+错误。双击入口会使用 Docker 构建缓存检查并重建当前源码，所以源码更新后不会复用旧的
+前端静态文件；首次启动或更新时可能需要几分钟。它会读取 `.env` 校验必填配置，但不会显示、输出或自动填写管理员令牌，
+仍需由管理员在本机手工从 `.env` 复制 `YUWANG_ADMIN_TOKEN=` 后的完整值。停止服务仍使用：
 
 ```powershell
 .\yuwang.ps1 stop
 ```
 
-看到 Web 和 API 正常后打开 <http://localhost:8080>。首次配置前 Provider 和默认
-Agent 显示未就绪是正常现象。
+看到 Web 和 API 正常后，打开启动输出中显示的 Web 地址（默认
+<http://127.0.0.1:8080>）。如果某台 Windows 机器的 `localhost` 无法打开，不要更改
+Docker 端口，直接使用这个 IPv4 地址。首次配置前 Provider 和默认 Agent 显示未就绪是正常现象。
+
+如果 PowerShell 提示禁止运行 `.ps1`，无需修改电脑的全局执行策略：直接双击
+`启动御网智元.cmd`，或使用 `powershell -NoProfile -ExecutionPolicy Bypass -File .\yuwang.ps1 doctor`
+进行只读诊断。
 
 如果没有 Docker，但已安装 Python 3.11+、Node.js 20+ 和依赖：
 
@@ -42,7 +51,7 @@ Agent 显示未就绪是正常现象。
 .\yuwang.ps1 start -Development
 ```
 
-开发页面是 <http://localhost:5173>。
+开发页面是 <http://127.0.0.1:5173>。
 
 ## 3. 登录设置中心
 

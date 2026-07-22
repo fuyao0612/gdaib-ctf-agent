@@ -9,9 +9,10 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from yuwang.domain.models import AgentPlan, InteractionMode, ThreadMode, VerificationRule
+from yuwang.verification_rules import validate_verification_rule
 
 
 class ThreadCreate(BaseModel):
@@ -50,6 +51,13 @@ class RunCreate(BaseModel):
     verification_rules: list[VerificationRule] = Field(default_factory=list)
     plan_mode: Literal["auto", "approval"] | None = None
 
+    @field_validator("verification_rules")
+    @classmethod
+    def validate_verification_rules(
+        cls, values: list[VerificationRule]
+    ) -> list[VerificationRule]:
+        return [validate_verification_rule(value) for value in values]
+
 
 class TurnCreate(MessageCreate, RunCreate):
     """用户一次发送所需的消息与运行选项。"""
@@ -57,6 +65,8 @@ class TurnCreate(MessageCreate, RunCreate):
 
 class RunInput(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
+    artifact_ids: list[UUID] = Field(default_factory=list)
+    request_id: UUID | None = None
 
 
 class ClarificationSubmit(RunInput):
@@ -83,6 +93,7 @@ class ControlRequest(BaseModel):
 
 class GuidanceSubmit(ControlRequest):
     content: str = Field(min_length=1, max_length=10_000)
+    artifact_ids: list[UUID] = Field(default_factory=list)
 
 
 class MemoryToggle(BaseModel):

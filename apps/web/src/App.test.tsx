@@ -194,4 +194,348 @@ describe("App", () => {
       expect(FakeEventSource.instances.some((source) => source.url.includes("/runs/r1/events/stream"))).toBe(true),
     );
   });
+
+  it("运行中从主输入框按顺序追加指引，并把它们写入同一时间线", async () => {
+    window.localStorage.setItem("yuwang.currentThreadId", "t-guidance");
+    const run = {
+      id: "r-guidance", thread_id: "t-guidance", status: "running", provider: "测试 Provider",
+      agent_profile_id: "a1", agent_profile_version: 1, plan_mode: "auto",
+      completion_mode: "advisory", validation_status: "pending", evidence_level: "none",
+      attempt: 1, stop_requested: false, created_at: now, started_at: now, finished_at: null,
+    };
+    const messages: Array<Record<string, unknown>> = [];
+    const guidance: Array<Record<string, unknown>> = [];
+    const messageUrls: string[] = [];
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/setup/status")) return Response.json({ configured: true, checks: {}, version: "0.5.0" });
+      if (url.endsWith("/admin/session")) return Response.json({ authenticated: true, csrf_token: "csrf-test" });
+      if (url.endsWith("/providers") || url.endsWith("/agent-profiles")) return Response.json([]);
+      if (url.endsWith("/settings/chat")) return Response.json(preferences);
+      if (url.endsWith("/threads")) return Response.json([thread("t-guidance", "运行中纠偏")]);
+      if (url.endsWith("/threads/t-guidance/memories")) return Response.json([]);
+      if (url.endsWith("/threads/t-guidance/message") && init?.method === "POST") {
+        messageUrls.push(url);
+        const body = JSON.parse(String(init.body));
+        const user = {
+          id: `u-${guidance.length + 1}`,
+          role: "user",
+          content: body.content,
+          artifact_ids: [],
+          created_at: now,
+        };
+        const item = {
+          id: `g-${guidance.length + 1}`,
+          run_id: "r-guidance",
+          sequence: guidance.length + 1,
+          content: body.content,
+          created_at: now,
+          consumed_at: null,
+        };
+        messages.push(user);
+        guidance.push(item);
+        return new Response(
+          `event: guidance_queued\ndata: ${JSON.stringify({ run, guidance: item, user_message: user })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      if (url.endsWith("/threads/t-guidance"))
+        return Response.json(detail("t-guidance", "运行中纠偏", { runs: [run], messages }));
+      if (url.endsWith("/runs/r-guidance/events")) return Response.json([]);
+      if (url.endsWith("/runs/r-guidance/audit"))
+        return Response.json({ run: { provider: "测试 Provider" }, usage: {}, limits: {}, model_calls: [], tool_calls: [], evidence: [], checkpoints: [] });
+      if (url.endsWith("/runs/r-guidance/control"))
+        return Response.json({ status: "running", plan_mode: "auto", task_briefs: [], plans: [], guidance });
+      return Response.json({});
+    });
+
+    render(<App />);
+    const input = await screen.findByLabelText("消息");
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "第一条：先核对证据来源" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("第一条：先核对证据来源")).toBeInTheDocument();
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "第二条：保留原授权范围" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("第二条：保留原授权范围")).toBeInTheDocument();
+    expect(messageUrls).toHaveLength(2);
+    const timelineMessages = Array.from(document.querySelectorAll(".message.user"));
+    expect(timelineMessages).toHaveLength(2);
+    expect(timelineMessages.map((item) => item.textContent)).toEqual([
+      expect.stringContaining("第一条：先核对证据来源"),
+      expect.stringContaining("第二条：保留原授权范围"),
+    ]);
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).not.toContain(
+      "/api/v1/runs/r-guidance/guidance",
+    );
+  });
+
+  it("输入停止通过统一入口立即显示终态，不调用旧停止路由", async () => {
+    window.localStorage.setItem("yuwang.currentThreadId", "t-stop");
+    const running = {
+      id: "r-stop", thread_id: "t-stop", status: "running", provider: "测试 Provider",
+      agent_profile_id: "a1", agent_profile_version: 1, plan_mode: "auto",
+      completion_mode: "advisory", validation_status: "pending", evidence_level: "none",
+      attempt: 1, stop_requested: false, created_at: now, started_at: now, finished_at: null,
+    };
+    const stopped = { ...running, status: "stopped", stop_requested: true, finished_at: now };
+    const stopMessage = {
+      id: "u-stop",
+      role: "user",
+      content: "停止",
+      artifact_ids: [],
+      created_at: now,
+    };
+    const requestedUrls: string[] = [];
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url.endsWith("/setup/status")) return Response.json({ configured: true, checks: {}, version: "0.5.0" });
+      if (url.endsWith("/admin/session")) return Response.json({ authenticated: true, csrf_token: "csrf-test" });
+      if (url.endsWith("/providers") || url.endsWith("/agent-profiles")) return Response.json([]);
+      if (url.endsWith("/settings/chat")) return Response.json(preferences);
+      if (url.endsWith("/threads")) return Response.json([thread("t-stop", "停止任务")]);
+      if (url.endsWith("/threads/t-stop/memories")) return Response.json([]);
+      if (url.endsWith("/threads/t-stop/message") && init?.method === "POST") {
+        expect(JSON.parse(String(init.body)).content).toBe("停止");
+        return new Response(
+          `event: execution_stopped\ndata: ${JSON.stringify({ run: stopped, user_message: stopMessage })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      if (url.endsWith("/threads/t-stop"))
+        return Response.json(detail("t-stop", "停止任务", {
+          runs: [requestedUrls.some((value) => value.endsWith("/message")) ? stopped : running],
+          messages: requestedUrls.some((value) => value.endsWith("/message")) ? [stopMessage] : [],
+        }));
+      if (url.endsWith("/runs/r-stop/events")) return Response.json([]);
+      if (url.endsWith("/runs/r-stop/audit"))
+        return Response.json({ run: { provider: "测试 Provider" }, usage: {}, limits: {}, model_calls: [], tool_calls: [], evidence: [], checkpoints: [] });
+      if (url.endsWith("/runs/r-stop/control"))
+        return Response.json({ status: "stopped", plan_mode: "auto", task_briefs: [], plans: [], guidance: [] });
+      return Response.json({});
+    });
+
+    render(<App />);
+    const input = await screen.findByLabelText("消息");
+    fireEvent.change(input, { target: { value: "停止" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("已停止")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+    expect(screen.getAllByText("停止")).toHaveLength(1);
+    expect(requestedUrls.some((url) => url.endsWith("/runs/r-stop/stop"))).toBe(false);
+  });
+
+  it("断线重试复用原 request_id，且运行停止入口不会遮住重试回复", async () => {
+    window.localStorage.setItem("yuwang.currentThreadId", "t-retry");
+    const running = {
+      id: "r-retry", thread_id: "t-retry", status: "running", provider: "测试 Provider",
+      agent_profile_id: "a1", agent_profile_version: 1, plan_mode: "auto",
+      completion_mode: "advisory", validation_status: "pending", evidence_level: "none",
+      attempt: 1, stop_requested: false, created_at: now, started_at: now, finished_at: null,
+    };
+    const requestBodies: Array<{ request_id: string; retry: boolean }> = [];
+    const user = {
+      id: "u-retry", role: "user", content: "保留范围", artifact_ids: [], created_at: now,
+    };
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/setup/status")) return Response.json({ configured: true, checks: {}, version: "0.5.0" });
+      if (url.endsWith("/admin/session")) return Response.json({ authenticated: true, csrf_token: "csrf-test" });
+      if (url.endsWith("/providers") || url.endsWith("/agent-profiles")) return Response.json([]);
+      if (url.endsWith("/settings/chat")) return Response.json(preferences);
+      if (url.endsWith("/threads")) return Response.json([thread("t-retry", "可重试会话")]);
+      if (url.endsWith("/threads/t-retry/memories")) return Response.json([]);
+      if (url.endsWith("/threads/t-retry/message") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        requestBodies.push(body);
+        if (requestBodies.length === 1) throw new Error("连接中断");
+        return new Response(
+          `event: guidance_queued\ndata: ${JSON.stringify({ run: running, guidance: null, user_message: user })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      if (url.endsWith("/threads/t-retry"))
+        return Response.json(detail("t-retry", "可重试会话", {
+          runs: [running],
+          messages: requestBodies.length > 1 ? [user] : [],
+        }));
+      if (url.endsWith("/runs/r-retry/events")) return Response.json([]);
+      if (url.endsWith("/runs/r-retry/audit"))
+        return Response.json({ run: { provider: "测试 Provider" }, usage: {}, limits: {}, model_calls: [], tool_calls: [], evidence: [], checkpoints: [] });
+      if (url.endsWith("/runs/r-retry/control"))
+        return Response.json({ status: "running", plan_mode: "auto", task_briefs: [], plans: [], guidance: [] });
+      return Response.json({});
+    });
+
+    render(<App />);
+    const input = await screen.findByLabelText("消息");
+    fireEvent.change(input, { target: { value: "保留范围" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByRole("button", { name: "重试回复" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "停止任务" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "重试回复" }));
+    await waitFor(() => expect(requestBodies).toHaveLength(2));
+    expect(requestBodies[1]).toMatchObject({
+      request_id: requestBodies[0].request_id,
+      retry: true,
+    });
+    expect(await screen.findByText("保留范围")).toBeInTheDocument();
+  });
+
+  it("切换会话后忽略旧消息请求的迟到结果，也不把旧草稿变成新会话的重试", async () => {
+    window.localStorage.setItem("yuwang.currentThreadId", "t-old");
+    let resolveOldMessage: ((value: Response) => void) | undefined;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/setup/status")) return Response.json({ configured: true, checks: {}, version: "0.5.0" });
+      if (url.endsWith("/admin/session")) return Response.json({ authenticated: true, csrf_token: "csrf-test" });
+      if (url.endsWith("/providers") || url.endsWith("/agent-profiles")) return Response.json([]);
+      if (url.endsWith("/settings/chat")) return Response.json(preferences);
+      if (url.endsWith("/threads"))
+        return Response.json([thread("t-old", "旧会话"), thread("t-new", "新会话")]);
+      if (url.endsWith("/threads/t-old/memories") || url.endsWith("/threads/t-new/memories")) return Response.json([]);
+      if (url.endsWith("/threads/t-old/message") && init?.method === "POST")
+        return new Promise<Response>((resolve) => {
+          resolveOldMessage = resolve;
+        });
+      if (url.endsWith("/threads/t-old")) return Response.json(detail("t-old", "旧会话"));
+      if (url.endsWith("/threads/t-new")) return Response.json(detail("t-new", "新会话"));
+      return Response.json({});
+    });
+
+    render(<App />);
+    const input = await screen.findByLabelText("消息");
+    fireEvent.change(input, { target: { value: "旧会话迟到回复" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(resolveOldMessage).toBeDefined());
+    fireEvent.click(screen.getByText("新会话"));
+    await waitFor(() =>
+      expect(screen.getByTestId("thread-heading")).toHaveTextContent("新会话"),
+    );
+
+    resolveOldMessage?.(
+      new Response(
+        [
+          `event: reply_start\ndata: ${JSON.stringify({ request_id: "old-request", user_message: { id: "old-user", role: "user", content: "旧会话迟到回复", artifact_ids: [], created_at: now } })}`,
+          `event: reply_complete\ndata: ${JSON.stringify({ message: { id: "old-assistant", role: "assistant", content: "不应写入新会话", artifact_ids: [], created_at: now } })}`,
+          "",
+        ].join("\n\n"),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("消息")).toHaveValue(""));
+    expect(screen.getByTestId("thread-heading")).toHaveTextContent("新会话");
+    expect(screen.queryByText("旧会话迟到回复")).not.toBeInTheDocument();
+    expect(screen.queryByText("不应写入新会话")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试回复" })).not.toBeInTheDocument();
+  });
+
+  it("快速连续切换时不会让较慢的旧会话详情覆盖最新选择", async () => {
+    window.localStorage.setItem("yuwang.currentThreadId", "t-first");
+    let resolveSlowDetail: ((value: Response) => void) | undefined;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/setup/status")) return Response.json({ configured: true, checks: {}, version: "0.5.0" });
+      if (url.endsWith("/admin/session")) return Response.json({ authenticated: true, csrf_token: "csrf-test" });
+      if (url.endsWith("/providers") || url.endsWith("/agent-profiles")) return Response.json([]);
+      if (url.endsWith("/settings/chat")) return Response.json(preferences);
+      if (url.endsWith("/threads"))
+        return Response.json([thread("t-first", "第一会话"), thread("t-slow", "慢会话")]);
+      if (url.endsWith("/threads/t-first/memories") || url.endsWith("/threads/t-slow/memories")) return Response.json([]);
+      if (url.endsWith("/threads/t-first")) return Response.json(detail("t-first", "第一会话"));
+      if (url.endsWith("/threads/t-slow"))
+        return new Promise<Response>((resolve) => {
+          resolveSlowDetail = resolve;
+        });
+      return Response.json({});
+    });
+
+    render(<App />);
+    await screen.findByLabelText("消息");
+    fireEvent.click(screen.getByText("慢会话"));
+    await waitFor(() => expect(resolveSlowDetail).toBeDefined());
+    fireEvent.click(screen.getByText("第一会话"));
+    await waitFor(() =>
+      expect(screen.getByTestId("thread-heading")).toHaveTextContent("第一会话"),
+    );
+
+    resolveSlowDetail?.(Response.json(detail("t-slow", "慢会话")));
+    await waitFor(() =>
+      expect(screen.getByTestId("thread-heading")).toHaveTextContent("第一会话"),
+    );
+  });
+
+  it("停止响应为 running + stop_requested 时显示处理中并继续订阅终态", async () => {
+    window.localStorage.setItem("yuwang.currentThreadId", "t-stop-pending");
+    const running = {
+      id: "r-stop-pending", thread_id: "t-stop-pending", status: "running", provider: "测试 Provider",
+      agent_profile_id: "a1", agent_profile_version: 1, plan_mode: "auto",
+      completion_mode: "advisory", validation_status: "pending", evidence_level: "none",
+      attempt: 1, stop_requested: false, created_at: now, started_at: now, finished_at: null,
+    };
+    const stopPending = { ...running, stop_requested: true };
+    const stopped = { ...stopPending, status: "stopped", finished_at: now };
+    let stopRequestSent = false;
+    let terminalEventReceived = false;
+    const stopMessage = {
+      id: "u-stop-pending", role: "user", content: "停止任务", artifact_ids: [], created_at: now,
+    };
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/setup/status")) return Response.json({ configured: true, checks: {}, version: "0.5.0" });
+      if (url.endsWith("/admin/session")) return Response.json({ authenticated: true, csrf_token: "csrf-test" });
+      if (url.endsWith("/providers") || url.endsWith("/agent-profiles")) return Response.json([]);
+      if (url.endsWith("/settings/chat")) return Response.json(preferences);
+      if (url.endsWith("/threads")) return Response.json([thread("t-stop-pending", "停止处理中")]);
+      if (url.endsWith("/threads/t-stop-pending/memories")) return Response.json([]);
+      if (url.endsWith("/threads/t-stop-pending/message") && init?.method === "POST") {
+        expect(JSON.parse(String(init.body)).content).toBe("停止任务");
+        stopRequestSent = true;
+        return new Response(
+          `event: execution_stopped\ndata: ${JSON.stringify({ run: stopPending, user_message: stopMessage })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      if (url.endsWith("/threads/t-stop-pending"))
+        return Response.json(detail("t-stop-pending", "停止处理中", {
+          runs: [terminalEventReceived ? stopped : stopRequestSent ? stopPending : running],
+          messages: terminalEventReceived ? [stopMessage] : [],
+        }));
+      if (url.endsWith("/runs/r-stop-pending/events")) return Response.json([]);
+      if (url.endsWith("/runs/r-stop-pending/audit"))
+        return Response.json({ run: { provider: "测试 Provider" }, usage: {}, limits: {}, model_calls: [], tool_calls: [], evidence: [], checkpoints: [] });
+      if (url.endsWith("/runs/r-stop-pending/control"))
+        return Response.json({ status: terminalEventReceived ? "stopped" : "running", plan_mode: "auto", task_briefs: [], plans: [], guidance: [] });
+      return Response.json({});
+    });
+
+    render(<App />);
+    await screen.findByLabelText("消息");
+    fireEvent.click(screen.getByRole("button", { name: "停止任务" }));
+    expect(await screen.findByRole("button", { name: "停止请求处理中" })).toBeDisabled();
+    expect(screen.getByText(/仍在接收任务状态更新/)).toBeInTheDocument();
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+
+    terminalEventReceived = true;
+    FakeEventSource.instances.at(-1)?.onmessage?.(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          event_id: "event-stop-pending",
+          run_id: "r-stop-pending",
+          sequence: 1,
+          type: "run_stopped",
+          timestamp: now,
+          summary: "运行已停止",
+          payload: {},
+        }),
+      }),
+    );
+
+    expect(await screen.findByTestId("result-stopped")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
 });

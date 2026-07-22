@@ -65,8 +65,7 @@ const control: RunControl = {
 };
 
 describe("TaskPlanControl", () => {
-  it("展示 Task Brief 并提交澄清", () => {
-    const onClarify = vi.fn();
+  it("展示任务说明，并提示通过统一输入框提交澄清", () => {
     render(
       <TaskPlanControl
         run={run("waiting_clarification")}
@@ -82,17 +81,13 @@ describe("TaskPlanControl", () => {
           ],
         }}
         busy={false}
-        onClarify={onClarify}
         onEdit={vi.fn()}
         onDecide={vi.fn()}
       />,
     );
     expect(screen.getByText("生成可审核方案")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("任务澄清"), {
-      target: { value: "目标受众是新成员" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "提交澄清并继续" }));
-    expect(onClarify).toHaveBeenCalledWith("目标受众是新成员", 1);
+    expect(screen.getByText(/页面下方的统一输入框回答/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("任务澄清")).not.toBeInTheDocument();
   });
 
   it("编辑、拒绝和批准都携带当前计划版本", () => {
@@ -103,7 +98,6 @@ describe("TaskPlanControl", () => {
         run={run("waiting_approval")}
         control={control}
         busy={false}
-        onClarify={vi.fn()}
         onEdit={onEdit}
         onDecide={onDecide}
       />,

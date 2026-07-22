@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from apps.api.main import Settings, create_app
+from apps.api.schemas import MessageCreate
 from tests.fakes import FakeEchoTool
 from yuwang.agent import AgentStateModel
 from yuwang.domain.models import AgentAction, AgentPlan, Observation, Run, RunStatus, TaskSpec
@@ -381,7 +382,74 @@ def test_unified_message_entry_chooses_free_text_or_controlled_run(
         assert len(detail["runs"]) == 1
         assert detail["messages"][-1]["role"] == "user"
         task_spec = app.state.repository.get_run_task(UUID(detail["runs"][0]["id"]))
-        assert task_spec and task_spec.verification_rules[0].value == ".+"
+        assert task_spec and task_spec.verification_rules == []
+
+
+def test_unified_attachment_analysis_starts_one_task_with_artifact_reference(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        create_provider(client, provider_server)
+        thread = client.post("/api/v1/threads", json={"title": "附件分析"}).json()
+        artifact = client.post(
+            f"/api/v1/threads/{thread['id']}/artifacts",
+            files={"upload": ("notes.txt", "仅作不可信上下文".encode(), "text/plain")},
+        ).json()
+        payload = {
+            "request_id": str(uuid4()),
+            "content": "分析这个文件并给出结果",
+            "artifact_ids": [artifact["id"]],
+        }
+
+        response = client.post(f"/api/v1/threads/{thread['id']}/message", json=payload)
+
+        assert response.status_code == 200
+        assert "event: execution_started" in response.text
+        run_id = client.get(f"/api/v1/threads/{thread['id']}").json()["runs"][0]["id"]
+        task = app.state.repository.get_run_task(UUID(run_id))
+        assert task and [str(value) for value in task.artifact_ids] == [artifact["id"]]
+        assert task.origin_message_id == UUID(payload["request_id"])
+
+
+def test_unified_run_keeps_its_own_origin_when_a_later_message_is_saved(
+    tmp_path, provider_server, monkeypatch
+):
+    """统一入口不能因为并发/重入而把 TaskSpec 绑定到线程的后一条消息。"""
+
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        create_provider(client, provider_server)
+        thread = client.post("/api/v1/threads", json={"title": "来源绑定"}).json()
+        context = app.state.context
+        original_start_run = context.start_run
+
+        async def save_later_message(thread_id, body, *, origin_message=None):
+            context.save_user_message(
+                thread_id,
+                MessageCreate(content="这条较晚消息不能成为本次任务来源"),
+            )
+            return await original_start_run(
+                thread_id,
+                body,
+                origin_message=origin_message,
+            )
+
+        monkeypatch.setattr(context, "start_run", save_later_message)
+        payload = {
+            "request_id": str(uuid4()),
+            "content": "完成这道授权 CTF 题并验证结果",
+        }
+        response = client.post(f"/api/v1/threads/{thread['id']}/message", json=payload)
+
+        assert response.status_code == 200, response.text
+        run_id = client.get(f"/api/v1/threads/{thread['id']}").json()["runs"][0]["id"]
+        task = app.state.repository.get_run_task(UUID(run_id))
+        assert task is not None
+        assert task.body == payload["content"]
+        assert task.origin_message_id == UUID(payload["request_id"])
 
 
 def test_chat_failure_retry_is_idempotent_and_never_saves_partial_reply(
@@ -559,7 +627,9 @@ def test_agent_profile_api_versions_preview_export_and_thread_snapshot(tmp_path)
         assert "api_key" not in exported.text
 
 
-def test_waiting_input_api_persists_memory_and_resumes(tmp_path, provider_server):
+def test_waiting_input_api_persists_memory_and_resumes(
+    tmp_path, provider_server, monkeypatch
+):
     app = configured_app(tmp_path)
     headers = {"Authorization": "Bearer test-admin-token"}
     with TestClient(app) as client:
@@ -608,13 +678,51 @@ def test_waiting_input_api_persists_memory_and_resumes(tmp_path, provider_server
         assert started.status_code == 202, started.text
         run_id = started.json()["id"]
         assert wait_for_terminal(client, run_id)["status"] == "waiting_input"
+        input_payload = {
+            "request_id": str(uuid4()),
+            "content": "目标受众是技术团队",
+        }
+        original_schedule = app.state.context.schedule
+        attempts = 0
+
+        def fail_first_resume_schedule(run_id, coroutine):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("injected resume scheduling failure")
+            original_schedule(run_id, coroutine)
+
+        monkeypatch.setattr(app.state.context, "schedule", fail_first_resume_schedule)
+        failed = client.post(f"/api/v1/threads/{thread['id']}/message", json=input_payload)
+        assert failed.status_code == 503
+        pending = client.get(f"/api/v1/runs/{run_id}").json()
+        assert pending["status"] == "running"
+        assert app.state.repository.latest_checkpoint(UUID(run_id)).node == "input_received"
+        assert [
+            item.content for item in app.state.repository.list_messages(UUID(thread["id"]))
+        ].count(input_payload["content"]) == 1
+        assert sum(
+            event.type == "input_received"
+            for event in app.state.repository.list_events(UUID(run_id))
+        ) == 1
+        monkeypatch.setattr(app.state.context, "schedule", original_schedule)
         supplied = client.post(
-            f"/api/v1/runs/{run_id}/input", json={"content": "目标受众是技术团队"}
+            f"/api/v1/threads/{thread['id']}/message", json=input_payload
         )
-        assert supplied.status_code == 202, supplied.text
+        assert supplied.status_code == 200, supplied.text
+        assert "event: input_received" in supplied.text
         finished = wait_for_terminal(client, run_id)
         assert finished["status"] == "completed"
         assert finished["validation_status"] == "unverified"
+        replayed = client.post(
+            f"/api/v1/threads/{thread['id']}/message", json=input_payload
+        )
+        assert replayed.status_code == 200, replayed.text
+        assert "event: input_received" in replayed.text
+        detail = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert [item["content"] for item in detail["messages"]].count(
+            input_payload["content"]
+        ) == 1
         audit = client.get(f"/api/v1/runs/{run_id}/audit").json()
         assert audit["profile"]["planning_strategy"] == "direct"
         assert audit["profile"]["workflow_preset"] == "direct"
@@ -642,7 +750,9 @@ def test_waiting_input_api_persists_memory_and_resumes(tmp_path, provider_server
         assert client.delete(f"/api/v1/threads/{thread['id']}/memories").status_code == 204
 
 
-def test_task_brief_clarification_persists_versions_and_resumes(tmp_path, provider_server):
+def test_task_brief_clarification_persists_versions_and_resumes(
+    tmp_path, provider_server, monkeypatch
+):
     app = configured_app(tmp_path)
     app.state.registry.register(FakeEchoTool())
     with TestClient(app) as client:
@@ -661,16 +771,54 @@ def test_task_brief_clarification_persists_versions_and_resumes(tmp_path, provid
         control = client.get(f"/api/v1/runs/{run_id}/control").json()
         assert control["task_briefs"][0]["clarification_questions"] == ["请补充目标受众"]
 
-        resumed = client.post(
-            f"/api/v1/runs/{run_id}/clarification",
-            json={
-                "request_id": str(uuid4()),
-                "expected_brief_version": 1,
-                "content": "目标受众是新成员",
-            },
+        clarification_payload = {
+            "request_id": str(uuid4()),
+            "content": "目标受众是新成员",
+        }
+        original_schedule = app.state.context.schedule
+        attempts = 0
+
+        def fail_first_resume_schedule(run_id, coroutine):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("injected resume scheduling failure")
+            original_schedule(run_id, coroutine)
+
+        monkeypatch.setattr(app.state.context, "schedule", fail_first_resume_schedule)
+        failed = client.post(
+            f"/api/v1/threads/{thread['id']}/message",
+            json=clarification_payload,
         )
-        assert resumed.status_code == 202, resumed.text
+        assert failed.status_code == 503
+        pending = client.get(f"/api/v1/runs/{run_id}").json()
+        assert pending["status"] == "running"
+        assert app.state.repository.latest_checkpoint(UUID(run_id)).node == "clarification_received"
+        assert [
+            item.content for item in app.state.repository.list_messages(UUID(thread["id"]))
+        ].count(clarification_payload["content"]) == 1
+        assert sum(
+            event.type == "clarification_received"
+            for event in app.state.repository.list_events(UUID(run_id))
+        ) == 1
+        monkeypatch.setattr(app.state.context, "schedule", original_schedule)
+        resumed = client.post(
+            f"/api/v1/threads/{thread['id']}/message",
+            json=clarification_payload,
+        )
+        assert resumed.status_code == 200, resumed.text
+        assert "event: clarification_received" in resumed.text
         assert wait_for_terminal(client, run_id)["status"] == "completed"
+        replayed = client.post(
+            f"/api/v1/threads/{thread['id']}/message",
+            json=clarification_payload,
+        )
+        assert replayed.status_code == 200, replayed.text
+        assert "event: clarification_received" in replayed.text
+        detail = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert [item["content"] for item in detail["messages"]].count(
+            clarification_payload["content"]
+        ) == 1
         control = client.get(f"/api/v1/runs/{run_id}/control").json()
         assert [item["version"] for item in control["task_briefs"]] == [1, 2]
         assert control["task_briefs"][1]["needs_clarification"] is False
@@ -772,6 +920,42 @@ def test_waiting_plan_can_be_stopped_without_background_task(tmp_path, provider_
 
         assert stopped.status_code == 200
         assert stopped.json()["status"] == "stopped"
+
+
+def test_unified_message_queues_active_run_guidance_once_and_keeps_timeline_order(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        thread = client.post("/api/v1/threads", json={"title": "统一追加"}).json()
+        run = Run(thread_id=thread["id"])
+        run.transition(RunStatus.RUNNING)
+        app.state.repository.save_run(run)
+        request_id = str(uuid4())
+        payload = {
+            "request_id": request_id,
+            "content": "先核对新增约束，再继续执行",
+        }
+        first = client.post(f"/api/v1/threads/{thread['id']}/message", json=payload)
+        duplicate = client.post(f"/api/v1/threads/{thread['id']}/message", json=payload)
+
+        assert first.status_code == duplicate.status_code == 200
+        assert "event: guidance_queued" in first.text
+        control = client.get(f"/api/v1/runs/{run.id}/control").json()
+        assert [item["sequence"] for item in control["guidance"]] == [1]
+        detail = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert [item["content"] for item in detail["messages"]] == [payload["content"]]
+        assert len(detail["runs"]) == 1
+
+        # 模拟页面重连发生在任务结束之后：不能把同一 request_id 重新当聊天发送。
+        run.transition(RunStatus.STOPPED, "test completion")
+        app.state.repository.save_run(run)
+        replayed = client.post(f"/api/v1/threads/{thread['id']}/message", json=payload)
+        assert replayed.status_code == 200
+        assert "event: guidance_queued" in replayed.text
+        detail = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert [item["content"] for item in detail["messages"]] == [payload["content"]]
 
 
 def test_pause_guidance_resume_is_idempotent_and_survives_restart(

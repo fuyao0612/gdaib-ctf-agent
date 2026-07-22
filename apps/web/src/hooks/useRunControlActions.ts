@@ -50,15 +50,5 @@ export function useRunControlActions(options: Options) {
     );
   };
 
-  const queueGuidance = (content: string) => {
-    if (!options.run) return Promise.resolve(false);
-    return (
-    execute(async () => {
-      await api.queueGuidance(options.run!.id, content, crypto.randomUUID());
-      await options.loadControl(options.run!.id);
-    })
-    );
-  };
-
-  return { pause, resume, queueGuidance };
+  return { pause, resume };
 }

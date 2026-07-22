@@ -6,7 +6,6 @@ interface Props {
   run: Run;
   control: RunControl;
   busy: boolean;
-  onClarify: (content: string, briefVersion: number) => void;
   onEdit: (plan: AgentPlan, version: number, reason: string) => void;
   onDecide: (decision: "approve" | "reject", version: number, reason: string) => void;
 }
@@ -31,7 +30,6 @@ function BriefList({ label, values }: { label: string; values: string[] }) {
 export default function TaskPlanControl(props: Props) {
   const brief = props.control.task_briefs?.at(-1);
   const revision = props.control.plans?.at(-1);
-  const [clarification, setClarification] = useState("");
   const [reason, setReason] = useState("");
   const [summary, setSummary] = useState("");
   const [steps, setSteps] = useState("");
@@ -66,7 +64,7 @@ export default function TaskPlanControl(props: Props) {
     <section className="task-plan-control" data-testid="task-plan-control">
       {brief && (
         <details open={props.run.status === "waiting_clarification"}>
-          <summary>Task Brief · v{brief.version}</summary>
+          <summary>任务说明 · v{brief.version}</summary>
           <p className="task-goal">{brief.goal}</p>
           <dl className="task-brief-grid">
             <BriefList label="授权范围" values={brief.authorized_scope} />
@@ -81,19 +79,7 @@ export default function TaskPlanControl(props: Props) {
             <div className="control-action" data-testid="clarification-control">
               <strong>需要补充</strong>
               <ul>{brief.clarification_questions.map((item) => <li key={item}>{item}</li>)}</ul>
-              <textarea
-                aria-label="任务澄清"
-                value={clarification}
-                onChange={(event) => setClarification(event.target.value)}
-                placeholder="回答上面的问题；原始要求和历史版本会保留"
-              />
-              <button
-                className="primary"
-                disabled={props.busy || !clarification.trim()}
-                onClick={() => props.onClarify(clarification, brief.version)}
-              >
-                提交澄清并继续
-              </button>
+              <p>请在页面下方的统一输入框回答；原始要求和历史版本会保留。</p>
             </div>
           )}
         </details>

@@ -2,8 +2,9 @@ from uuid import uuid4
 
 import pytest
 
-from yuwang.agent import SuccessVerifier
-from yuwang.domain.models import EvidenceCandidate, Observation, TaskSpec
+from yuwang.agent import AgentStateModel, SuccessVerifier
+from yuwang.agent.finalization import AgentFinalizer
+from yuwang.domain.models import AgentAction, EvidenceCandidate, Observation, TaskSpec
 from yuwang.storage import SQLiteRepository
 
 
@@ -29,6 +30,28 @@ def test_tool_success_alone_never_means_task_success():
     result = SuccessVerifier().verify(task_with_rule(), None, [observation])
     assert not result.verified
     assert "候选" in result.summary
+
+
+def test_unverified_candidate_keeps_value_source_and_trust_label_in_final_reply():
+    observation = successful_observation()
+    candidate = EvidenceCandidate(
+        value="FLAG{ABC123}",
+        source_call_id=observation.call_id,
+        location="/result/candidate",
+    )
+    state = AgentStateModel(
+        run_id=uuid4(),
+        task=TaskSpec(body="find flag"),
+        action=AgentAction(kind="finish", summary="candidate", candidate=candidate),
+        validation_status="unverified",
+    )
+
+    reply = AgentFinalizer.assistant_content(state)
+
+    assert "候选结果（未外部验证）" in reply
+    assert candidate.value in reply
+    assert str(candidate.source_call_id) in reply
+    assert candidate.location in reply
 
 
 def test_candidate_requires_matching_call_location_and_rule():
@@ -100,6 +123,25 @@ def test_verification_rejects_missing_rule_invalid_pointer_and_rule_mismatch():
     invalid_pointer = candidate.model_copy(update={"location": "/missing/value"})
     assert not verifier.verify(task_with_rule(), invalid_pointer, [observation]).verified
     assert not verifier.verify(task_with_rule(r"FLAG\{ZZZ\}"), candidate, [observation]).verified
+
+
+@pytest.mark.parametrize(
+    "unsafe_rule",
+    [r".+", r".*", r"[\s\S]+", r"\w+", r"[A-Za-z]+"],
+)
+def test_universal_regex_cannot_upgrade_any_tool_output_to_verified(unsafe_rule: str):
+    observation = successful_observation()
+    candidate = EvidenceCandidate(
+        value="FLAG{ABC123}",
+        source_call_id=observation.call_id,
+        location="/result/candidate",
+    )
+    result = SuccessVerifier().verify(
+        TaskSpec(body="find flag", verification_rules=[{"kind": "regex", "value": unsafe_rule}]),
+        candidate,
+        [observation],
+    )
+    assert not result.verified
 
 
 def test_json_pointer_resolves_lists_and_escaped_keys():

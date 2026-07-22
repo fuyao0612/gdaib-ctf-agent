@@ -566,6 +566,26 @@ textarea:disabled {
   font-size: 14px;
 }
 
+.result-conclusion {
+  margin-top: 9px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #f5f8f6;
+}
+
+.result-conclusion strong {
+  color: #52655f;
+  font-size: 11px;
+}
+
+.result-conclusion p {
+  margin: 4px 0 0;
+  color: #29352f;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .result-completed {
   border-left: 3px solid #6d9d8e;
 }
@@ -634,10 +654,7 @@ textarea:disabled {
 }
 
 .plan-editor input,
-.plan-editor textarea,
-.control-action textarea,
-.guidance-form textarea,
-.input-request textarea {
+.plan-editor textarea {
   width: 100%;
   border: 1px solid #d8dde4;
   border-radius: 9px;
@@ -646,15 +663,12 @@ textarea:disabled {
   background: #fff;
 }
 
-.plan-editor textarea,
-.control-action textarea,
-.guidance-form textarea {
+.plan-editor textarea {
   min-height: 68px;
 }
 
 .plan-actions,
 .run-control-heading,
-.guidance-form,
 .guidance-list li {
   display: flex;
   align-items: center;
@@ -679,8 +693,8 @@ textarea:disabled {
   font-size: 10px;
 }
 
-.guidance-form textarea,
 .guidance-list p {
+  min-width: 0;
   flex: 1;
 }
 
@@ -733,7 +747,9 @@ textarea:disabled {
 }
 
 .composer-actions {
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-top: 7px;
@@ -756,7 +772,9 @@ textarea:disabled {
 }
 
 .run-actions {
+  min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
   margin-left: auto;
 }
@@ -778,25 +796,26 @@ textarea:disabled {
   font-size: 10px;
 }
 
-.lock-note {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.lock-note {
+.composer-note {
+  margin-top: 0;
   margin-bottom: 7px;
   padding: 7px 9px;
   border-radius: 8px;
+  color: var(--muted);
   background: #f7f3ea;
+  font-size: 10px;
+  overflow-wrap: anywhere;
 }
 
-.input-request {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid #ccd8ed;
-  border-radius: 12px;
-  background: var(--accent-soft);
+.upload-note {
+  width: min(100%, 820px);
+  margin: 0 auto 7px;
+  padding: 7px 9px;
+  color: #5f6773;
+  border-radius: 8px;
+  background: #eef3fb;
+  font-size: 10px;
+  overflow-wrap: anywhere;
 }
 
 .task-controls {
@@ -1039,6 +1058,12 @@ textarea:disabled {
     grid-template-columns: 1fr;
   }
 
+  /* 侧栏在窄屏改为 fixed 脱离网格；收起时不能沿用桌面端的两列定义，
+     否则工作台会被自动放进宽度为 0 的第一列，触摸与滚动目标也会失效。 */
+  .shell.sidebar-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
@@ -1050,6 +1075,7 @@ textarea:disabled {
 
   .sidebar-collapsed .sidebar {
     display: flex;
+    pointer-events: none;
   }
 
   .topbar {

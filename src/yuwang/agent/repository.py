@@ -13,6 +13,7 @@ from yuwang.control import PlanRevision, RunGuidance, TaskBrief
 from yuwang.domain.models import (
     Artifact,
     Event,
+    EventType,
     EvidenceRecord,
     MemoryRecord,
     Message,
@@ -34,6 +35,7 @@ class AgentRepository(Protocol):
     def latest_checkpoint(self, run_id: UUID | str) -> RunCheckpoint | None: ...
     def list_messages(self, thread_id: UUID | str) -> list[Message]: ...
     def save_message(self, value: Message) -> Message: ...
+    def get_message(self, message_id: UUID | str) -> Message | None: ...
     def get_artifact(self, artifact_id: UUID | str) -> Artifact | None: ...
     def list_events(self, run_id: UUID | str, after: int = 0) -> list[Event]: ...
     def save_model_call(self, value: ModelCall) -> None: ...
@@ -65,11 +67,32 @@ class AgentRepository(Protocol):
         expected_status: RunStatus,
         expected_plan_version: int | None = None,
     ) -> tuple[Run, bool]: ...
+    def commit_run_interaction(
+        self,
+        *,
+        run_id: UUID | str,
+        request_id: UUID | str,
+        action: str,
+        payload_hash: str,
+        expected_status: RunStatus,
+        message: Message,
+        checkpoint_node: str,
+        checkpoint_state: dict[str, Any],
+        event_type: EventType,
+        event_summary: str,
+        event_payload: dict[str, Any],
+        memory: MemoryRecord | None = None,
+        expected_brief_version: int | None = None,
+    ) -> tuple[Run, bool, Message]: ...
     def save_user_plan_revision(
         self, value: PlanRevision, request_id: UUID | str, payload_hash: str
     ) -> tuple[PlanRevision, bool]: ...
     def queue_guidance(
-        self, run_id: UUID | str, request_id: UUID | str, content: str
+        self,
+        run_id: UUID | str,
+        request_id: UUID | str,
+        content: str,
+        artifact_ids: list[UUID] | None = None,
     ) -> tuple[RunGuidance, bool]: ...
     def list_guidance(self, run_id: UUID | str) -> list[RunGuidance]: ...
     def consume_guidance(self, run_id: UUID | str) -> list[RunGuidance]: ...

@@ -6,12 +6,13 @@ import asyncio
 import hashlib
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from apps.api.context import ApiContext
+from apps.api.run_interactions import RunInteractionService
 from apps.api.schemas import (
     ClarificationSubmit,
     ControlRequest,
@@ -28,9 +29,6 @@ from yuwang.control import PlanRevision, PlanSource, RunGuidance
 from yuwang.domain.models import (
     ACTIVE_RUN_STATUSES,
     EventType,
-    MemoryRecord,
-    Message,
-    MessageRole,
     Run,
     RunStatus,
 )
@@ -41,6 +39,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
 
     router = APIRouter(prefix="/api/v1", tags=["runs"])
     repository = context.repository
+    interactions = RunInteractionService(context)
 
     @router.post("/threads/{thread_id}/runs", response_model=Run, status_code=202)
     async def start_run(
@@ -53,7 +52,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
     async def send_turn(thread_id: UUID, body: TurnCreate) -> Run:
         """保存用户消息并自动创建 Run，让调用方只理解“发送一轮对话”。"""
 
-        context.save_user_message(
+        user_message = context.save_user_message(
             thread_id,
             MessageCreate(content=body.content, artifact_ids=body.artifact_ids),
         )
@@ -66,6 +65,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 verification_rules=body.verification_rules,
                 plan_mode=body.plan_mode,
             ),
+            origin_message=user_message,
         )
 
     def recovery_data(run: Run) -> tuple[Any, list[Any], Any]:
@@ -142,68 +142,22 @@ def create_run_router(context: ApiContext) -> APIRouter:
 
     @router.post("/runs/{run_id}/guidance", response_model=RunGuidance, status_code=202)
     async def queue_guidance(run_id: UUID, body: GuidanceSubmit) -> RunGuidance:
-        run = context.require_run(run_id)
-        if run.status not in {RunStatus.RUNNING, RunStatus.PAUSED}:
-            raise HTTPException(409, "只有运行中或已暂停的任务可以追加指引")
-        try:
-            guidance, claimed = repository.queue_guidance(
-                run_id, body.request_id, body.content
-            )
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-        if claimed:
-            repository.create_event(
-                run_id,
-                EventType.GUIDANCE_QUEUED,
-                "追加指引已排队",
-                {"sequence": guidance.sequence, "content_length": len(guidance.content)},
-            )
-        return guidance
+        result = interactions.queue_guidance(
+            run_id, body.content, body.request_id, body.artifact_ids
+        )
+        if not result.guidance:  # 防御式检查，服务成功时一定返回指引记录。
+            raise HTTPException(409, "追加指引记录缺失")
+        return result.guidance
 
     @router.post("/runs/{run_id}/clarification", response_model=Run, status_code=202)
     async def submit_clarification(run_id: UUID, body: ClarificationSubmit) -> Run:
-        run = context.require_run(run_id)
-        brief = repository.latest_task_brief(run_id)
-        if not brief or brief.version != body.expected_brief_version:
-            raise HTTPException(409, "Task Brief 版本已变化，请刷新后重试")
-        payload_hash = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
-        try:
-            run, claimed = repository.claim_run_control(
-                run_id,
-                body.request_id,
-                "clarification",
-                payload_hash,
-                RunStatus.WAITING_CLARIFICATION,
-            )
-        except (KeyError, ValueError) as exc:
-            raise HTTPException(409, str(exc)) from exc
-        if not claimed:
-            return run
-        checkpoint = repository.latest_checkpoint(run_id)
-        if not checkpoint:
-            raise HTTPException(409, "澄清恢复检查点缺失")
-        state = AgentStateModel.model_validate(checkpoint.state)
-        state.supplemental_inputs.append(body.content)
-        state.action = None
-        repository.save_message(
-            Message(
-                id=body.request_id,
-                thread_id=run.thread_id,
-                role=MessageRole.USER,
-                content=body.content,
-            )
-        )
-        repository.save_checkpoint(
-            run.id, "clarification_received", state.model_dump(mode="json")
-        )
-        repository.create_event(
-            run.id,
-            EventType.CLARIFICATION_RECEIVED,
-            "已接收澄清信息，正在更新 Task Brief",
-            {"brief_version": brief.version, "input_length": len(body.content)},
-        )
-        schedule_resume(run)
-        return run
+        return interactions.submit_clarification(
+            run_id,
+            body.content,
+            body.request_id,
+            body.artifact_ids,
+            body.expected_brief_version,
+        ).run
 
     @router.put("/runs/{run_id}/plan", response_model=PlanRevision)
     async def edit_plan(run_id: UUID, body: PlanEdit) -> PlanRevision:
@@ -295,52 +249,11 @@ def create_run_router(context: ApiContext) -> APIRouter:
 
     @router.post("/runs/{run_id}/input", response_model=Run, status_code=202)
     async def submit_run_input(run_id: UUID, body: RunInput) -> Run:
-        run = context.require_run(run_id)
-        if run.status != RunStatus.WAITING_INPUT:
-            raise HTTPException(409, "运行当前不在等待补充状态")
-        task_spec = repository.get_run_task(run.id)
-        checkpoint = repository.latest_checkpoint(run.id)
-        provider_configs = repository.get_provider_snapshot(run.id)
-        profile = repository.get_run_agent_profile(run.id)
-        if not task_spec or not checkpoint or not provider_configs or not profile:
-            raise HTTPException(409, "补充恢复所需快照不完整")
-        state = AgentStateModel.model_validate(checkpoint.state)
-        if len(state.supplemental_inputs) >= profile.intervention_policy.max_requests:
-            raise HTTPException(409, "人工补充次数已达到配置上限")
-        state.supplemental_inputs.append(body.content)
-        state.action = None
-        repository.save_message(
-            Message(thread_id=run.thread_id, role=MessageRole.USER, content=body.content)
-        )
-        if profile.memory_policy.enabled:
-            repository.save_memory(
-                MemoryRecord(
-                    thread_id=run.thread_id,
-                    source_run_id=run.id,
-                    kind="user_input",
-                    content=body.content,
-                )
-            )
-        repository.save_checkpoint(run.id, "input_received", state.model_dump(mode="json"))
-        run.transition(RunStatus.RUNNING)
-        repository.save_run(run)
-        repository.create_event(
-            run.id,
-            EventType.INPUT_RECEIVED,
-            "已接收用户补充，准备从检查点继续",
-            {"input_length": len(body.content)},
-        )
-        provider = context.build_provider_chain(provider_configs)
-        engine = AgentEngine(
-            repository,
-            provider,
-            context.registry,
-            context.policy,
-            profile=profile,
-            artifact_root=context.config.artifact_root,
-        )
-        context.schedule(run.id, engine.resume(run.id, task_spec))
-        return run
+        # 旧接口没有请求 ID 时仍可调用；统一消息入口始终提供 UUID 并获得幂等保护。
+        request_id = body.request_id or uuid4()
+        return interactions.submit_input(
+            run_id, body.content, request_id, body.artifact_ids
+        ).run
 
     @router.post("/runs/{run_id}/retry", response_model=Run, status_code=202)
     async def retry_run(run_id: UUID) -> Run:

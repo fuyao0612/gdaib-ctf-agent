@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Event, Run, RunControl, RunStatus } from "../types";
 import RunControlPanel from "./RunControlPanel";
@@ -63,7 +63,6 @@ describe("运行控制面板", () => {
         busy={false}
         onPause={onPause}
         onResume={vi.fn()}
-        onGuidance={vi.fn()}
       />,
     );
 
@@ -74,7 +73,7 @@ describe("运行控制面板", () => {
     finish?.(true);
   });
 
-  it("按顺序展示已排队、已应用和重规划状态", () => {
+  it("按顺序展示已排队和已在检查点应用，不把消费指引误写成重规划", () => {
     render(
       <RunControlPanel
         run={makeRun("paused")}
@@ -83,7 +82,6 @@ describe("运行控制面板", () => {
         busy={false}
         onPause={vi.fn()}
         onResume={vi.fn().mockResolvedValue(true)}
-        onGuidance={vi.fn()}
       />,
     );
 
@@ -91,34 +89,58 @@ describe("运行控制面板", () => {
     expect(records[0]).toHaveTextContent("#1");
     expect(records[0]).toHaveTextContent("已排队");
     expect(records[1]).toHaveTextContent("#2");
-    expect(records[1]).toHaveTextContent("已应用并重规划");
+    expect(records[1]).toHaveTextContent("已在检查点应用");
+    expect(records[1]).not.toHaveTextContent("已重规划");
     expect(screen.getByRole("button", { name: "从检查点继续" })).toBeEnabled();
   });
 
-  it("仅在追加指引成功后清空输入", async () => {
-    const onGuidance = vi
-      .fn()
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
-    render(
+  it("只有事件明确关联本指引时才显示因本指引重规划", () => {
+    const events: Event[] = [
+      {
+        event_id: "event-1",
+        run_id: "run-1",
+        sequence: 3,
+        type: "replanned",
+        // 即使事件时间更晚，只关联 #1 也不能把 #2 标成重规划原因。
+        timestamp: "2099-07-17T08:02:00Z",
+        summary: "根据其他指引重新规划",
+        payload: { guidance_sequences: [1] },
+      },
+    ];
+    const { rerender } = render(
       <RunControlPanel
-        run={makeRun("running")}
-        control={{ ...control, guidance: [] }}
-        events={noEvents}
+        run={makeRun("paused")}
+        control={{ ...control, status: "paused" }}
+        events={events}
         busy={false}
         onPause={vi.fn()}
         onResume={vi.fn()}
-        onGuidance={onGuidance}
       />,
     );
 
-    const input = screen.getByLabelText("追加指引");
-    fireEvent.change(input, { target: { value: "保持范围并补充证据" } });
-    fireEvent.click(screen.getByRole("button", { name: "排队追加指引" }));
-    await waitFor(() => expect(onGuidance).toHaveBeenCalledTimes(1));
-    expect(input).toHaveValue("保持范围并补充证据");
+    expect(screen.getAllByRole("listitem")[1]).not.toHaveTextContent("重规划");
 
-    fireEvent.click(screen.getByRole("button", { name: "排队追加指引" }));
-    await waitFor(() => expect(input).toHaveValue(""));
+    rerender(
+      <RunControlPanel
+        run={makeRun("paused")}
+        control={{ ...control, status: "paused" }}
+        events={[
+          ...events,
+          {
+            ...events[0],
+            event_id: "event-2",
+            sequence: 4,
+            payload: { guidance_sequences: [2] },
+          },
+        ]}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole("listitem")[1]).toHaveTextContent(
+      "因本指引重规划",
+    );
   });
 });

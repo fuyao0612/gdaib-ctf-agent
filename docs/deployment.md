@@ -35,7 +35,7 @@ Linux/macOS：
 ./scripts/first-setup.sh --start
 ```
 
-脚本只在 `.env` 不存在时生成高熵管理员令牌和 Fernet 主密钥，绝不覆盖已有文件，也不会把密钥打印到日志。管理员本人可在服务器本机打开 `.env`，读取 `YUWANG_ADMIN_TOKEN` 后粘贴到登录框；不要把它发送到聊天、工单或截图中。`.env` 权限应仅限服务账户，并与数据备份分开离线保管。首次打开 `http://localhost:8080` 会进入配置向导：管理员登录、添加 Provider、执行真实连接测试、确认默认 Agent，然后开始对话。Provider API Key 只在设置中心提交，并以主密钥加密后持久化。
+脚本只在 `.env` 不存在时生成高熵管理员令牌和 Fernet 主密钥，绝不覆盖已有文件，也不会把密钥打印到日志。管理员本人可在服务器本机打开 `.env`，读取 `YUWANG_ADMIN_TOKEN` 后粘贴到登录框；不要把它发送到聊天、工单或截图中。`.env` 权限应仅限服务账户，并与数据备份分开离线保管。首次打开 `http://127.0.0.1:8080` 会进入配置向导：管理员登录、添加 Provider、执行真实连接测试、确认默认 Agent，然后开始对话。Provider API Key 只在设置中心提交，并以主密钥加密后持久化。
 
 Windows 上可运行 `notepad .env`，只复制 `YUWANG_ADMIN_TOKEN=` 等号后的完整值。若页面提示“管理员令牌不正确”，先确认没有复制变量名、引号或首尾空格；若刚手动修改 `.env`，执行 `docker compose up -d --force-recreate api` 让 API 读取新环境变量。不要在终端历史中打印令牌。
 

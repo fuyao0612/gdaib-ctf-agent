@@ -15,7 +15,6 @@ import type {
   Run,
   RunAudit,
   RunControl,
-  RunGuidance,
   AgentPlan,
   PlanRevision,
   SetupStatus,
@@ -131,13 +130,7 @@ export const api = {
       body: form,
     });
   },
-  stop: (id: string) => request<Run>(`/runs/${id}/stop`, { method: "POST" }),
   retry: (id: string) => request<Run>(`/runs/${id}/retry`, { method: "POST" }),
-  submitInput: (id: string, content: string) =>
-    request<Run>(`/runs/${id}/input`, {
-      method: "POST",
-      body: JSON.stringify({ content }),
-    }),
   control: (id: string) => request<RunControl>(`/runs/${id}/control`),
   pause: (id: string, requestId: string) =>
     request<Run>(`/runs/${id}/pause`, {
@@ -148,25 +141,6 @@ export const api = {
     request<Run>(`/runs/${id}/resume`, {
       method: "POST",
       body: JSON.stringify({ request_id: requestId }),
-    }),
-  queueGuidance: (id: string, content: string, requestId: string) =>
-    request<RunGuidance>(`/runs/${id}/guidance`, {
-      method: "POST",
-      body: JSON.stringify({ content, request_id: requestId }),
-    }),
-  submitClarification: (
-    id: string,
-    content: string,
-    expectedBriefVersion: number,
-    requestId: string,
-  ) =>
-    request<Run>(`/runs/${id}/clarification`, {
-      method: "POST",
-      body: JSON.stringify({
-        content,
-        expected_brief_version: expectedBriefVersion,
-        request_id: requestId,
-      }),
     }),
   editPlan: (
     id: string,

@@ -8,6 +8,7 @@ import re
 from pydantic import BaseModel
 
 from yuwang.domain.models import EvidenceCandidate, Observation, TaskSpec
+from yuwang.verification_rules import validate_verification_rule
 
 
 class VerificationResult(BaseModel):
@@ -48,6 +49,11 @@ class SuccessVerifier:
             return VerificationResult(verified=False, summary="候选值与来源证据不一致")
 
         for rule in task.verification_rules:
+            try:
+                validate_verification_rule(rule)
+            except ValueError:
+                # 历史快照可能保存过旧的万能规则；绝不能让它在恢复时升级为成功。
+                continue
             if rule.kind == "regex" and re.fullmatch(rule.value, candidate.value):
                 return VerificationResult(
                     verified=True,

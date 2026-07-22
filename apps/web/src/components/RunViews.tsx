@@ -62,7 +62,6 @@ interface ConversationProps {
   busy: boolean;
   chatDraft: string;
   chatFailure: { message: string; retryable: boolean } | null;
-  onClarify: (content: string, briefVersion: number) => void;
   onEditPlan: (plan: import("../types").AgentPlan, version: number, reason: string) => void;
   onDecidePlan: (
     decision: "approve" | "reject",
@@ -71,7 +70,6 @@ interface ConversationProps {
   ) => void;
   onPause: () => Promise<boolean>;
   onResume: () => Promise<boolean>;
-  onGuidance: (content: string) => Promise<boolean>;
 }
 
 export function ConversationView({
@@ -84,12 +82,10 @@ export function ConversationView({
   busy,
   chatDraft,
   chatFailure,
-  onClarify,
   onEditPlan,
   onDecidePlan,
   onPause,
   onResume,
-  onGuidance,
 }: ConversationProps) {
   const scrollRef = useRef<HTMLElement>(null);
   const followLatestRef = useRef(true);
@@ -168,7 +164,6 @@ export function ConversationView({
             run={run}
             control={control}
             busy={busy}
-            onClarify={onClarify}
             onEdit={onEditPlan}
             onDecide={onDecidePlan}
           />
@@ -179,7 +174,6 @@ export function ConversationView({
             busy={busy}
             onPause={onPause}
             onResume={onResume}
-            onGuidance={onGuidance}
           />
         </details>
       )}

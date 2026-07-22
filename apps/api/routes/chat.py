@@ -54,7 +54,14 @@ def prepare_chat_stream(
 
     repository = context.repository
     thread = context.require_thread(thread_id)
-    if any(run.status in ACTIVE_RUN_STATUSES for run in repository.list_runs(thread_id)):
+    try:
+        existing_request = repository.has_chat_request(thread_id, body.request_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if (
+        not existing_request
+        and any(run.status in ACTIVE_RUN_STATUSES for run in repository.list_runs(thread_id))
+    ):
         raise HTTPException(409, "受控任务运行中，请先暂停或结束任务")
     for artifact_id in body.artifact_ids:
         artifact = repository.get_artifact(artifact_id)

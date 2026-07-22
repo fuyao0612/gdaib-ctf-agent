@@ -6,6 +6,7 @@ param(
     [switch]$Development,
     [switch]$CheckOnly,
     [switch]$Quiet,
+    [switch]$OpenBrowser,
     [ValidateRange(0, 300)]
     [int]$RunSeconds = 0
 )
@@ -109,7 +110,7 @@ function Assert-DevelopmentDependencies {
         throw '前端依赖未安装。请运行：cd apps\web；npm ci'
     }
     Write-Host "  Python $pythonVersion · Node.js $nodeVersionText · npm $npmVersion" -ForegroundColor Green
-    return @{ Python = $python.Source; Npm = $npm.Source }
+    return @{ Python = $python.Source; Node = $node.Source; Npm = $npm.Source }
 }
 
 function Assert-PortsFree([int[]]$Ports) {
@@ -131,6 +132,16 @@ function Wait-Http([string]$Url, [int]$Seconds = 30) {
         }
     } while ((Get-Date) -lt $deadline)
     throw "服务在 $Seconds 秒内未就绪：$Url。请查看 data\logs 中的错误日志。"
+}
+
+function Open-YuwangBrowser([string]$Url) {
+    # 地址由启动流程实际读取的端口生成，避免双击入口与 .env 的端口配置脱节。
+    try {
+        Start-Process -FilePath $Url
+        Write-Host "已请求系统默认浏览器打开：$Url"
+    } catch {
+        Write-Warning "服务已启动，但无法自动打开浏览器。请手动访问：$Url"
+    }
 }
 
 function Assert-NoTrackedDevelopmentProcesses {
@@ -156,6 +167,7 @@ function Assert-NoTrackedDevelopmentProcesses {
 }
 
 function Start-Development {
+    param([switch]$OpenBrowser)
     if ($Build) { throw '-Build 只用于 Docker 模式，不能与 -Development 同时使用。' }
     $commands = Assert-DevelopmentDependencies
     $values = Read-DotEnv
@@ -188,6 +200,10 @@ function Start-Development {
     $apiError = Join-Path $logDirectory 'api.stderr.log'
     $webOut = Join-Path $logDirectory 'web.stdout.log'
     $webError = Join-Path $logDirectory 'web.stderr.log'
+    $viteEntry = Join-Path $root 'apps\web\node_modules\vite\bin\vite.js'
+    if (-not (Test-Path -LiteralPath $viteEntry)) {
+        throw '未找到 Vite 启动入口。请在 apps\web 目录运行 npm ci。'
+    }
     $apiProcess = $null
     $webProcess = $null
     try {
@@ -203,8 +219,10 @@ function Start-Development {
         }
         $apiProcess = Start-Process @apiOptions
         $webOptions = @{
-            FilePath = $commands.Npm
-            ArgumentList = @('run','dev','--','--port','5173')
+            # npm.cmd 会先退出再留下 node 子进程，导致 PID 记录失效；直接启动已安装的
+            # Vite 入口，才能让 stop 和启动验收始终精确管理真正监听 5173 的进程。
+            FilePath = $commands.Node
+            ArgumentList = @($viteEntry,'--host','0.0.0.0','--port','5173')
             WorkingDirectory = (Join-Path $root 'apps\web')
             WindowStyle = 'Hidden'
             PassThru = $true
@@ -220,11 +238,14 @@ function Start-Development {
 
         Wait-Http 'http://127.0.0.1:8000/api/v1/health'
         Wait-Http 'http://127.0.0.1:5173'
+        # Windows 上 localhost 可能优先解析为未监听的 IPv6 ::1；统一展示可验证的 IPv4 回环地址。
+        $webUrl = 'http://127.0.0.1:5173'
+        if ($OpenBrowser) { Open-YuwangBrowser $webUrl }
         Write-Host ''
         Write-Host '本地开发服务启动成功：' -ForegroundColor Green
-        Write-Host '  Web：        http://localhost:5173'
-        Write-Host '  API：        http://localhost:8000'
-        Write-Host '  健康检查：   http://localhost:8000/api/v1/health'
+        Write-Host "  Web：        $webUrl"
+        Write-Host '  API：        http://127.0.0.1:8000'
+        Write-Host '  健康检查：   http://127.0.0.1:8000/api/v1/health'
         Write-Host "  日志位置：   $logDirectory"
         Write-Host '  停止方法：   在当前窗口按 Ctrl+C'
         Write-Host ''
@@ -250,6 +271,7 @@ function Start-Development {
 }
 
 function Start-Docker {
+    param([switch]$OpenBrowser)
     if ($RunSeconds -gt 0) { throw '-RunSeconds 只用于本地开发启动验收。' }
     Write-Step '检查可选的本地开发工具'
     Show-OptionalCommand 'python' '本地开发模式'
@@ -298,12 +320,15 @@ function Start-Docker {
         Pop-Location
     }
     Wait-Http "http://127.0.0.1:$webPort/api/v1/health" 30
+    # Docker 端口探针已使用 127.0.0.1；浏览器和状态输出也必须使用同一个可达地址。
+    $webUrl = "http://127.0.0.1:$webPort"
+    if ($OpenBrowser) { Open-YuwangBrowser $webUrl }
 
     Write-Host ''
     Write-Host 'Docker 服务启动成功：' -ForegroundColor Green
-    Write-Host "  Web：        http://localhost:$webPort"
-    Write-Host "  API：        http://localhost:$webPort/api/v1"
-    Write-Host "  健康检查：   http://localhost:$webPort/api/v1/health"
+    Write-Host "  Web：        $webUrl"
+    Write-Host "  API：        http://127.0.0.1:$webPort/api/v1"
+    Write-Host "  健康检查：   http://127.0.0.1:$webPort/api/v1/health"
     Write-Host '  日志位置：   Docker 容器日志（docker compose logs -f）'
     Write-Host '  状态检查：   docker compose ps'
     Write-Host '  停止方法：   docker compose down'
@@ -312,4 +337,4 @@ function Start-Docker {
 
 # 首次运行只生成缺失的 .env，不输出密钥；具体模式再执行对应检查。
 & (Join-Path $PSScriptRoot 'first-setup.ps1') -SkipPreflight
-if ($Development) { Start-Development } else { Start-Docker }
+if ($Development) { Start-Development -OpenBrowser:$OpenBrowser } else { Start-Docker -OpenBrowser:$OpenBrowser }

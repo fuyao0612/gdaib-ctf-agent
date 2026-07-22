@@ -88,6 +88,10 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
 
     def save_run(self, value: Run) -> Run:
         with self._lock, self.connect() as db:
+            # “一个 Thread 只有一个活跃 Run”是跨请求的不变量。查询和写入必须
+            # 在同一个写事务中完成；否则多进程/多仓储实例会同时看到没有活跃记录，
+            # 随后各自插入一个 Run。
+            db.execute("BEGIN IMMEDIATE")
             if value.status in ACTIVE_RUN_STATUSES:
                 active = db.execute(
                     "SELECT id FROM runs WHERE thread_id=? AND status IN "
@@ -121,12 +125,27 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
             ).fetchall()
         return [self._load(Run, row["data"]) for row in rows]
 
-    def request_stop(self, run_id: UUID | str) -> Run:
-        run = self.get_run(run_id)
-        if not run:
-            raise KeyError("run not found")
-        run.stop_requested = True
-        return self.save_run(run)
+    def request_stop(
+        self, run_id: UUID | str, *, request_id: UUID | str | None = None
+    ) -> Run:
+        """记录停止请求，并为统一输入保留可重放的请求 ID。"""
+
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT data FROM runs WHERE id=?", (str(run_id),)).fetchone()
+            if not row:
+                raise KeyError("run not found")
+            run = self._load(Run, row["data"])
+            if run.stop_requested:
+                return run
+            run.stop_requested = True
+            if request_id is not None:
+                run.stop_request_id = UUID(str(request_id))
+            db.execute(
+                "UPDATE runs SET data=? WHERE id=?",
+                (self._dump(run), str(run_id)),
+            )
+        return run
 
     def append_event(self, event: Event) -> Event:
         with self._lock, self.connect() as db:

@@ -13,7 +13,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
@@ -177,8 +177,10 @@ class ApiContext:
             raise HTTPException(404, "运行不存在")
         return run
 
-    def save_user_message(self, thread_id: UUID, body: MessageCreate) -> Message:
-        """校验运行模式和附件归属后保存用户消息。"""
+    def validate_user_message_artifacts(
+        self, thread_id: UUID, artifact_ids: list[UUID]
+    ) -> Thread:
+        """校验会话运行边界和附件归属，供统一消息的多个分支复用。"""
 
         thread = self.require_thread(thread_id)
         active = [
@@ -188,12 +190,48 @@ class ApiContext:
         ]
         if thread.mode == ThreadMode.COMPETITION and active:
             raise HTTPException(409, "competition 模式运行中禁止补充提示")
-        for artifact_id in body.artifact_ids:
+        for artifact_id in artifact_ids:
             artifact = self.repository.get_artifact(artifact_id)
             if not artifact or artifact.thread_id != thread_id:
                 raise HTTPException(400, "附件引用无效")
+        return thread
+
+    def save_user_message(
+        self,
+        thread_id: UUID,
+        body: MessageCreate,
+        *,
+        message_id: UUID | None = None,
+        allow_active_competition: bool = False,
+    ) -> Message:
+        """校验运行模式和附件归属后保存用户消息。
+
+        统一输入会把浏览器生成的 request_id 作为消息 ID。重连重发时先返回
+        同一条消息，而不是依赖 SQLite 主键异常来判断重复请求。
+        """
+
+        if allow_active_competition:
+            thread = self.require_thread(thread_id)
+            for artifact_id in body.artifact_ids:
+                artifact = self.repository.get_artifact(artifact_id)
+                if not artifact or artifact.thread_id != thread.id:
+                    raise HTTPException(400, "附件引用无效")
+        else:
+            self.validate_user_message_artifacts(thread_id, body.artifact_ids)
+        if message_id is not None:
+            existing = self.repository.get_message(message_id)
+            if existing:
+                if (
+                    existing.thread_id != thread_id
+                    or existing.role != MessageRole.USER
+                    or existing.content != body.content
+                    or existing.artifact_ids != body.artifact_ids
+                ):
+                    raise HTTPException(409, "请求 ID 已用于不同的消息内容")
+                return existing
         return self.repository.save_message(
             Message(
+                id=message_id or uuid4(),
                 thread_id=thread_id,
                 role=MessageRole.USER,
                 content=body.content,
@@ -206,25 +244,44 @@ class ApiContext:
         thread: Thread,
         create: RunCreate,
         profile: AgentProfileVersion,
+        *,
+        origin_message: Message | None = None,
     ) -> TaskSpec:
         """把 HTTP 输入和 Thread/Profile 快照归一化为 Agent 唯一接受的 `TaskSpec`。"""
 
-        messages = self.repository.list_messages(thread.id)
-        user_messages = [item for item in messages if item.role == MessageRole.USER]
-        if not user_messages:
-            raise HTTPException(409, "请先发送任务消息")
-        latest = user_messages[-1]
+        if origin_message is None:
+            # 兼容旧的“先保存消息、再创建 Run”接口。统一消息入口必须显式传入
+            # 自己刚持久化的消息，不能依赖线程中恰好排在最后的一条用户消息。
+            messages = self.repository.list_messages(thread.id)
+            user_messages = [item for item in messages if item.role == MessageRole.USER]
+            if not user_messages:
+                raise HTTPException(409, "请先发送任务消息")
+            origin_message = user_messages[-1]
+        if origin_message.thread_id != thread.id or origin_message.role != MessageRole.USER:
+            raise HTTPException(409, "任务来源消息无效")
+        # 旧兼容入口可传入更严格的临时规则；日常统一消息使用已版本化的
+        # Profile 默认规则。两者都在 HTTP 模型层拒绝了万能正则。
+        verification_rules = (
+            create.verification_rules or profile.validation_policy.evidence_rules
+        )
         return TaskSpec(
-            body=latest.content,
+            body=origin_message.content,
+            origin_message_id=origin_message.id,
             mode=thread.mode,
-            artifact_ids=latest.artifact_ids,
+            artifact_ids=origin_message.artifact_ids,
             authorized_targets=create.authorized_targets,
             success_conditions=create.success_conditions,
-            verification_rules=create.verification_rules,
+            verification_rules=verification_rules,
             budget=profile.budget,
         )
 
-    async def start_run(self, thread_id: UUID, body: RunCreate) -> Run:
+    async def start_run(
+        self,
+        thread_id: UUID,
+        body: RunCreate,
+        *,
+        origin_message: Message | None = None,
+    ) -> Run:
         """创建 Run 的完整快照并调度执行，供不同 HTTP 入口共用。
 
         统一消息入口和保留的旧运行接口都经过这里，避免两条路径在 Provider、
@@ -242,7 +299,7 @@ class ApiContext:
             selected = provider_configs[0]
         except (ValueError, KeyError) as exc:
             raise HTTPException(409, str(exc)) from exc
-        task = self.build_task(thread, body, profile)
+        task = self.build_task(thread, body, profile, origin_message=origin_message)
         run = Run(
             thread_id=thread.id,
             provider=selected.name,
@@ -261,13 +318,17 @@ class ApiContext:
         self.schedule(run.id, self.execute(run, task, provider, profile))
         return run
 
-    def stop_run(self, run_id: UUID) -> Run:
+    def stop_run(self, run_id: UUID, *, request_id: UUID | None = None) -> Run:
         """停止活跃 Run；等待检查点的 Run 也能立即变为终止状态。"""
 
         run = self.require_run(run_id)
         if run.status not in ACTIVE_RUN_STATUSES:
+            if request_id is not None and run.stop_request_id == request_id:
+                return run
             raise HTTPException(409, "运行已结束")
-        stopped = self.repository.request_stop(run_id)
+        if run.stop_requested:
+            return run
+        stopped = self.repository.request_stop(run_id, request_id=request_id)
         task = self.tasks.get(run_id)
         if task and not task.done():
             task.cancel()

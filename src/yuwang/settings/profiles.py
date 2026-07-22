@@ -9,7 +9,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from yuwang.domain.models import Budget, ThreadMode, utcnow
+from yuwang.domain.models import Budget, ThreadMode, VerificationRule, utcnow
+from yuwang.verification_rules import validate_verification_rule
 
 PROFILE_SCHEMA_VERSION = "1.0"
 SECURITY_PROMPT = (
@@ -63,6 +64,15 @@ class ValidationPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     require_external_evidence: bool = True
     json_schema: dict[str, Any] | None = None
+    # 规则随 AgentProfile 版本固化，避免统一输入或模型输出自行降低验证标准。
+    evidence_rules: list[VerificationRule] = Field(default_factory=list, max_length=20)
+
+    @field_validator("evidence_rules")
+    @classmethod
+    def validate_evidence_rules(
+        cls, values: list[VerificationRule]
+    ) -> list[VerificationRule]:
+        return [validate_verification_rule(value) for value in values]
 
 
 class HumanInterventionPolicy(BaseModel):

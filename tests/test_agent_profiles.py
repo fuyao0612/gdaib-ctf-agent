@@ -142,6 +142,21 @@ def test_workflow_uses_three_safe_presets_and_migrates_v03_nodes():
         )
 
 
+def test_profile_evidence_rules_reject_universal_regex_and_keep_specific_flag_format():
+    with pytest.raises(ValueError, match="无关普通文本"):
+        AgentProfileInput(
+            name="unsafe evidence",
+            validation_policy={"evidence_rules": [{"kind": "regex", "value": r".+"}]},
+        )
+    profile = AgentProfileInput(
+        name="flag evidence",
+        validation_policy={
+            "evidence_rules": [{"kind": "regex", "value": r"FLAG\{[A-Z0-9_]+\}"}]
+        },
+    )
+    assert profile.validation_policy.evidence_rules[0].value.startswith("FLAG")
+
+
 def test_v02_database_and_json_rows_migrate_without_profile_fields(tmp_path):
     path = tmp_path / "legacy.db"
     legacy_thread = Thread(title="v0.2 thread").model_dump(mode="json")

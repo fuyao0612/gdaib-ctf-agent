@@ -1,5 +1,9 @@
 /** Agent 配置表单的默认值与纯转换规则，不包含 React 或网络请求。 */
-import type { AgentProfile, AgentProfileInput } from "../../types";
+import type {
+  AgentProfile,
+  AgentProfileInput,
+  VerificationRule,
+} from "../../types";
 
 export const WIZARD_STEPS = [
   "基础",
@@ -54,7 +58,11 @@ export function createEmptyProfile(): AgentProfileInput {
       max_facts: 100,
     },
     completion_mode: "evidence",
-    validation_policy: { require_external_evidence: true, json_schema: null },
+    validation_policy: {
+      require_external_evidence: true,
+      json_schema: null,
+      evidence_rules: [],
+    },
     intervention_policy: {
       normal_mode: "wait",
       competition_mode: "fail",
@@ -95,6 +103,28 @@ export function buildProfilePayload(
       json_schema: schemaText.trim() ? JSON.parse(schemaText) : null,
     },
   };
+}
+
+/**
+ * 证据规则文本框只编辑正则规则。替换时保留 SHA-256 等不可由该文本框表达的
+ * 规则，并尽量维持原有规则的相对位置，避免保存一次表单意外降低验证强度。
+ */
+export function replaceRegexEvidenceRules(
+  existing: VerificationRule[],
+  text: string,
+): VerificationRule[] {
+  const replacement = text
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => ({ kind: "regex" as const, value }));
+  let replacementIndex = 0;
+  const merged = existing.flatMap((rule) => {
+    if (rule.kind !== "regex") return [rule];
+    const next = replacement[replacementIndex++];
+    return next ? [next] : [];
+  });
+  return [...merged, ...replacement.slice(replacementIndex)];
 }
 
 /** 规划策略和工作流存在约束，在一个纯函数中同步调整可避免各表单写出冲突组合。 */

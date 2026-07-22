@@ -7,7 +7,8 @@ param(
     [string]$Command = 'help',
     [switch]$Development,
     [switch]$Build,
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [switch]$OpenBrowser
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,7 @@ function Show-Help {
     Write-Host '御网智元统一入口' -ForegroundColor Cyan
     Write-Host '  .\yuwang.ps1 setup                 首次生成本机配置并显示依赖提示'
     Write-Host '  .\yuwang.ps1 start                 使用 Docker 启动（推荐）'
+    Write-Host '  .\yuwang.ps1 start -OpenBrowser    启动后使用系统默认浏览器打开实际 Web 地址'
     Write-Host '  .\yuwang.ps1 start -Development    本地启动 API 与 Web'
     Write-Host '  .\yuwang.ps1 stop                  安全停止本项目服务'
     Write-Host '  .\yuwang.ps1 status                查看地址和就绪状态'
@@ -39,10 +41,13 @@ switch ($Command) {
         Write-Host '下一步：运行 .\yuwang.ps1 doctor，然后运行 .\yuwang.ps1 start。'
     }
     'start' {
-        $arguments = @{ Quiet = $true }
+        # 默认保留 Docker Compose 的输出。双击启动失败时，用户需要直接看到构建或端口错误，
+        # 而不是只能从未提示位置的日志文件中猜测原因。
+        $arguments = @{}
         if ($Development) { $arguments.Development = $true }
         if ($Build) { $arguments.Build = $true }
         if ($CheckOnly) { $arguments.CheckOnly = $true }
+        if ($OpenBrowser) { $arguments.OpenBrowser = $true }
         & (Join-Path $root 'scripts\start.ps1') @arguments
     }
     'stop' {

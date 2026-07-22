@@ -19,11 +19,11 @@ interface Props {
 }
 
 const STATUS_COPY = {
-  completed: { title: "任务成功", next: "检查结果与证据；需要留档时下载完整报告。" },
+  completed: { title: "任务已完成", next: "检查结论与验证状态；需要留档时下载完整报告。" },
   failed: { title: "任务失败", next: "根据失败原因调整配置或任务信息，然后点击重试。" },
   stopped: { title: "任务已停止", next: "确认任务范围后可安全重试，原审计记录会保留。" },
-  waiting_input: { title: "等待用户补充", next: "在下方补充缺少的信息，Agent 会从检查点继续。" },
-  waiting_clarification: { title: "等待任务澄清", next: "回答 Task Brief 中的澄清问题后继续。" },
+  waiting_input: { title: "等待用户补充", next: "在下方统一输入框补充缺少的信息，Agent 会从检查点继续。" },
+  waiting_clarification: { title: "等待任务澄清", next: "在下方统一输入框回答任务说明中的澄清问题后继续。" },
   waiting_approval: { title: "等待计划确认", next: "检查计划范围、步骤和验证方式，再批准或提出修改。" },
   paused: { title: "任务已暂停", next: "检查已保存的计划、指引和预算，然后从安全检查点继续。" },
 } as const;
@@ -53,6 +53,19 @@ function verifiedLabel(run: Run): string {
   if (run.validation_status === "unverified") return "模型生成，未经外部验证";
   if (run.validation_status === "failed") return "验证失败";
   return "尚未完成验证";
+}
+
+function completedTitle(run: Run): string {
+  if (run.validation_status === "validated") return "任务已验证成功";
+  if (run.validation_status === "unverified") return "回答已完成（未外部验证）";
+  if (run.validation_status === "failed") return "回答完成，但验证失败";
+  return "任务已完成，验证状态待确认";
+}
+
+function conciseAnswer(value: string): string {
+  const limit = 420;
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit).trimEnd()}…`;
 }
 
 export function RunProgress({ run, events, audit }: Omit<Props, "report" | "messages">) {
@@ -122,10 +135,14 @@ export function RunProgress({ run, events, audit }: Omit<Props, "report" | "mess
 
 export function ResultCard({ run, events, audit, report, messages }: Props) {
   if (!(run.status in STATUS_COPY)) return null;
-  const copy = STATUS_COPY[run.status as keyof typeof STATUS_COPY];
+  const baseCopy = STATUS_COPY[run.status as keyof typeof STATUS_COPY];
+  const copy = run.status === "completed"
+    ? { ...baseCopy, title: completedTitle(run) }
+    : baseCopy;
   const evidence = reportArray(report, "evidence");
   const auditEvidence = (audit?.evidence ?? []).map((item) => item.verification_summary);
   const evidenceSummary = [...evidence, ...auditEvidence].slice(0, 3);
+  const answer = finalAnswer(run, report, messages);
   const reason =
     run.error ??
     [...events].reverse().find((event) => event.type === `run_${run.status}`)?.summary ??
@@ -138,11 +155,17 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
         <small>{verifiedLabel(run)}</small>
       </header>
       <p className="result-next">{copy.next}</p>
+      {run.status === "completed" && (
+        <section className="result-conclusion" data-testid="result-conclusion">
+          <strong>结论</strong>
+          <p>{conciseAnswer(answer)}</p>
+        </section>
+      )}
       <details className="full-report">
         <summary>展开结论、证据与任务报告</summary>
         <div className="result-answer">
           <strong>结论</strong>
-          <pre>{finalAnswer(run, report, messages)}</pre>
+          <pre>{answer}</pre>
         </div>
         <dl className="result-details">
           <div><dt>证据摘要</dt><dd>{evidenceSummary.length ? evidenceSummary.join("；") : "暂无可展示证据"}</dd></div>

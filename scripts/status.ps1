@@ -16,14 +16,14 @@ $dockerHealth = Invoke-YuwangEndpoint "$dockerBase/api/v1/health"
 $developmentHealth = Invoke-YuwangEndpoint "$developmentBase/api/v1/health"
 
 $mode = '未运行'
-$webAddress = "http://localhost:$webPort"
+$webAddress = "http://127.0.0.1:$webPort"
 $apiBase = $null
 if ($dockerHealth.StatusCode -eq 200) {
     $mode = 'Docker'
     $apiBase = $dockerBase
 } elseif ($developmentHealth.StatusCode -eq 200) {
     $mode = '本地开发'
-    $webAddress = 'http://localhost:5173'
+    $webAddress = 'http://127.0.0.1:5173'
     $apiBase = $developmentBase
 }
 

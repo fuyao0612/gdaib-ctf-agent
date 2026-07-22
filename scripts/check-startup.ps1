@@ -8,6 +8,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $startScript = Join-Path $PSScriptRoot 'start.ps1'
+$entryScript = Join-Path $root 'yuwang.ps1'
+$doubleClickLauncher = Join-Path $root '启动御网智元.cmd'
 $envFile = Join-Path $root '.env'
 $processFile = Join-Path $root 'data\dev-processes.json'
 $envExisted = Test-Path -LiteralPath $envFile
@@ -18,6 +20,19 @@ function Invoke-Startup([string[]]$StartupArguments) {
     try {
         $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass `
             -File $startScript @StartupArguments 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    return @{ ExitCode = $exitCode; Output = $output }
+}
+
+function Invoke-Entry([string[]]$StartupArguments) {
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File $entryScript start @StartupArguments 2>&1 | Out-String
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousPreference
@@ -64,6 +79,22 @@ try {
     }
     Write-Host '[启动验收] 敏感值未出现在启动输出中。' -ForegroundColor Green
 
+    $entryCheck = Invoke-Entry @('-Development', '-CheckOnly', '-OpenBrowser')
+    if ($entryCheck.ExitCode -ne 0) {
+        throw '统一入口无法透传 -OpenBrowser，双击启动器可能无法使用实际 Web 地址。'
+    }
+    $launcherText = Get-Content -LiteralPath $doubleClickLauncher -Raw
+    $startText = Get-Content -LiteralPath $startScript -Raw
+    if ($launcherText -notmatch 'start\s+-Build\s+-OpenBrowser' -or
+        $launcherText -match 'start "" "http://localhost:8080"' -or
+        -not $launcherText.Contains('for /l %%N in (1,1,60)') -or
+        -not $launcherText.Contains('did not become ready within 2 minutes') -or
+        -not $startText.Contains('http://127.0.0.1:$webPort') -or
+        $startText.Contains('http://localhost:$webPort')) {
+        throw '双击启动器没有重建当前源码，或没有委托统一入口打开实际 Web 地址。'
+    }
+    Write-Host '[启动验收] 双击入口会重建当前源码，等待 Docker 就绪，并按可达的实际 Web 地址打开浏览器。' -ForegroundColor Green
+
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 8000)
     $listener.Start()
     try {
@@ -79,7 +110,9 @@ try {
     if (-not $SkipRuntimeSmoke) {
         Write-Host '[启动验收] 真实启动 API 与 Web，并在 3 秒后自动清理…'
         $smoke = Invoke-Startup @('-Development', '-RunSeconds', '3')
-        if ($smoke.ExitCode -ne 0 -or $smoke.Output -notmatch '本地开发服务启动成功') {
+        if ($smoke.ExitCode -ne 0 -or
+            $smoke.Output -notmatch '本地开发服务启动成功' -or
+            $smoke.Output -notmatch 'http://127\.0\.0\.1:5173') {
             throw '本地 API/Web 启动冒烟失败。请查看 data\logs 中的 stderr 日志。'
         }
         if ((Test-PortOpen 8000) -or (Test-PortOpen 5173)) {
