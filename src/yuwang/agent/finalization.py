@@ -100,7 +100,16 @@ class AgentFinalizer:
         if state.structured_output is not None:
             return json.dumps(state.structured_output, ensure_ascii=False, indent=2)
         if state.action and state.action.candidate:
-            return f"已验证结果：{state.action.candidate.value}"
+            label = (
+                "已外部验证的候选结果"
+                if state.validation_status == "validated"
+                else "候选结果（未外部验证）"
+            )
+            candidate = state.action.candidate
+            return (
+                f"{label}：{candidate.value}\n"
+                f"来源：受控工具调用 {candidate.source_call_id}（证据位置 {candidate.location}）"
+            )
         return state.verification_summary
 
     async def persist_memories(self, state: AgentStateModel, run: Run) -> None:

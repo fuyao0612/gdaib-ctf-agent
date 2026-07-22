@@ -1,6 +1,10 @@
 /** 工作流、人工介入和完成验证，这些字段共同决定运行怎样结束。 */
 import type { AgentProfileInput } from "../../types";
-import { changeCompletionMode, changeWorkflowPreset } from "./model";
+import {
+  changeCompletionMode,
+  changeWorkflowPreset,
+  replaceRegexEvidenceRules,
+} from "./model";
 
 interface Props {
   form: AgentProfileInput;
@@ -15,6 +19,10 @@ export default function WorkflowValidationFields({
   onChange,
   onSchemaChange,
 }: Props) {
+  // 旧版本的服务端快照可能还没有 evidence_rules；读取时保持兼容，下一次
+  // 保存会补齐该字段，而不会因为渲染失败阻断编辑。
+  const evidenceRules = form.validation_policy.evidence_rules ?? [];
+
   return (
     <fieldset>
       <legend>工作流、人工介入与完成验证</legend>
@@ -66,6 +74,31 @@ export default function WorkflowValidationFields({
             aria-label="JSON Schema"
             value={schemaText}
             onChange={(event) => onSchemaChange(event.target.value)}
+          />
+        </label>
+      )}
+      {form.completion_mode === "evidence" && (
+        <label>
+          默认证据规则（每行一个正则，例如 <code>{"FLAG\\{[A-Za-z0-9_]+\\}"}</code>）
+          <textarea
+            aria-label="默认证据规则"
+            value={evidenceRules
+              .filter((rule) => rule.kind === "regex")
+              .map((rule) => rule.value)
+              .join("\n")}
+            onChange={(event) =>
+              onChange({
+                ...form,
+                validation_policy: {
+                  ...form.validation_policy,
+                  evidence_rules: replaceRegexEvidenceRules(
+                    evidenceRules,
+                    event.target.value,
+                  ),
+                },
+              })
+            }
+            placeholder="不填时可以完成回答，但会明确显示“未外部验证”；不能使用 .+ 或 .*"
           />
         </label>
       )}

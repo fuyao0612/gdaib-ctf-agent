@@ -210,6 +210,22 @@ export type ChatEvent =
   | { type: "text_delta"; data: { text: string } }
   | { type: "reply_complete"; data: { message: Message } }
   | { type: "reply_failed"; data: { message: string; retryable: boolean } };
+export type UnifiedMessageEvent =
+  | ChatEvent
+  | { type: "execution_started"; data: { run: Run; user_message: Message } }
+  | {
+      type: "execution_stopped";
+      data: { run?: Run; user_message?: Message | null };
+    }
+  | {
+      type: "guidance_queued";
+      data: { run: Run; guidance: RunGuidance | null; user_message: Message | null };
+    }
+  | { type: "input_received"; data: { run: Run; user_message: Message | null } }
+  | {
+      type: "clarification_received";
+      data: { run: Run; user_message: Message | null };
+    };
 export type CompletionMode = "advisory" | "structured" | "evidence";
 export interface AgentProfileSummary {
   profile_id: string;
@@ -256,6 +272,7 @@ export interface AgentProfileInput {
   validation_policy: {
     require_external_evidence: boolean;
     json_schema: Record<string, unknown> | null;
+    evidence_rules: VerificationRule[];
   };
   intervention_policy: {
     normal_mode: "wait" | "fail";
@@ -266,6 +283,11 @@ export interface AgentProfileInput {
   report_template: string;
   enabled: boolean;
   is_default: boolean;
+}
+
+export interface VerificationRule {
+  kind: "regex" | "sha256";
+  value: string;
 }
 export interface AgentProfile extends AgentProfileInput {
   profile_id: string;

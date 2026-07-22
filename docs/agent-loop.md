@@ -1,14 +1,16 @@
 # Agent 五阶段循环
 
-本页只描述“Agent 任务”。普通对话走独立聊天链，直接保存完整用户/助手消息，不创建
-Run，也不要求结构化 Action。Agent（智能执行器）不会直接把模型文本当成结果。一次 Agent 请求先形成不可变 Run，
-再经过准备、规划、受控动作、确定性验证和报告收尾。Event（事件）是保存到 SQLite
+本页描述统一消息入口在内部选择“受控执行”后使用的五阶段循环。普通消息走自由文本链，
+直接保存完整用户/助手消息，不创建 Run，也不要求结构化 Action；用户无需手动选择该路径。
+已有 Run 时，同一输入框会随状态变成追加指引、补充信息、任务澄清或停止，而不是新开一个
+并行 Run。Agent（智能执行器）不会直接把模型文本当成已验证结果。一次受控执行请求先形成
+不可变 Run，再经过准备、规划、受控动作、验证和报告收尾。Event（事件）是保存到 SQLite
 后再推送到页面的公开进度，不包含隐藏思维链。
 
 ```mermaid
 flowchart LR
     U["用户"] --> W["Web\n输入与五阶段进度"]
-    W -->|"POST turns"| A["FastAPI\n固化 Run 与配置快照"]
+    W -->|"POST /threads/{id}/message"| A["FastAPI\n分派消息、固化 Run 与配置快照"]
     A --> G["Agent\n准备→规划→执行→验证→收尾"]
     G --> P["Provider\n结构化模型调用"]
     P --> G
@@ -20,7 +22,10 @@ flowchart LR
 
 实际节点：`ingest`、`normalize_task`。
 
-- `apps/api/routes/runs.py` 保存用户消息，解析正式 Provider 和 AgentProfile。
+- `apps/api/routes/messages.py` 先处理停止、运行中指引、等待补充和等待澄清；只有没有活动
+  Run 时才判断消息是否需要受控执行。
+- `apps/api/run_interactions.py` 负责补充、澄清和追加指引的请求 ID 幂等、时间线保存、附件
+  归属校验与检查点恢复。`apps/api/routes/runs.py` 中的同类接口复用这一用例以保持兼容。
 - `apps/api/context.py` 构造不可变 TaskSpec，保存 Provider/Profile 快照并调度后台任务。
 - `src/yuwang/agent/nodes.py` 载入任务快照、清理输入边界并发出公开状态事件。
 - `src/yuwang/agent/engine.py` 建立上下文锚点和剩余预算，防止恢复时任务漂移。
@@ -55,8 +60,12 @@ flowchart LR
 实际节点：`verify`、`complete`。
 
 - advisory（建议）模式：保留“未经外部验证”的明确标识。
-- structured（结构化）模式：结果必须通过配置的 JSON Schema。
-- evidence（证据）模式：候选必须关联真实工具调用，并通过正则或 SHA-256 等确定性规则。
+- structured（结构化）模式：结果必须通过配置的 JSON Schema；这只说明结构符合约定，不能把模型
+  自我声明当作外部证据。
+- evidence（证据）模式：只有配置了具体规则时，候选才可关联真实成功工具调用，并通过正则或
+  SHA-256 等确定性规则。
+- 若没有确定性外部验证条件，Agent 可以交付回答，但 `validation_status` 为 `unverified`，结果
+  卡明确显示“未外部验证”。系统不会再补入 `regex: .+`；能匹配无关普通文本的万能正则也会被拒绝。
 - `src/yuwang/agent/verification.py` 实现确定性验证；另一次模型调用不能升级可信等级。
 
 验证失败时，工作流按 AgentProfile 重新规划或明确失败，不能假装成功。
@@ -76,12 +85,18 @@ flowchart LR
 
 - `src/yuwang/agent/runner.py` 连接 LangGraph 节点，统一处理运行、失败、停止和恢复。
 - 每个安全节点写检查点。服务重启后从下一个安全节点继续，不重放已完成副作用。
-- “安全暂停”只登记请求，在下一个安全节点进入 `paused`；“停止”直接终止本次 Run。
-- 追加指引按序号持久化。Agent 在安全节点应用未消费指引，保留授权与预算边界并触发重规划。
+- “安全暂停”只登记请求，在下一个安全节点进入 `paused`；“停止”直接终止本次 Run。活动 Run
+  中的停止短语由统一消息入口优先处理，停止消息不会被排队为指引。
+- 追加指引按序号持久化。Agent 在安全节点应用未消费指引，保留授权与预算边界；应用后由后续
+  节点根据新信息决定是否需要重新规划，页面只显示“已在检查点应用”。
+- `waiting_input` 和 `waiting_clarification` 的同一输入框提交会保存用户消息、更新检查点并恢复；
+  `paused` 时提交的指引只保存，待用户恢复后才消费。附件也可随这些消息提交，但必须满足当前
+  对话归属和运行模式边界，并始终视为不可信。
 - 结果不确定的非幂等工具不会自动重试，而是安全失败并要求人工复核。
 - `apps/web/src/hooks/useWorkbenchData.ts` 用一个 EventSource 接收 SSE；刷新时重新读取
   Thread、Run、Event、Audit 和 Report，数据库才是权威来源。
 - SSE 使用递增 sequence 和 Last-Event-ID 补取，不把临时浏览器状态当作事实。
 
-建议结合 `tests/test_agent_engine.py`、`tests/test_api_integration.py` 和
+建议结合 `tests/test_dispatch.py`、`tests/test_api_integration.py`、
+`tests/test_success_verification.py`、`apps/web/src/components/MessageComposer.test.tsx` 和
 `apps/web/src/components/RunSummary.test.tsx` 阅读，以测试确认每一阶段的真实行为。

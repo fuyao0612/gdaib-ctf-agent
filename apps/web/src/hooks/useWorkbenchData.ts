@@ -2,11 +2,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type {
-  AgentProfileSummary,
   ChatDefaults,
   Event,
   MemoryRecord,
-  ProviderConfig,
   Report,
   Run,
   RunAudit,
@@ -32,14 +30,15 @@ export function useWorkbenchData() {
   const [audit, setAudit] = useState<RunAudit | null>(null);
   const [control, setControl] = useState<RunControl | null>(null);
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
-  const [providers, setProviders] = useState<ProviderConfig[]>([]);
-  const [agentProfiles, setAgentProfiles] = useState<AgentProfileSummary[]>([]);
-  const [selectedProfileId, setSelectedProfileId] = useState("");
-  const [selectedProviderId, setSelectedProviderId] = useState("");
   const [chatDefaults, setChatDefaults] = useState<ChatDefaults | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
   const streamRunRef = useRef("");
   const latestSequenceRef = useRef(0);
+  // 会话详情、审计和 SSE 都是异步的。切换选择时递增代次，迟到的旧响应
+  // 只能自行结束，不能覆盖当前 Thread 的数据区。
+  const selectedThreadIdRef = useRef<string | null>(null);
+  const selectionVersionRef = useRef(0);
+  const controlRequestVersionRef = useRef(0);
 
   const loadThreads = useCallback(async () => {
     const values = await api.listThreads();
@@ -47,53 +46,29 @@ export function useWorkbenchData() {
     return values;
   }, []);
 
-  const loadProviders = useCallback(async () => {
-    const values = await api.listProviders();
-    setProviders(values);
-    setSelectedProviderId((current) =>
-      current && values.some((value) => value.id === current)
-        ? current
-        : (values.find((value) => value.is_default)?.id ?? values[0]?.id ?? ""),
-    );
-    return values;
-  }, []);
-
-  const loadProfiles = useCallback(async () => {
-    const values = await api.listAgentProfiles();
-    setAgentProfiles(values);
-    setSelectedProfileId((current) =>
-      current && values.some((value) => value.profile_id === current)
-        ? current
-        : (values.find((value) => value.is_default)?.profile_id ??
-          values[0]?.profile_id ??
-          ""),
-    );
-  }, []);
-
   const refreshSettings = useCallback(async () => {
-    const [values, , preferences] = await Promise.all([
-      loadProviders(),
-      loadProfiles(),
-      api.chatPreferences(),
-    ]);
+    const preferences = await api.chatPreferences();
     setChatDefaults(preferences);
-    if (
-      preferences.default_provider_id &&
-      values.some((value) => value.id === preferences.default_provider_id)
-    )
-      setSelectedProviderId(preferences.default_provider_id);
-  }, [loadProviders, loadProfiles]);
+  }, []);
 
   const loadControl = useCallback(async (runId: string) => {
+    const selectionVersion = selectionVersionRef.current;
+    const requestVersion = ++controlRequestVersionRef.current;
     const value = await api.control(runId);
-    setControl(value);
+    if (
+      selectionVersion === selectionVersionRef.current &&
+      requestVersion === controlRequestVersionRef.current
+    )
+      setControl(value);
     return value;
   }, []);
 
   const connect = useCallback(
     (run: Run) => {
+      if (selectedThreadIdRef.current !== run.thread_id) return;
       // SSE 只传递追加事件，刷新后的权威状态仍从持久化详情和审计接口恢复。
       sourceRef.current?.close();
+      sourceRef.current = null;
       if (streamRunRef.current !== run.id) {
         streamRunRef.current = run.id;
         latestSequenceRef.current = 0;
@@ -102,20 +77,33 @@ export function useWorkbenchData() {
         `/api/v1/runs/${run.id}/events/stream?after=${latestSequenceRef.current}`,
       );
       sourceRef.current = source;
+      const isCurrentRun = () =>
+        selectedThreadIdRef.current === run.thread_id &&
+        streamRunRef.current === run.id;
+      const isCurrentStream = () =>
+        isCurrentRun() && sourceRef.current === source;
+      const closeStream = () => {
+        source.close();
+        if (sourceRef.current === source) sourceRef.current = null;
+      };
       source.onmessage = (messageEvent) => {
+        if (!isCurrentStream()) return;
         const event = JSON.parse(messageEvent.data) as Event;
         latestSequenceRef.current = Math.max(
           latestSequenceRef.current,
           event.sequence,
         );
         setEvents((previous) =>
-          previous.some((item) => item.sequence === event.sequence)
+          !isCurrentStream() || previous.some((item) => item.sequence === event.sequence)
             ? previous
             : [...previous, event],
         );
         if (event.type === "run_started")
           setActiveRun((current) =>
-            current?.id === run.id
+            // 停止请求的 HTTP 响应会先把界面更新为终态。旧 SSE 中迟到的
+            // run_started 事件不能把已停止任务“复活”。
+            isCurrentStream() &&
+            current?.id === run.id && !terminalStatuses.has(current.status)
               ? {
                   ...current,
                   status: "running",
@@ -123,30 +111,42 @@ export function useWorkbenchData() {
                 }
               : current,
           );
-        void api.audit(run.id).then(setAudit);
+        void api.audit(run.id).then((value) => {
+          if (isCurrentRun()) setAudit(value);
+        });
         void loadControl(run.id);
         if (waitingEvents.has(event.type)) {
-          source.close();
+          closeStream();
           void api.detail(run.thread_id).then((value) => {
+            if (!isCurrentRun()) return;
             setDetail(value);
             setActiveRun(value.runs.find((item) => item.id === run.id) ?? run);
           });
         }
         if (terminalStatuses.has(event.type.replace("run_", ""))) {
-          source.close();
+          closeStream();
           void api.detail(run.thread_id).then((value) => {
+            if (!isCurrentRun()) return;
             const latest = value.runs.find((item) => item.id === run.id) ?? run;
             setDetail(value);
             setActiveRun(latest);
             void loadThreads();
-            void api.memories(run.thread_id).then(setMemories);
+            void api.memories(run.thread_id).then((memories) => {
+              if (isCurrentRun()) setMemories(memories);
+            });
             if (["run_completed", "run_failed"].includes(event.type))
-              void api.report(run.id).then(setReport).catch(() => setReport(null));
+              void api.report(run.id)
+                .then((value) => {
+                  if (isCurrentRun()) setReport(value);
+                })
+                .catch(() => {
+                  if (isCurrentRun()) setReport(null);
+                });
           });
         }
       };
       source.onerror = () => {
-        if (source.readyState === EventSource.CLOSED) source.close();
+        if (source.readyState === EventSource.CLOSED) closeStream();
       };
     },
     [loadControl, loadThreads],
@@ -154,33 +154,52 @@ export function useWorkbenchData() {
 
   const selectThread = useCallback(
     async (id: string) => {
+      const selectionVersion = ++selectionVersionRef.current;
+      const isCurrentSelection = () =>
+        selectionVersion === selectionVersionRef.current &&
+        selectedThreadIdRef.current === id;
+      selectedThreadIdRef.current = id;
       sourceRef.current?.close();
+      sourceRef.current = null;
+      streamRunRef.current = "";
+      latestSequenceRef.current = 0;
+      controlRequestVersionRef.current += 1;
+      // 切换过程中不保留旧会话的输入、Run 或控制面，避免用户在新旧详情交替时
+      // 误把旧草稿或旧状态当作新会话内容。
+      setDetail(null);
+      setEvents([]);
+      setActiveRun(null);
       setReport(null);
       setControl(null);
+      setAudit(null);
+      setMemories([]);
       window.localStorage?.setItem("yuwang.currentThreadId", id);
-      const value = await api.detail(id);
+      const [value, threadMemories] = await Promise.all([
+        api.detail(id),
+        api.memories(id),
+      ]);
+      if (!isCurrentSelection()) return;
       setDetail(value);
-      setMemories(await api.memories(id));
+      setMemories(threadMemories);
       const run = value.runs.at(-1) ?? null;
       setActiveRun(run);
       if (!run) {
-        streamRunRef.current = "";
-        latestSequenceRef.current = 0;
-        setEvents([]);
-        setAudit(null);
         return;
       }
+      streamRunRef.current = run.id;
       const [runEvents, runAudit] = await Promise.all([
         api.events(run.id),
         api.audit(run.id),
         loadControl(run.id),
       ]);
-      streamRunRef.current = run.id;
+      if (!isCurrentSelection() || streamRunRef.current !== run.id) return;
       latestSequenceRef.current = runEvents.at(-1)?.sequence ?? 0;
       setEvents(runEvents);
       setAudit(runAudit);
       if (["completed", "failed"].includes(run.status)) {
-        setReport(await api.report(run.id).catch(() => null));
+        const latestReport = await api.report(run.id).catch(() => null);
+        if (isCurrentSelection() && streamRunRef.current === run.id)
+          setReport(latestReport);
       } else if (["queued", "running"].includes(run.status)) {
         // 刷新或重新选择会话后必须恢复实时订阅，否则页面会停在旧检查点。
         connect(run);
@@ -193,15 +212,11 @@ export function useWorkbenchData() {
     const status = await api.setupStatus();
     try {
       await api.adminSession();
-      const [values, , , preferences] = await Promise.all([
+      const [values, preferences] = await Promise.all([
         loadThreads(),
-        loadProviders(),
-        loadProfiles(),
         api.chatPreferences(),
       ]);
       setChatDefaults(preferences);
-      if (preferences.default_provider_id)
-        setSelectedProviderId(preferences.default_provider_id);
       const remembered = window.localStorage?.getItem("yuwang.currentThreadId");
       if (remembered && values.some((item) => item.id === remembered))
         await selectThread(remembered);
@@ -209,7 +224,7 @@ export function useWorkbenchData() {
     } catch {
       return { initialSetup: !status.configured, authenticated: false };
     }
-  }, [loadThreads, loadProviders, loadProfiles, selectThread]);
+  }, [loadThreads, selectThread]);
 
   useEffect(() => () => sourceRef.current?.close(), []);
 
@@ -222,10 +237,6 @@ export function useWorkbenchData() {
     audit,
     control,
     memories,
-    providers,
-    agentProfiles,
-    selectedProfileId,
-    selectedProviderId,
     chatDefaults,
     setDetail,
     setEvents,
@@ -233,8 +244,6 @@ export function useWorkbenchData() {
     setReport,
     setControl,
     setMemories,
-    setSelectedProfileId,
-    setSelectedProviderId,
     loadThreads,
     refreshSettings,
     loadControl,

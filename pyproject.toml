@@ -34,6 +34,7 @@ packages = ["src/yuwang", "apps"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+cache_dir = ".tmp-pytest-cache"
 addopts = "-q --cov=src/yuwang --cov-report=term-missing --cov-fail-under=85"
 markers = ["real_provider: explicit opt-in test against a configured real provider"]
 

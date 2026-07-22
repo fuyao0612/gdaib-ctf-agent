@@ -11,6 +11,23 @@ from yuwang.storage.sqlite_common import SQLiteStore
 
 
 class SQLiteWorkspaceStore(SQLiteStore):
+    def has_chat_request(self, thread_id: UUID | str, request_id: UUID | str) -> bool:
+        """判断 request_id 是否已属于该会话的聊天请求。
+
+        统一消息入口会先用它重放已完成的聊天，避免后来启动的 Run 把同一次
+        网络重发误分流为追加指引。
+        """
+
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT thread_id FROM chat_requests WHERE request_id=?", (str(request_id),)
+            ).fetchone()
+        if not row:
+            return False
+        if row["thread_id"] != str(thread_id):
+            raise ValueError("请求 ID 已用于其他会话")
+        return True
+
     def begin_chat_request(
         self,
         thread_id: UUID,
@@ -190,6 +207,13 @@ class SQLiteWorkspaceStore(SQLiteStore):
                 ),
             )
         return value
+
+    def get_message(self, message_id: UUID | str) -> Message | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT data FROM messages WHERE id=?", (str(message_id),)
+            ).fetchone()
+        return self._load(Message, row["data"]) if row else None
 
     def list_messages(self, thread_id: UUID | str) -> list[Message]:
         with self.connect() as db:

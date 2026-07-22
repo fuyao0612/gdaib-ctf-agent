@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Event, Run, RunControl } from "../types";
+import type { Event, Run, RunControl, RunGuidance } from "../types";
 
 interface Props {
   run: Run;
@@ -8,12 +8,24 @@ interface Props {
   busy: boolean;
   onPause: () => Promise<boolean>;
   onResume: () => Promise<boolean>;
-  onGuidance: (content: string) => Promise<boolean>;
 }
 
-/** 暂停、继续和追加指引的公开控制面板；停止仍由主输入区单独表达。 */
+function guidanceState(item: RunGuidance, events: Event[]): string {
+  if (!item.consumed_at) return "已排队";
+  // 后端在 `replanned` 事件中写入真正触发该次重规划的 guidance_sequences。
+  // 只接受这个显式关联，不能从“已消费”或时间先后推断因果。
+  const replannedForGuidance = events.some((event) => {
+    if (event.type !== "replanned") return false;
+    const sequences = event.payload.guidance_sequences;
+    return Array.isArray(sequences) && sequences.includes(item.sequence);
+  });
+  return replannedForGuidance
+    ? "已在检查点应用，因本指引重规划"
+    : "已在检查点应用";
+}
+
+/** 暂停、继续和已保存指引的高级查看入口；停止由主输入区统一处理。 */
 export default function RunControlPanel(props: Props) {
-  const [guidance, setGuidance] = useState("");
   const [pauseSubmitted, setPauseSubmitted] = useState(false);
   const guidanceItems = props.control.guidance ?? [];
   const lastPause = [...props.events].reverse().find((event) =>
@@ -36,7 +48,7 @@ export default function RunControlPanel(props: Props) {
       <div className="run-control-heading">
         <div>
           <strong>运行控制</strong>
-          <small>暂停会等待安全检查点；停止会终止本次运行。</small>
+          <small>暂停会等待安全检查点；停止请直接在下方输入框发送。</small>
         </div>
         {props.run.status === "running" ? (
           <button
@@ -55,25 +67,6 @@ export default function RunControlPanel(props: Props) {
         ) : null}
       </div>
 
-      {controllable && (
-        <div className="guidance-form">
-          <textarea
-            aria-label="追加指引"
-            value={guidance}
-            onChange={(event) => setGuidance(event.target.value)}
-            placeholder="追加约束或纠偏信息；不会扩大原授权范围"
-          />
-          <button
-            disabled={props.busy || !guidance.trim()}
-            onClick={async () => {
-              if (await props.onGuidance(guidance.trim())) setGuidance("");
-            }}
-          >
-            排队追加指引
-          </button>
-        </div>
-      )}
-
       {guidanceItems.length > 0 && (
         <ol className="guidance-list" aria-label="追加指引记录">
           {guidanceItems.map((item) => (
@@ -83,7 +76,7 @@ export default function RunControlPanel(props: Props) {
               <time dateTime={item.created_at}>
                 {new Date(item.created_at).toLocaleString()}
               </time>
-              <strong>{item.consumed_at ? "已应用并重规划" : "已排队"}</strong>
+              <strong>{guidanceState(item, props.events)}</strong>
             </li>
           ))}
         </ol>

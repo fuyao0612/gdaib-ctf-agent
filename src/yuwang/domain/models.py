@@ -134,6 +134,9 @@ class Run(DomainModel):
     plan_mode: Literal["auto", "approval"] = "auto"
     attempt: int = Field(1, ge=1)
     stop_requested: bool = False
+    # 统一输入用这个 ID 重放已完成的停止响应，刷新或断线重发不会把“停止”
+    # 误判为一条新的聊天消息。旧 Run 没有该字段时保持 None。
+    stop_request_id: UUID | None = None
     error: str | None = None
     completion_mode: str = "evidence"
     validation_status: Literal["pending", "unverified", "validated", "failed"] = "pending"
@@ -222,6 +225,9 @@ class Artifact(DomainModel):
 class TaskSpec(DomainModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True, frozen=True)
     body: str = Field(min_length=1, max_length=100_000)
+    # TaskSpec 是不可变运行快照；保留来源消息可让统一入口安全识别重发请求，
+    # 无需根据相同文本猜测它属于哪一次 Run。
+    origin_message_id: UUID | None = None
     scenario: str = "general"
     mode: ThreadMode = ThreadMode.NORMAL
     artifact_ids: list[UUID] = Field(default_factory=list)

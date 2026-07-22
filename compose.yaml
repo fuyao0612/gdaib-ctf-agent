@@ -23,7 +23,7 @@ services:
     environment:
       YUWANG_DATABASE_PATH: /data/yuwang.db
       YUWANG_ARTIFACT_ROOT: /data/artifacts
-      YUWANG_CORS_ORIGINS: ${YUWANG_CORS_ORIGINS:-http://localhost:8080}
+      YUWANG_CORS_ORIGINS: ${YUWANG_CORS_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080}
       YUWANG_COOKIE_SECURE: ${YUWANG_COOKIE_SECURE:-false}
       YUWANG_ADMIN_TOKEN: ${YUWANG_ADMIN_TOKEN:?Set YUWANG_ADMIN_TOKEN in .env}
       YUWANG_MASTER_KEY: ${YUWANG_MASTER_KEY:?Set YUWANG_MASTER_KEY in .env}

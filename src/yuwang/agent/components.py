@@ -33,6 +33,7 @@ class AgentRuntimeState(Protocol):
     task: TaskSpec
     observations: list[Observation]
     supplemental_inputs: list[str]
+    supplemental_artifact_ids: list[UUID]
     tool_schemas: list[dict[str, Any]]
     plan: AgentPlan | None
     task_brief: TaskBrief | None
@@ -185,9 +186,19 @@ class DefaultContextBuilder:
             or (item.kind == "run_summary" and policy.include_run_summaries)
             or (item.kind in {"important_fact", "user_input"} and policy.include_memories)
         ]
+        # 首次任务附件与运行中由统一输入框追加的附件都保持不可信上下文；后者
+        # 不修改不可变 TaskSpec，而是随检查点恢复。
+        attachment_ids = [
+            *state.task.artifact_ids,
+            *[
+                value
+                for value in state.supplemental_artifact_ids
+                if value not in state.task.artifact_ids
+            ],
+        ]
         attachment_context = [
             self._attachment_context(artifact_id, policy.text_attachment_char_limit)
-            for artifact_id in state.task.artifact_ids
+            for artifact_id in attachment_ids
         ]
         context: dict[str, Any] = {
             "security_layer": SECURITY_PROMPT,

@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
@@ -30,6 +31,30 @@ def test_rejects_out_of_order_and_concurrent_active_runs(tmp_path):
         )
     with pytest.raises(ValueError, match="active"):
         repository.save_run(Run(thread_id=thread.id))
+
+
+def test_active_run_guard_is_atomic_across_repository_instances(tmp_path):
+    """不同请求/进程各自持有仓储实例时也不能同时创建活跃 Run。"""
+
+    path = tmp_path / "multi-repository.db"
+    thread = SQLiteRepository(path).save_thread(Thread(title="exclusive multi"))
+    repositories = [SQLiteRepository(path) for _ in range(4)]
+    barrier = Barrier(4)
+
+    def create_active_run(index: int) -> bool:
+        repository = repositories[index]
+        barrier.wait()
+        try:
+            repository.save_run(Run(thread_id=thread.id))
+            return True
+        except ValueError:
+            return False
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(create_active_run, range(4)))
+
+    assert results.count(True) == 1
+    assert len(SQLiteRepository(path).list_runs(thread.id)) == 1
 
 
 def test_missing_records(tmp_path):

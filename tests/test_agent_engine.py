@@ -168,7 +168,7 @@ async def test_guidance_queued_while_paused_is_applied_before_resume_action(tmp_
     assert repository.get_run(run.id).status == RunStatus.PAUSED
 
     before_resume = len(repository.list_events(run.id))
-    repository.queue_guidance(run.id, uuid4(), "恢复后先核对新增约束")
+    guidance, _ = repository.queue_guidance(run.id, uuid4(), "恢复后先核对新增约束")
     paused = repository.get_run(run.id)
     paused.transition(RunStatus.RUNNING)
     repository.save_run(paused)
@@ -179,6 +179,8 @@ async def test_guidance_queued_while_paused_is_applied_before_resume_action(tmp_
     assert resumed_types.index(EventType.GUIDANCE_APPLIED) < resumed_types.index(
         EventType.REPLANNED
     )
+    replanned = next(event for event in resumed_events if event.type == EventType.REPLANNED)
+    assert replanned.payload["guidance_sequences"] == [guidance.sequence]
     assert repository.list_guidance(run.id)[0].consumed_at is not None
     assert repository.get_run(run.id).status == RunStatus.COMPLETED
 
@@ -220,7 +222,8 @@ async def test_provider_failure_is_safe_and_reported(tmp_path):
                     },
                 },
             ),
-            "validated",
+            # Schema 仅校验结构，不能作为外部成功证据。
+            "unverified",
             "structured",
         ),
     ],

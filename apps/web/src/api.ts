@@ -2,7 +2,7 @@
 import type {
   AgentDefaults,
   ChatDefaults,
-  ChatEvent,
+  UnifiedMessageEvent,
   AgentProfile,
   AgentProfileInput,
   AgentProfileSummary,
@@ -15,7 +15,6 @@ import type {
   Run,
   RunAudit,
   RunControl,
-  RunGuidance,
   AgentPlan,
   PlanRevision,
   SetupStatus,
@@ -63,42 +62,24 @@ export const api = {
   setupStatus: () => request<SetupStatus>("/setup/status"),
   listThreads: () => request<Thread[]>("/threads"),
   listAgentProfiles: () => request<AgentProfileSummary[]>("/agent-profiles"),
-  createThread: (
-    title: string,
-    mode: string,
-    agentProfileId: string,
-    planMode: "auto" | "approval",
-    interactionMode: "chat" | "agent",
-  ) =>
+  createThread: (title: string) =>
     request<Thread>("/threads", {
       method: "POST",
-      body: JSON.stringify({
-        title,
-        mode,
-        agent_profile_id: agentProfileId,
-        plan_mode: planMode,
-        interaction_mode: interactionMode,
-      }),
+      body: JSON.stringify({ title }),
     }),
   detail: (id: string) => request<ThreadDetail>(`/threads/${id}`),
-  message: (id: string, content: string, artifactIds: string[]) =>
-    request(`/threads/${id}/messages`, {
-      method: "POST",
-      body: JSON.stringify({ content, artifact_ids: artifactIds }),
-    }),
-  chat: async (
+  message: async (
     id: string,
     value: {
       request_id: string;
       content: string;
       artifact_ids: string[];
-      provider_config_id: string | null;
       retry: boolean;
     },
     signal: AbortSignal,
-    onEvent: (event: ChatEvent) => void,
+    onEvent: (event: UnifiedMessageEvent) => void,
   ) => {
-    const response = await fetch(`${API}/threads/${id}/chat`, {
+    const response = await fetch(`${API}/threads/${id}/message`, {
       method: "POST",
       credentials: "same-origin",
       signal,
@@ -126,7 +107,10 @@ export const api = {
         if (line.startsWith("data:")) data.push(line.slice(5).trim());
       }
       if (!eventType || !data.length) return;
-      onEvent({ type: eventType, data: JSON.parse(data.join("\n")) } as ChatEvent);
+      onEvent({
+        type: eventType,
+        data: JSON.parse(data.join("\n")),
+      } as UnifiedMessageEvent);
     };
     while (true) {
       const { done, value: chunk } = await reader.read();
@@ -146,41 +130,7 @@ export const api = {
       body: form,
     });
   },
-  start: (id: string, providerConfigId: string, successPattern: string) =>
-    request<Run>(`/threads/${id}/runs`, {
-      method: "POST",
-      body: JSON.stringify({
-        provider_config_id: providerConfigId || null,
-        verification_rules: successPattern
-          ? [{ kind: "regex", value: successPattern }]
-          : [],
-      }),
-    }),
-  turn: (
-    id: string,
-    content: string,
-    artifactIds: string[],
-    providerConfigId: string,
-    successPattern: string,
-  ) =>
-    request<Run>(`/threads/${id}/turns`, {
-      method: "POST",
-      body: JSON.stringify({
-        content,
-        artifact_ids: artifactIds,
-        provider_config_id: providerConfigId || null,
-        verification_rules: successPattern
-          ? [{ kind: "regex", value: successPattern }]
-          : [],
-      }),
-    }),
-  stop: (id: string) => request<Run>(`/runs/${id}/stop`, { method: "POST" }),
   retry: (id: string) => request<Run>(`/runs/${id}/retry`, { method: "POST" }),
-  submitInput: (id: string, content: string) =>
-    request<Run>(`/runs/${id}/input`, {
-      method: "POST",
-      body: JSON.stringify({ content }),
-    }),
   control: (id: string) => request<RunControl>(`/runs/${id}/control`),
   pause: (id: string, requestId: string) =>
     request<Run>(`/runs/${id}/pause`, {
@@ -191,25 +141,6 @@ export const api = {
     request<Run>(`/runs/${id}/resume`, {
       method: "POST",
       body: JSON.stringify({ request_id: requestId }),
-    }),
-  queueGuidance: (id: string, content: string, requestId: string) =>
-    request<RunGuidance>(`/runs/${id}/guidance`, {
-      method: "POST",
-      body: JSON.stringify({ content, request_id: requestId }),
-    }),
-  submitClarification: (
-    id: string,
-    content: string,
-    expectedBriefVersion: number,
-    requestId: string,
-  ) =>
-    request<Run>(`/runs/${id}/clarification`, {
-      method: "POST",
-      body: JSON.stringify({
-        content,
-        expected_brief_version: expectedBriefVersion,
-        request_id: requestId,
-      }),
     }),
   editPlan: (
     id: string,
@@ -298,7 +229,6 @@ export const api = {
     value: {
       title?: string;
       archived?: boolean;
-      interaction_mode?: "chat" | "agent";
     },
   ) =>
     request<Thread>(`/threads/${id}`, {

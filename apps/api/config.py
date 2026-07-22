@@ -19,7 +19,9 @@ class Settings(BaseModel):
     artifact_root: Path = Path(os.getenv("YUWANG_ARTIFACT_ROOT", "data/artifacts"))
     cors_origins: list[str] = Field(
         default_factory=lambda: os.getenv(
-            "YUWANG_CORS_ORIGINS", "http://localhost:5173,http://localhost:8080"
+            "YUWANG_CORS_ORIGINS",
+            "http://127.0.0.1:5173,http://localhost:5173,"
+            "http://127.0.0.1:8080,http://localhost:8080",
         ).split(",")
     )
     max_request_bytes: int = 6 * 1024 * 1024

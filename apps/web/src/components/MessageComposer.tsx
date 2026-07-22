@@ -1,86 +1,94 @@
-/** 对话输入区：附件、验证规则、模型选择以及停止/重试按钮。 */
-import type {
-  Artifact,
-  Event,
-  InteractionMode,
-  ProviderConfig,
-  Run,
-} from "../types";
+/** 统一输入区：文本和附件始终走同一消息入口，状态只改变服务端解释方式。 */
+import type { Artifact, Run } from "../types";
 
 interface Props {
   activeRun: Run | null;
-  interactionMode: InteractionMode;
-  events: Event[];
   message: string;
-  supplementalInput: string;
   pendingArtifacts: Artifact[];
-  providers: ProviderConfig[];
-  selectedProviderId: string;
-  successPattern: string;
-  needsEvidencePattern: boolean;
-  advisoryMode: boolean;
-  inputLocked: boolean;
-  running: boolean;
+  uploading: boolean;
   chatGenerating: boolean;
   chatCanRetry: boolean;
-  busy: boolean;
   onMessageChange: (value: string) => void;
-  onInteractionModeChange: (value: InteractionMode) => void;
-  onSupplementChange: (value: string) => void;
-  onProviderChange: (value: string) => void;
-  onPatternChange: (value: string) => void;
   onUpload: (file?: File) => void;
   onSend: () => void;
   onStop: () => void;
   onRetry: () => void;
   onChatRetry: () => void;
-  onSubmitSupplement: () => void;
+}
+
+function inputCopy(run: Run | null) {
+  switch (run?.status) {
+    case "queued":
+    case "running":
+      return {
+        note: "任务仍在运行：这条消息会作为追加指引按顺序应用。",
+        placeholder: "补充约束、纠偏信息或当前对话的附件；不会扩大原授权范围",
+        send: "追加指引",
+      };
+    case "waiting_input":
+      return {
+        note: "任务正在等待补充：发送后会从检查点继续。",
+        placeholder: "补充必要事实或附件；内容仍按不可信输入处理",
+        send: "补充并继续",
+      };
+    case "waiting_clarification":
+      return {
+        note: "任务说明正在等待澄清：发送后会更新说明并继续。",
+        placeholder: "回答上方的澄清问题；原始要求和历史版本会保留",
+        send: "提交澄清",
+      };
+    case "waiting_approval":
+      return {
+        note: "计划等待确认：这条消息会排队为反馈，批准或编辑计划仍在任务详情中完成。",
+        placeholder: "补充计划反馈或附件；不会自动批准计划",
+        send: "追加计划反馈",
+      };
+    case "paused":
+      return {
+        note: "任务已暂停：指引会保存，恢复后在安全检查点应用。",
+        placeholder: "补充恢复后的约束、纠偏信息或附件",
+        send: "保存指引",
+      };
+    default:
+      return {
+        note: "发送消息，系统会自动选择直接回复或受控执行。",
+        placeholder: "给御网智元发送消息…",
+        send: "发送",
+      };
+  }
 }
 
 export default function MessageComposer(props: Props) {
-  if (
-    props.interactionMode === "agent" &&
-    props.activeRun?.status === "waiting_input"
-  ) {
-    const request = props.events
-      .filter((event) => event.type === "run_waiting_input")
-      .at(-1);
-    return (
-      <footer className="composer">
-        <section className="input-request" data-testid="waiting-input">
-          <strong>Agent 正在等待补充信息</strong>
-          <p>{request?.summary}</p>
-          <textarea
-            aria-label="补充信息"
-            value={props.supplementalInput}
-            onChange={(event) => props.onSupplementChange(event.target.value)}
-            placeholder="补充必要事实；内容仍按不可信输入处理"
-          />
-          <button
-            className="primary"
-            disabled={!props.supplementalInput.trim()}
-            onClick={props.onSubmitSupplement}
-          >
-            提交并继续
-          </button>
-        </section>
-      </footer>
-    );
-  }
-
+  const copy = inputCopy(props.activeRun);
+  // 运行控制、计划编辑等操作不应禁用这里的主输入框。只有当前消息请求或附件
+  // 尚未上传完成时才暂时不能提交，用户仍可继续编辑下一条内容。
   const sendDisabled =
-    props.busy ||
-    props.inputLocked ||
-    props.running ||
-    props.chatGenerating ||
-    !props.message.trim() ||
-    !props.selectedProviderId ||
-    (props.interactionMode === "agent" &&
-      props.needsEvidencePattern &&
-      !props.successPattern.trim());
+    props.uploading || props.chatGenerating || !props.message.trim();
+  const taskIsActive = Boolean(props.activeRun && [
+    "queued",
+    "running",
+    "waiting_input",
+    "waiting_clarification",
+    "waiting_approval",
+    "paused",
+  ].includes(props.activeRun.status));
+  const stopPending = Boolean(taskIsActive && props.activeRun?.stop_requested);
+  const taskCanStop = taskIsActive && !stopPending;
+  const canStop = props.chatGenerating || taskIsActive;
 
   return (
     <footer className="composer">
+      <p className="composer-note" aria-live="polite">{copy.note}</p>
+      {stopPending && (
+        <p className="composer-note" role="status">
+          停止请求处理中，仍在接收任务状态更新。
+        </p>
+      )}
+      {props.uploading && (
+        <p className="upload-note" role="status">
+          附件正在上传，完成后会出现在下方列表并随下一条消息发送。
+        </p>
+      )}
       <div className="attachments">
         {props.pendingArtifacts.map((file) => (
           <span key={file.id}>
@@ -88,41 +96,6 @@ export default function MessageComposer(props: Props) {
           </span>
         ))}
       </div>
-      {props.inputLocked && (
-        <div className="lock-note">
-          竞赛模式运行中：已锁定补充提示，仅可观察或停止。
-        </div>
-      )}
-      <div className="interaction-switch" role="group" aria-label="回复模式">
-        <button
-          type="button"
-          className={props.interactionMode === "chat" ? "active" : ""}
-          aria-pressed={props.interactionMode === "chat"}
-          disabled={props.running || props.chatGenerating}
-          onClick={() => props.onInteractionModeChange("chat")}
-        >
-          对话
-        </button>
-        <button
-          type="button"
-          className={props.interactionMode === "agent" ? "active" : ""}
-          aria-pressed={props.interactionMode === "agent"}
-          disabled={props.running || props.chatGenerating}
-          onClick={() => props.onInteractionModeChange("agent")}
-        >
-          Agent 任务
-        </button>
-        <span>
-          {props.interactionMode === "chat"
-            ? "直接自然语言回复"
-            : "使用计划、工具、验证与审计"}
-        </span>
-      </div>
-      {props.providers.length === 0 && (
-        <div className="model-required">
-          需要配置模型：请先进入设置中心添加、测试并启用 Provider。
-        </div>
-      )}
       <textarea
         aria-label="消息"
         value={props.message}
@@ -130,42 +103,14 @@ export default function MessageComposer(props: Props) {
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
-            props.onSend();
+            // 键盘提交必须遵守和按钮完全相同的附件/请求保护，不能在上传中
+            // 绕过禁用状态把一条尚未关联附件的消息提前发出。
+            if (!sendDisabled) props.onSend();
           }
         }}
-        disabled={props.inputLocked || props.busy || props.chatGenerating}
-        placeholder={
-          props.interactionMode === "chat"
-            ? "给御网智元发送消息…"
-            : "描述任务、授权范围、期望输出与必要上下文…"
-        }
+        disabled={props.chatGenerating}
+        placeholder={copy.placeholder}
       />
-      {props.interactionMode === "agent" && (
-        <details className="agent-options">
-          <summary>任务设置</summary>
-          {props.needsEvidencePattern ? (
-            <div className="verification-row">
-              <label>
-                成功答案正则
-                <input
-                  aria-label="成功答案正则"
-                  value={props.successPattern}
-                  onChange={(event) => props.onPatternChange(event.target.value)}
-                  placeholder="例如 FLAG\{[A-Za-z0-9_-]+\}"
-                  disabled={props.running}
-                />
-              </label>
-              <small>候选必须绑定外部证据并通过此规则。</small>
-            </div>
-          ) : (
-            <div className="trust-level">
-              {props.advisoryMode
-                ? "建议回答：模型生成，未经外部验证"
-                : "结构化输出：按 Agent 配置验证"}
-            </div>
-          )}
-        </details>
-      )}
       <div className="composer-actions">
         <label className="file-button">
           ＋ 附件
@@ -173,47 +118,37 @@ export default function MessageComposer(props: Props) {
             aria-label="上传附件"
             type="file"
             accept=".txt,.json,.md,.log,.bin"
-            onChange={(event) => props.onUpload(event.target.files?.[0])}
+            disabled={props.uploading || props.chatGenerating}
+            onChange={(event) => {
+              props.onUpload(event.target.files?.[0]);
+              // 允许用户在上传失败后重新选择同一个文件；待发送清单只在上传成功后更新。
+              event.currentTarget.value = "";
+            }}
           />
-        </label>
-        <label className="provider-select">
-          模型
-          <select
-            aria-label="运行模型"
-            value={props.selectedProviderId}
-            onChange={(event) => props.onProviderChange(event.target.value)}
-            disabled={props.running || props.providers.length === 0}
-          >
-            <option value="">未配置</option>
-            {props.providers.map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.name} · {provider.model}
-              </option>
-            ))}
-          </select>
         </label>
         <span className="authorization">Enter 发送 · Shift+Enter 换行</span>
         <div className="run-actions">
-          {props.chatGenerating ? (
-            <button className="danger" onClick={props.onStop}>
-              停止生成
-            </button>
-          ) : props.running ? (
-            <button className="danger" onClick={props.onStop}>
-              停止
-            </button>
-          ) : props.chatCanRetry ? (
+          {props.chatCanRetry && (
             <button onClick={props.onChatRetry}>重试回复</button>
-          ) : props.activeRun &&
-            ["failed", "stopped"].includes(props.activeRun.status) ? (
+          )}
+          {!props.chatCanRetry && props.activeRun && ["failed", "stopped"].includes(props.activeRun.status) && (
             <button onClick={props.onRetry}>重试</button>
-          ) : null}
-          <button
-            className="primary"
-            disabled={sendDisabled}
-            onClick={props.onSend}
-          >
-            {props.busy || props.chatGenerating ? "正在发送…" : "发送"}
+          )}
+          {canStop && (
+            <button
+              className="danger"
+              disabled={stopPending}
+              onClick={props.onStop}
+            >
+              {stopPending
+                ? "停止请求处理中"
+                : taskCanStop
+                  ? "停止任务"
+                  : "停止生成"}
+            </button>
+          )}
+          <button className="primary" disabled={sendDisabled} onClick={props.onSend}>
+            {props.uploading || props.chatGenerating ? "正在发送…" : copy.send}
           </button>
         </div>
       </div>

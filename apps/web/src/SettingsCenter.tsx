@@ -218,7 +218,7 @@ export default function SettingsCenter({
                   <div className="settings-title">
                     <div>
                       <h3>聊天与界面</h3>
-                      <small>日常对话默认直接回复；需要工具时再切换 Agent 任务。</small>
+                      <small>所有消息从同一输入框发送；系统会按需进入受控执行。</small>
                     </div>
                   </div>
                   <form className="settings-form" onSubmit={saveChatDefaults}>
@@ -241,22 +241,6 @@ export default function SettingsCenter({
                               {provider.name} · {provider.model}
                             </option>
                           ))}
-                        </select>
-                      </label>
-                      <label>
-                        新对话默认模式
-                        <select
-                          aria-label="新对话默认模式"
-                          value={chatDefaults.default_mode}
-                          onChange={(event) =>
-                            setChatDefaults({
-                              ...chatDefaults,
-                              default_mode: event.target.value as "chat" | "agent",
-                            })
-                          }
-                        >
-                          <option value="chat">对话</option>
-                          <option value="agent">Agent 任务</option>
                         </select>
                       </label>
                       <label>

@@ -303,7 +303,15 @@ class WorkflowNodes:
     async def replan(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
+        # 只有已应用指引明确要求重规划时，才把其序号写入事件载荷。这个持久化
+        # 关联让客户端能准确显示“因本指引重规划”，无需从时间戳推断因果。
+        guidance_sequences = (
+            list(state.guidance_replan_sequences)
+            if state.guidance_replan_required
+            else []
+        )
         state.guidance_replan_required = False
+        state.guidance_replan_sequences.clear()
         state.replan_count += 1
         plan = await engine._model_call(state, AgentPlan, "根据历史观察重新规划")
         state.plan = AgentPlan.model_validate(plan)
@@ -317,11 +325,14 @@ class WorkflowNodes:
         )
         engine.repository.save_plan_revision(revision)
         engine._track_plan_progress(state)
+        payload = {"steps": state.plan.steps, "replan_count": state.replan_count}
+        if guidance_sequences:
+            payload["guidance_sequences"] = guidance_sequences
         engine.events.emit(
             state.run_id,
             EventType.REPLANNED,
             state.plan.summary,
-            {"steps": state.plan.steps, "replan_count": state.replan_count},
+            payload,
         )
         return engine._result("replan", state)
 
@@ -375,12 +386,38 @@ class WorkflowNodes:
                 state.verification_summary = f"结构化输出校验失败：{exc.message[:200]}"
                 return engine._result("verify", state)
             state.verified = True
-            state.validation_status = "validated"
+            # JSON Schema 只能证明模型输出的形状符合约束，不能证明任务结论
+            # 已被外部系统验证。运行仍可完成，但界面必须保持“未外部验证”。
+            state.validation_status = "unverified"
             state.evidence_level = "structured"
             state.structured_output = state.action.structured_output
-            state.verification_summary = "结构化输出已通过配置的 JSON Schema 校验"
+            state.verification_summary = "结构化输出已通过 JSON Schema 校验，未外部验证"
+            engine.events.emit(
+                state.run_id,
+                EventType.STATUS_UPDATE,
+                state.verification_summary,
+                {"verified": False, "evidence_level": "structured"},
+            )
             return engine._result("verify", state)
         candidate = state.action.candidate if state.action else None
+        if not state.task.verification_rules:
+            # 任务可以给出可用结论，但没有确定性外部条件时绝不声称“已验证成功”。
+            if not state.action or not (state.action.answer or candidate):
+                raise AgentDeclaredFailure("未配置验证条件且模型未提供可展示结论")
+            state.verified = True
+            state.validation_status = "unverified"
+            state.evidence_level = "none"
+            # 候选值交给收尾层按“候选、来源、验证等级”统一呈现；不能只把
+            # 一个 Flag 样式字符串当作最终已确认答案输出。
+            state.final_answer = state.action.answer
+            state.verification_summary = "未配置确定性外部验证条件，结果未外部验证"
+            engine.events.emit(
+                state.run_id,
+                EventType.STATUS_UPDATE,
+                state.verification_summary,
+                {"verified": False, "evidence_level": "none"},
+            )
+            return engine._result("verify", state)
         result = engine.verifier.verify(state.task, candidate, state.observations)
         state.verified = result.verified
         state.validation_status = "validated" if result.verified else "pending"

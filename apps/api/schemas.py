@@ -9,9 +9,10 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from yuwang.domain.models import AgentPlan, InteractionMode, ThreadMode, VerificationRule
+from yuwang.verification_rules import validate_verification_rule
 
 
 class ThreadCreate(BaseModel):
@@ -39,12 +40,23 @@ class ChatCreate(MessageCreate):
     retry: bool = False
 
 
+class UnifiedMessageCreate(ChatCreate):
+    """工作台唯一的发送契约；是否创建 Run 由服务端判断。"""
+
+
 class RunCreate(BaseModel):
     provider_config_id: UUID | None = None
     authorized_targets: list[str] = Field(default_factory=list)
     success_conditions: list[str] = Field(default_factory=lambda: ["reference_tool_succeeded"])
     verification_rules: list[VerificationRule] = Field(default_factory=list)
     plan_mode: Literal["auto", "approval"] | None = None
+
+    @field_validator("verification_rules")
+    @classmethod
+    def validate_verification_rules(
+        cls, values: list[VerificationRule]
+    ) -> list[VerificationRule]:
+        return [validate_verification_rule(value) for value in values]
 
 
 class TurnCreate(MessageCreate, RunCreate):
@@ -53,6 +65,8 @@ class TurnCreate(MessageCreate, RunCreate):
 
 class RunInput(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
+    artifact_ids: list[UUID] = Field(default_factory=list)
+    request_id: UUID | None = None
 
 
 class ClarificationSubmit(RunInput):
@@ -79,6 +93,7 @@ class ControlRequest(BaseModel):
 
 class GuidanceSubmit(ControlRequest):
     content: str = Field(min_length=1, max_length=10_000)
+    artifact_ids: list[UUID] = Field(default_factory=list)
 
 
 class MemoryToggle(BaseModel):

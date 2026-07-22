@@ -59,7 +59,11 @@ class AgentStateModel(BaseModel):
     validation_status: str = "pending"
     evidence_level: str = "none"
     supplemental_inputs: list[str] = Field(default_factory=list)
+    supplemental_artifact_ids: list[UUID] = Field(default_factory=list)
     guidance_replan_required: bool = False
+    # 已在当前检查点应用、且会触发下一次重规划的指引序号。写入重规划事件
+    # 后清空，前端据此建立精确因果关联，而不是猜测时间先后。
+    guidance_replan_sequences: list[int] = Field(default_factory=list)
     context_tokens: int = 0
     observation_chars: int = 0
     context_truncations: int = 0
@@ -96,7 +100,9 @@ class GraphState(TypedDict, total=False):
     validation_status: str
     evidence_level: str
     supplemental_inputs: list[str]
+    supplemental_artifact_ids: list[UUID]
     guidance_replan_required: bool
+    guidance_replan_sequences: list[int]
     context_tokens: int
     observation_chars: int
     context_truncations: int

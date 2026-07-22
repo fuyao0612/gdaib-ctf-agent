@@ -122,12 +122,18 @@ class AgentEngine:
         if not guidance:
             return False
         state.supplemental_inputs.extend(item.content for item in guidance)
+        for item in guidance:
+            for artifact_id in item.artifact_ids:
+                if artifact_id not in state.supplemental_artifact_ids:
+                    state.supplemental_artifact_ids.append(artifact_id)
         # 人工介入带来了新信息，介入前的重复指纹不再代表当前路径无进展。
         state.action_fingerprints.clear()
         state.plan_fingerprints.clear()
         state.no_progress_count = 0
         state.guidance_replan_required = True
         for item in guidance:
+            if item.sequence not in state.guidance_replan_sequences:
+                state.guidance_replan_sequences.append(item.sequence)
             self.events.emit(
                 state.run_id,
                 EventType.GUIDANCE_APPLIED,

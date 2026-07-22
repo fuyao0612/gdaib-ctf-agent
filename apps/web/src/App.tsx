@@ -1,5 +1,5 @@
 /** 单页工作台协调器：只管理共享状态和网络动作，页面区域由小组件渲染。 */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import SettingsCenter from "./SettingsCenter";
 import CreateThreadDialog from "./components/CreateThreadDialog";
@@ -16,9 +16,6 @@ import { useRunControlActions } from "./hooks/useRunControlActions";
 import type {
   AgentPlan,
   Artifact,
-  InteractionMode,
-  Mode,
-  PlanMode,
   Thread,
 } from "./types";
 import "./styles.css";
@@ -35,10 +32,6 @@ export default function App() {
     audit,
     control,
     memories,
-    providers,
-    agentProfiles,
-    selectedProfileId,
-    selectedProviderId,
     chatDefaults,
     setDetail,
     setEvents,
@@ -46,8 +39,6 @@ export default function App() {
     setReport,
     setControl,
     setMemories,
-    setSelectedProfileId,
-    setSelectedProviderId,
     loadThreads,
     refreshSettings,
     loadControl,
@@ -56,23 +47,23 @@ export default function App() {
     bootstrap,
   } = workspace;
   const [message, setMessage] = useState("");
-  const [successPattern, setSuccessPattern] = useState("");
   const [pendingArtifacts, setPendingArtifacts] = useState<Artifact[]>([]);
+  // 附件在服务端确认接收前不应被当作已随消息发送；单独记录上传中状态，
+  // 不用全局 busy 锁住正在运行任务的主输入框。
+  const [uploadingCount, setUploadingCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("新对话");
-  const [newMode, setNewMode] = useState<Mode>("normal");
-  const [newPlanMode, setNewPlanMode] = useState<PlanMode>("approval");
-  const [newInteractionMode, setNewInteractionMode] =
-    useState<InteractionMode>("chat");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(
     () => window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false",
   );
   const [initialSetup, setInitialSetup] = useState(false);
-  const [supplementalInput, setSupplementalInput] = useState("");
+  // 上传是异步的。切换会话时先更新此 ref，旧会话的迟到响应不能混入新会话的
+  // 待发送附件清单。
+  const currentThreadIdRef = useRef<string | null>(null);
   const runControls = useRunControlActions({
     run: activeRun,
     setRun: setActiveRun,
@@ -81,7 +72,52 @@ export default function App() {
     loadControl,
     connect,
   });
-  const chat = useChatActions({ detail, setDetail, loadThreads, setError });
+  const chat = useChatActions({
+    detail,
+    setDetail,
+    loadThreads,
+    setError,
+    onExecutionStarted: (run) => {
+      setEvents([]);
+      setReport(null);
+      setControl(null);
+      setActiveRun(run);
+      connect(run);
+    },
+    onExecutionStopped: (run) => {
+      if (!run) return;
+      setActiveRun(run);
+      void loadControl(run.id);
+      // 运行中的停止请求先持久化为 running + stop_requested，真正的终态
+      // 会随后通过 Run SSE 到达；不能把这类响应误当成已经停止。
+      if (
+        run.stop_requested &&
+        !["completed", "failed", "stopped"].includes(run.status)
+      )
+        connect(run);
+    },
+    onRunInteraction: (run) => {
+      setActiveRun(run);
+      void loadControl(run.id);
+      // submit_input / submit_clarification 的同步响应可能仍保留旧的等待状态，
+      // 但恢复任务已经在后端排队。此时也必须尽早恢复 SSE，才能收到后续状态。
+      if (!["completed", "failed", "stopped"].includes(run.status)) connect(run);
+    },
+  });
+  const activeRunId = activeRun?.id;
+  const uploading = uploadingCount > 0;
+  const taskCanStop = Boolean(activeRun && [
+    "queued",
+    "running",
+    "waiting_input",
+    "waiting_clarification",
+    "waiting_approval",
+    "paused",
+  ].includes(activeRun.status) && !activeRun.stop_requested);
+
+  useEffect(() => {
+    currentThreadIdRef.current = detail?.id ?? null;
+  }, [detail?.id]);
 
   useEffect(() => {
     void bootstrap()
@@ -113,26 +149,22 @@ export default function App() {
 
   useEffect(() => {
     if (!chatDefaults) return;
-    setNewInteractionMode(chatDefaults.default_mode);
     setSidebarExpanded(chatDefaults.sidebar_expanded);
-    if (detail?.interaction_mode === "agent")
-      setInspectorOpen(chatDefaults.audit_expanded);
-  }, [chatDefaults, detail?.interaction_mode]);
+    if (activeRunId) setInspectorOpen(chatDefaults.audit_expanded);
+  }, [activeRunId, chatDefaults]);
 
   async function createThread() {
+    // 新 Thread 不能继承旧会话尚未完成的请求、草稿或上传响应。
+    chat.reset();
+    setMessage("");
+    setPendingArtifacts([]);
     setBusy(true);
     setError("");
     try {
-      const value = await api.createThread(
-        newTitle,
-        newMode,
-        selectedProfileId,
-        newPlanMode,
-        newInteractionMode,
-      );
+      const value = await api.createThread(newTitle);
       await loadThreads();
+      currentThreadIdRef.current = value.id;
       await selectThread(value.id);
-      setPendingArtifacts([]);
       setCreateOpen(false);
     } catch (cause) {
       setError(String(cause));
@@ -143,81 +175,31 @@ export default function App() {
 
   async function upload(file?: File) {
     if (!detail || !file) return;
-    setBusy(true);
-    try {
-      const artifact = await api.upload(detail.id, file);
-      setPendingArtifacts((items) => [...items, artifact]);
-    } catch (cause) {
-      setError(String(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function sendAndRun() {
-    // turn 接口在一个后端用例中保存用户消息并创建 Run；拿到 202 后再订阅 SSE，
-    // 避免“消息已显示但运行未创建”这类前后端中间状态。
-    if (
-      !detail ||
-      !message.trim() ||
-      !selectedProviderId ||
-      (needsEvidencePattern && !successPattern.trim())
-    )
-      return;
-    setBusy(true);
+    const threadId = detail.id;
+    setUploadingCount((count) => count + 1);
     setError("");
-    setEvents([]);
-    setReport(null);
-    setControl(null);
     try {
-      const run = await api.turn(
-        detail.id,
-        message,
-        pendingArtifacts.map((item) => item.id),
-        selectedProviderId,
-        successPattern,
-      );
-      setActiveRun(run);
-      setMessage("");
-      setPendingArtifacts([]);
-      connect(run);
-      setDetail(await api.detail(detail.id));
+      const artifact = await api.upload(threadId, file);
+      if (currentThreadIdRef.current === threadId) {
+        setPendingArtifacts((items) => [...items, artifact]);
+      }
     } catch (cause) {
       setError(String(cause));
     } finally {
-      setBusy(false);
+      setUploadingCount((count) => Math.max(0, count - 1));
     }
   }
 
   async function send() {
-    if (!detail || !message.trim() || !selectedProviderId) return;
-    if (detail.interaction_mode === "agent") {
-      await sendAndRun();
-      return;
-    }
+    if (!detail || !message.trim()) return;
     const content = message.trim();
     const artifacts = pendingArtifacts;
-    setMessage("");
-    setPendingArtifacts([]);
-    await chat.send(content, artifacts, selectedProviderId);
-  }
-
-  async function switchInteractionMode(value: InteractionMode) {
-    if (!detail || detail.interaction_mode === value) return;
-    setDetail({ ...detail, interaction_mode: value });
-    try {
-      await api.updateThread(detail.id, { interaction_mode: value });
-      await loadThreads();
-    } catch (cause) {
-      setDetail(detail);
-      setError(String(cause));
+    // 网络失败时保留文字和待发送附件，让用户能确认并重试；只有统一消息
+    // 接口确认受理后才清空草稿，避免形成“附件好像上传/发送了”的错觉。
+    if (await chat.send(content, artifacts)) {
+      setMessage("");
+      setPendingArtifacts([]);
     }
-  }
-
-  async function stop() {
-    if (!activeRun) return;
-    await api.stop(activeRun.id);
-    setActiveRun({ ...activeRun, stop_requested: true });
   }
 
   async function retry() {
@@ -229,32 +211,12 @@ export default function App() {
     connect(run);
   }
 
-  async function submitSupplement() {
-    if (!activeRun || !supplementalInput.trim()) return;
-    const run = await api.submitInput(activeRun.id, supplementalInput);
-    setSupplementalInput("");
-    setActiveRun(run);
-    connect(run);
-  }
-
-  async function submitClarification(content: string, briefVersion: number) {
-    if (!activeRun) return;
-    setBusy(true);
-    setError("");
-    try {
-      const run = await api.submitClarification(
-        activeRun.id,
-        content,
-        briefVersion,
-        crypto.randomUUID(),
-      );
-      setActiveRun(run);
-      await loadControl(run.id);
-      connect(run);
-    } catch (cause) {
-      setError(String(cause));
-    } finally {
-      setBusy(false);
+  async function retryMessage() {
+    // 首次发送失败时草稿会保留；同一 request_id 重试成功后必须同步清空，
+    // 否则用户可能以为尚未发出而再次创建一条新请求。
+    if (await chat.retry()) {
+      setMessage("");
+      setPendingArtifacts([]);
     }
   }
 
@@ -351,23 +313,6 @@ export default function App() {
     }
   }
 
-  const running = Boolean(
-    activeRun &&
-      [
-        "queued",
-        "running",
-        "waiting_input",
-        "waiting_clarification",
-        "waiting_approval",
-        "paused",
-      ].includes(activeRun.status),
-  );
-  const inputLocked = detail?.mode === "competition" && running;
-  const interactionMode = detail?.interaction_mode ?? "chat";
-  const currentProfile = agentProfiles.find(
-    (value) => value.profile_id === detail?.agent_profile_id,
-  );
-  const needsEvidencePattern = currentProfile?.completion_mode === "evidence";
   const metrics = useMemo(
     () => ({
       tools: events.filter((item) => item.type === "tool_finished").length,
@@ -412,6 +357,8 @@ export default function App() {
           onSelect={(id) => {
             setError("");
             chat.reset();
+            currentThreadIdRef.current = id;
+            setMessage("");
             setPendingArtifacts([]);
             void selectThread(id);
           }}
@@ -445,9 +392,7 @@ export default function App() {
               <h2>{detail?.title ?? "选择或创建一个对话"}</h2>
               {detail && (
                 <small>
-                  {interactionMode === "chat"
-                    ? "自然语言对话"
-                    : `${currentProfile?.name ?? "Agent 配置"} · v${detail.agent_profile_version ?? "?"}`}
+                  {activeRun ? "正在执行受控任务" : "发送消息，系统会自动选择处理方式"}
                 </small>
               )}
             </div>
@@ -455,24 +400,10 @@ export default function App() {
           <div className="topbar-actions">
             {detail && (
               <div className="top-meta" data-testid="thread-status">
-                <span className="mode">
-                  {interactionMode === "chat" ? "对话" : "Agent 任务"}
-                </span>
-                {interactionMode === "agent" && (
-                  <span className="mode">
-                    {detail.mode === "competition" ? "竞赛限制" : "普通执行"}
-                  </span>
-                )}
-                {interactionMode === "agent" && activeRun && (
-                  <>
-                    <span className="mode">{activeRun.provider}</span>
-                    <span className="mode">{activeRun.evidence_level}</span>
-                    <StatusBadge status={activeRun.status} />
-                  </>
-                )}
+                {activeRun && <StatusBadge status={activeRun.status} />}
               </div>
             )}
-            {interactionMode === "agent" && activeRun && (
+            {activeRun && (
               <button
               className="inspector-toggle"
               aria-expanded={inspectorOpen}
@@ -489,7 +420,7 @@ export default function App() {
             <div className="radar">⌁</div>
             <h2>开始一段新对话</h2>
             <p>
-              日常问题直接对话；需要计划、工具和验证时，再切换到 Agent 任务。
+              直接发送消息。需要计划、工具和验证时，系统会自动开始受控执行。
             </p>
             <button className="primary" onClick={() => setCreateOpen(true)}>
               创建第一个对话
@@ -507,9 +438,6 @@ export default function App() {
               busy={busy}
               chatDraft={chat.draft}
               chatFailure={chat.failure}
-              onClarify={(content, version) =>
-                void submitClarification(content, version)
-              }
               onEditPlan={(plan, version, reason) =>
                 void editPlan(plan, version, reason)
               }
@@ -518,38 +446,22 @@ export default function App() {
               }
               onPause={runControls.pause}
               onResume={runControls.resume}
-              onGuidance={runControls.queueGuidance}
             />
             <MessageComposer
               activeRun={activeRun}
-              interactionMode={interactionMode}
-              events={events}
               message={message}
-              supplementalInput={supplementalInput}
               pendingArtifacts={pendingArtifacts}
-              providers={providers}
-              selectedProviderId={selectedProviderId}
-              successPattern={successPattern}
-              needsEvidencePattern={needsEvidencePattern}
-              advisoryMode={currentProfile?.completion_mode === "advisory"}
-              inputLocked={inputLocked}
-              running={running}
+              uploading={uploading}
               chatGenerating={chat.generating}
               chatCanRetry={Boolean(chat.failure?.retryable)}
-              busy={busy}
               onMessageChange={setMessage}
-              onInteractionModeChange={(value) => void switchInteractionMode(value)}
-              onSupplementChange={setSupplementalInput}
-              onProviderChange={setSelectedProviderId}
-              onPatternChange={setSuccessPattern}
               onUpload={(file) => void upload(file)}
               onSend={() => void send()}
               onStop={() =>
-                chat.generating ? chat.stop() : void stop()
+                taskCanStop ? void chat.stopRun() : chat.cancelResponse()
               }
               onRetry={() => void retry()}
-              onChatRetry={() => void chat.retry()}
-              onSubmitSupplement={() => void submitSupplement()}
+              onChatRetry={() => void retryMessage()}
             />
           </>
         )}
@@ -560,7 +472,7 @@ export default function App() {
         )}
       </main>
 
-      {interactionMode === "agent" && activeRun && (
+      {activeRun && (
         <InspectorPanel
         open={inspectorOpen}
         metrics={metrics}
@@ -578,20 +490,8 @@ export default function App() {
       {createOpen && (
         <CreateThreadDialog
           title={newTitle}
-          mode={newMode}
-          planMode={newPlanMode}
-          interactionMode={newInteractionMode}
-          profileId={selectedProfileId}
-          profiles={agentProfiles}
           busy={busy}
           onTitleChange={setNewTitle}
-          onModeChange={setNewMode}
-          onPlanModeChange={setNewPlanMode}
-          onInteractionModeChange={setNewInteractionMode}
-          onProfileChange={(id, mode) => {
-            setSelectedProfileId(id);
-            if (mode) setNewMode(mode);
-          }}
           onCancel={() => setCreateOpen(false)}
           onSubmit={() => void createThread()}
         />

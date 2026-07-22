@@ -98,5 +98,6 @@ class RunGuidance(DomainModel):
     run_id: UUID
     sequence: int = Field(ge=1)
     content: str = Field(min_length=1, max_length=10_000)
+    artifact_ids: list[UUID] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utcnow)
     consumed_at: datetime | None = None
