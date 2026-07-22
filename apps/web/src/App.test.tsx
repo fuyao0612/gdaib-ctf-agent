@@ -195,6 +195,50 @@ describe("App", () => {
     );
   });
 
+  it("刷新界面偏好不会关闭用户已打开的运行审计", async () => {
+    window.localStorage.setItem("yuwang.currentThreadId", "t-inspector");
+    const run = {
+      id: "r-inspector", thread_id: "t-inspector", status: "running", provider: "测试 Provider",
+      agent_profile_id: "a1", agent_profile_version: 1, plan_mode: "auto",
+      completion_mode: "advisory", validation_status: "pending", evidence_level: "none",
+      attempt: 1, stop_requested: false, created_at: now, started_at: now, finished_at: null,
+    };
+    let publicPreferenceRequests = 0;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/setup/status")) return Response.json({ configured: true, checks: {}, version: "0.5.0" });
+      if (url.endsWith("/admin/session")) return Response.json({ authenticated: true, csrf_token: "csrf-test" });
+      if (url.endsWith("/admin/settings/providers") || url.endsWith("/admin/settings/agent-profiles")) return Response.json([]);
+      if (url.endsWith("/admin/settings/agent")) return Response.json({});
+      if (url.endsWith("/admin/settings/chat")) return Response.json(preferences);
+      if (url.endsWith("/settings/chat")) {
+        publicPreferenceRequests += 1;
+        return Response.json(preferences);
+      }
+      if (url.endsWith("/threads")) return Response.json([thread("t-inspector", "审计抽屉")]);
+      if (url.endsWith("/threads/t-inspector/memories")) return Response.json([]);
+      if (url.endsWith("/threads/t-inspector"))
+        return Response.json(detail("t-inspector", "审计抽屉", { runs: [run] }));
+      if (url.endsWith("/runs/r-inspector/events")) return Response.json([]);
+      if (url.endsWith("/runs/r-inspector/audit"))
+        return Response.json({ run: { provider: "测试 Provider" }, usage: {}, limits: {}, model_calls: [], tool_calls: [], evidence: [], checkpoints: [] });
+      if (url.endsWith("/runs/r-inspector/control"))
+        return Response.json({ status: "running", plan_mode: "auto", task_briefs: [], plans: [], guidance: [] });
+      return Response.json({});
+    });
+
+    render(<App />);
+    await screen.findByRole("button", { name: "运行审计" });
+    fireEvent.click(screen.getByRole("button", { name: "运行审计" }));
+    expect(document.querySelector(".inspector.open")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /设置中心/ }));
+    const saveChat = await screen.findByRole("button", { name: "保存聊天设置" });
+    fireEvent.click(saveChat);
+    await waitFor(() => expect(publicPreferenceRequests).toBeGreaterThan(1));
+    expect(document.querySelector(".inspector.open")).toBeInTheDocument();
+  });
+
   it("运行中从主输入框按顺序追加指引，并把它们写入同一时间线", async () => {
     window.localStorage.setItem("yuwang.currentThreadId", "t-guidance");
     const run = {
@@ -515,13 +559,43 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByLabelText("消息");
+    const isStopRunStream = (source: FakeEventSource) =>
+      source.url.includes("/runs/r-stop-pending/events/stream");
+    await waitFor(() =>
+      expect(FakeEventSource.instances.some(isStopRunStream)).toBe(true),
+    );
+    const initialStream = FakeEventSource.instances.find(isStopRunStream);
+    expect(initialStream).toBeDefined();
+
     fireEvent.click(screen.getByRole("button", { name: "停止任务" }));
-    expect(await screen.findByRole("button", { name: "停止请求处理中" })).toBeDisabled();
+    expect(
+      await screen.findByRole(
+        "button",
+        { name: "停止请求处理中" },
+        { timeout: 5_000 },
+      ),
+    ).toBeDisabled();
     expect(screen.getByText(/仍在接收任务状态更新/)).toBeInTheDocument();
-    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+    await waitFor(() =>
+      expect(
+        FakeEventSource.instances.some(
+          (source) =>
+            source !== initialStream &&
+            source.readyState !== FakeEventSource.CLOSED &&
+            isStopRunStream(source),
+        ),
+      ).toBe(true),
+    );
+    const resumedStream = FakeEventSource.instances.find(
+      (source) =>
+        source !== initialStream &&
+        source.readyState !== FakeEventSource.CLOSED &&
+        isStopRunStream(source),
+    );
+    expect(resumedStream).toBeDefined();
 
     terminalEventReceived = true;
-    FakeEventSource.instances.at(-1)?.onmessage?.(
+    resumedStream?.onmessage?.(
       new MessageEvent("message", {
         data: JSON.stringify({
           event_id: "event-stop-pending",

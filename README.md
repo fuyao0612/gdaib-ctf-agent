@@ -47,6 +47,8 @@
 
 > 若直接执行 `.\yuwang.ps1` 被 Windows 执行策略拦截，不要修改全局策略；直接双击
 > `启动御网智元.cmd`，或仅对当前命令使用 `powershell -NoProfile -ExecutionPolicy Bypass -File .\yuwang.ps1 doctor`。
+> 统一脚本内部会调用 `npm.cmd`，避免同一执行策略拦截 `npm.ps1`；手动运行前端命令时也可以
+> 将 `npm` 写为 `npm.cmd`。
 
 > 第一次使用建议继续阅读 [5 分钟快速入门](docs/quickstart.md)。Linux/macOS
 > 可使用 `./scripts/first-setup.sh --start`，详见[部署文档](docs/deployment.md)。

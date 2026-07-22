@@ -180,7 +180,7 @@ $vite = Join-Path $ProjectRoot 'apps\web\node_modules\vite\package.json'
 if ($npm -and (Test-Path -LiteralPath $vite)) {
     Push-Location (Join-Path $ProjectRoot 'apps\web')
     try {
-        npm list --depth=0 --silent *> $null
+        npm.cmd list --depth=0 --silent *> $null
         if ($LASTEXITCODE) {
             Add-Diagnostic '失败' '前端依赖' '依赖树不完整' '在 apps\web 目录运行 npm ci。'
         } else {

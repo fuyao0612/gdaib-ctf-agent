@@ -18,10 +18,12 @@ Invoke-Checked 'mypy' { mypy }
 Invoke-Checked 'pytest' { pytest --basetemp $pytestBaseTemp -o "cache_dir=$pytestBaseTemp\cache" }
 Push-Location apps/web
 try {
-    Invoke-Checked '前端 ESLint' { npm run lint }
-    Invoke-Checked '前端 TypeScript' { npm run typecheck }
-    Invoke-Checked '前端 Vitest' { npm test }
-    Invoke-Checked '前端生产构建' { npm run build }
+    # 在受执行策略限制的 Windows PowerShell 中，npm.ps1 会被拦截；统一调用
+    # npm.cmd，和启动脚本保持一致，同时不影响 macOS/Linux 的 CI（它们不执行此脚本）。
+    Invoke-Checked '前端 ESLint' { npm.cmd run lint }
+    Invoke-Checked '前端 TypeScript' { npm.cmd run typecheck }
+    Invoke-Checked '前端 Vitest' { npm.cmd test }
+    Invoke-Checked '前端生产构建' { npm.cmd run build }
 } finally {
     Pop-Location
 }

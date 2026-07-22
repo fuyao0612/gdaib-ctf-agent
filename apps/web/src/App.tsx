@@ -57,6 +57,10 @@ export default function App() {
   const [newTitle, setNewTitle] = useState("新对话");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  // 审计抽屉的默认值只服务于“新 Run 首次出现”。设置页的异步刷新不能
+  // 覆盖用户刚刚做出的打开或关闭选择，否则慢网络下会出现抽屉闪回的问题。
+  const inspectorDefaultRunRef = useRef<string | null>(null);
+  const inspectorUserRunRef = useRef<string | null>(null);
   const [sidebarExpanded, setSidebarExpanded] = useState(
     () => window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false",
   );
@@ -132,13 +136,16 @@ export default function App() {
   useEffect(() => {
     const closeOverlay = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // Esc 也能关闭设置或新建对话弹层；只有审计抽屉本来打开时才把它
+      // 记为用户选择，避免无关弹层影响新 Run 的审计默认展开状态。
+      if (inspectorOpen && activeRunId) inspectorUserRunRef.current = activeRunId;
       setInspectorOpen(false);
       setCreateOpen(false);
       setSettingsOpen(false);
     };
     window.addEventListener("keydown", closeOverlay);
     return () => window.removeEventListener("keydown", closeOverlay);
-  }, []);
+  }, [activeRunId, inspectorOpen]);
 
   useEffect(() => {
     window.localStorage?.setItem(
@@ -150,7 +157,14 @@ export default function App() {
   useEffect(() => {
     if (!chatDefaults) return;
     setSidebarExpanded(chatDefaults.sidebar_expanded);
-    if (activeRunId) setInspectorOpen(chatDefaults.audit_expanded);
+    if (
+      activeRunId &&
+      inspectorDefaultRunRef.current !== activeRunId &&
+      inspectorUserRunRef.current !== activeRunId
+    ) {
+      inspectorDefaultRunRef.current = activeRunId;
+      setInspectorOpen(chatDefaults.audit_expanded);
+    }
   }, [activeRunId, chatDefaults]);
 
   async function createThread() {
@@ -408,7 +422,10 @@ export default function App() {
               className="inspector-toggle"
               aria-expanded={inspectorOpen}
               aria-controls="run-inspector"
-              onClick={() => setInspectorOpen((value) => !value)}
+              onClick={() => {
+                inspectorUserRunRef.current = activeRun.id;
+                setInspectorOpen((value) => !value);
+              }}
             >
               运行审计
               </button>
@@ -480,7 +497,10 @@ export default function App() {
         events={events}
         detail={detail}
         memories={memories}
-        onClose={() => setInspectorOpen(false)}
+        onClose={() => {
+          inspectorUserRunRef.current = activeRun.id;
+          setInspectorOpen(false);
+        }}
         onToggleMemory={(value) => void toggleMemory(value)}
         onDeleteMemory={(id) => void removeMemory(id)}
         onClearMemories={() => void clearMemory()}

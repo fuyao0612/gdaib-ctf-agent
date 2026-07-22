@@ -39,7 +39,8 @@ try {
     Write-Stage '3/5 运行 Playwright 完整浏览器测试'
     Push-Location apps/web
     try {
-        npm run e2e
+        # 避免 Windows PowerShell 因执行策略拒绝 npm.ps1。
+        npm.cmd run e2e
         if ($LASTEXITCODE) { throw 'Playwright 浏览器测试失败。' }
     } finally {
         Pop-Location
