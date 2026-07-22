@@ -28,7 +28,6 @@ from yuwang.control import PlanRevision, PlanSource, RunGuidance
 from yuwang.domain.models import (
     ACTIVE_RUN_STATUSES,
     EventType,
-    InteractionMode,
     MemoryRecord,
     Message,
     MessageRole,
@@ -43,47 +42,12 @@ def create_run_router(context: ApiContext) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["runs"])
     repository = context.repository
 
-    async def start(thread_id: UUID, body: RunCreate) -> Run:
-        """创建不可变快照并登记后台 Agent；供两个 HTTP 入口共用。"""
-
-        thread = context.require_thread(thread_id)
-        thread.interaction_mode = InteractionMode.AGENT
-        repository.save_thread(thread)
-        profile = context.resolve_thread_profile(thread)
-        try:
-            selected_id = body.provider_config_id or profile.default_provider_id
-            fallback_ids = profile.fallback_provider_ids if profile.default_provider_id else None
-            provider_configs, provider = context.resolve_provider_chain(
-                selected_id, fallback_ids
-            )
-            selected = provider_configs[0]
-        except (ValueError, KeyError) as exc:
-            raise HTTPException(409, str(exc)) from exc
-        task = context.build_task(thread, body, profile)
-        run = Run(
-            thread_id=thread.id,
-            provider=selected.name,
-            provider_config_id=selected.id,
-            agent_profile_id=profile.profile_id,
-            agent_profile_version=profile.version,
-            plan_mode=body.plan_mode or thread.plan_mode,
-        )
-        try:
-            repository.save_run(run)
-            repository.save_run_task(run.id, task)
-            repository.save_provider_snapshot(run.id, provider_configs)
-            repository.save_run_agent_profile(run.id, profile)
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-        context.schedule(run.id, context.execute(run, task, provider, profile))
-        return run
-
     @router.post("/threads/{thread_id}/runs", response_model=Run, status_code=202)
     async def start_run(
         thread_id: UUID,
         body: RunCreate = Body(default_factory=RunCreate),
     ) -> Run:
-        return await start(thread_id, body)
+        return await context.start_run(thread_id, body)
 
     @router.post("/threads/{thread_id}/turns", response_model=Run, status_code=202)
     async def send_turn(thread_id: UUID, body: TurnCreate) -> Run:
@@ -93,7 +57,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
             thread_id,
             MessageCreate(content=body.content, artifact_ids=body.artifact_ids),
         )
-        return await start(
+        return await context.start_run(
             thread_id,
             RunCreate(
                 provider_config_id=body.provider_config_id,
@@ -327,28 +291,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
 
     @router.post("/runs/{run_id}/stop", response_model=Run)
     async def stop_run(run_id: UUID) -> Run:
-        run = context.require_run(run_id)
-        if run.status not in ACTIVE_RUN_STATUSES:
-            raise HTTPException(409, "运行已结束")
-        stopped = repository.request_stop(run_id)
-        task = context.tasks.get(run_id)
-        if task and not task.done():
-            task.cancel()
-        elif stopped.status in {
-            RunStatus.WAITING_INPUT,
-            RunStatus.WAITING_CLARIFICATION,
-            RunStatus.WAITING_APPROVAL,
-            RunStatus.PAUSED,
-        }:
-            stopped.transition(RunStatus.STOPPED, "用户在等待状态终止运行")
-            repository.save_run(stopped)
-            repository.create_event(
-                stopped.id,
-                EventType.RUN_STOPPED,
-                "运行已由用户终止",
-                {"from_waiting_state": True},
-            )
-        return stopped
+        return context.stop_run(run_id)
 
     @router.post("/runs/{run_id}/input", response_model=Run, status_code=202)
     async def submit_run_input(run_id: UUID, body: RunInput) -> Run:

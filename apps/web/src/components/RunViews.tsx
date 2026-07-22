@@ -1,5 +1,5 @@
 /** 运行状态、对话时间线与审计抽屉等只读视图。 */
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type {
   Event,
@@ -95,6 +95,9 @@ export function ConversationView({
   const followLatestRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const userScrollTopRef = useRef(0);
+  // Run 的 SSE 事件会频繁刷新视图。受控展开状态可避免原生 details 在重渲染时偶发收起，
+  // 让暂停、继续和追加指引始终可操作。
+  const [taskDetailsOpen, setTaskDetailsOpen] = useState(false);
 
   useLayoutEffect(() => {
     const element = scrollRef.current;
@@ -131,7 +134,7 @@ export function ConversationView({
           </span>
           <div>
             <div className="message-meta">
-              {message.role === "user" ? "用户任务" : "Agent"} ·{" "}
+              {message.role === "user" ? "你" : "助手"} ·{" "}
               {new Date(message.created_at).toLocaleTimeString()}
             </div>
             <p>{message.content}</p>
@@ -153,11 +156,14 @@ export function ConversationView({
           <span>{chatFailure.message}</span>
         </div>
       )}
-      {detail.interaction_mode === "agent" && run && (
-        <RunProgress run={run} events={events} audit={audit} />
-      )}
-      {detail.interaction_mode === "agent" && run && control && (
-        <>
+      {run && <RunProgress run={run} events={events} audit={audit} />}
+      {run && control && (
+        <details
+          className="task-controls"
+          open={taskDetailsOpen}
+          onToggle={(event) => setTaskDetailsOpen(event.currentTarget.open)}
+        >
+          <summary>任务详情与控制</summary>
           <TaskPlanControl
             run={run}
             control={control}
@@ -175,9 +181,9 @@ export function ConversationView({
             onResume={onResume}
             onGuidance={onGuidance}
           />
-        </>
+        </details>
       )}
-      {detail.interaction_mode === "agent" && run && (
+      {run && (
         <ResultCard
           run={run}
           events={events}

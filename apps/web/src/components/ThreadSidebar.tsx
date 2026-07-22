@@ -56,11 +56,7 @@ export default function ThreadSidebar({
               <small>
                 {thread.archived
                   ? "已归档"
-                  : thread.interaction_mode === "chat"
-                    ? "对话"
-                    : thread.mode === "competition"
-                      ? "Agent · 竞赛限制"
-                      : "Agent 任务"}
+                  : `更新于 ${new Date(thread.updated_at).toLocaleDateString()}`}
               </small>
             </button>
             <div className="thread-actions">

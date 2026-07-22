@@ -39,6 +39,10 @@ class ChatCreate(MessageCreate):
     retry: bool = False
 
 
+class UnifiedMessageCreate(ChatCreate):
+    """工作台唯一的发送契约；是否创建 Run 由服务端判断。"""
+
+
 class RunCreate(BaseModel):
     provider_config_id: UUID | None = None
     authorized_targets: list[str] = Field(default_factory=list)

@@ -1,7 +1,7 @@
-/** 普通聊天的 fetch-SSE 生命周期；与 Agent Run/EventSource 完全独立。 */
+/** 统一消息入口的 fetch-SSE 生命周期；Run 的实时事件仍由 EventSource 接收。 */
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { api } from "../api";
-import type { Artifact, Message, ThreadDetail } from "../types";
+import type { Artifact, Message, Run, ThreadDetail } from "../types";
 
 export interface ChatFailure {
   message: string;
@@ -9,7 +9,6 @@ export interface ChatFailure {
   requestId: string;
   content: string;
   artifactIds: string[];
-  providerId: string;
 }
 
 interface Options {
@@ -17,6 +16,8 @@ interface Options {
   setDetail: Dispatch<SetStateAction<ThreadDetail | null>>;
   loadThreads: () => Promise<unknown>;
   setError: Dispatch<SetStateAction<string>>;
+  onExecutionStarted: (run: Run) => void;
+  onExecutionStopped: (run: Run) => void;
 }
 
 export function useChatActions(options: Options) {
@@ -42,13 +43,12 @@ export function useChatActions(options: Options) {
     setFailure(null);
     options.setError("");
     try {
-      await api.chat(
+      await api.message(
         threadId,
         {
           request_id: value.requestId,
           content: value.content,
           artifact_ids: value.artifactIds,
-          provider_config_id: value.providerId || null,
           retry,
         },
         controller.signal,
@@ -64,6 +64,12 @@ export function useChatActions(options: Options) {
             setDraft("");
             setFailure({ ...value, ...event.data });
           }
+          if (event.type === "execution_started") {
+            appendMessage(event.data.user_message);
+            options.onExecutionStarted(event.data.run);
+          }
+          if (event.type === "execution_stopped")
+            options.onExecutionStopped(event.data.run);
         },
       );
       options.setDetail(await api.detail(threadId));
@@ -85,13 +91,12 @@ export function useChatActions(options: Options) {
     }
   };
 
-  const send = (content: string, artifacts: Artifact[], providerId: string) =>
+  const send = (content: string, artifacts: Artifact[]) =>
     execute(
       {
         requestId: crypto.randomUUID(),
         content,
         artifactIds: artifacts.map((item) => item.id),
-        providerId,
         message: "",
         retryable: true,
       },
