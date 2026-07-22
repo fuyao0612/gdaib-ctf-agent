@@ -22,6 +22,8 @@ from apps.api.schemas import MessageCreate, RunCreate
 from yuwang.agent import AgentEngine, AgentStateModel
 from yuwang.domain.models import (
     ACTIVE_RUN_STATUSES,
+    EventType,
+    InteractionMode,
     Message,
     MessageRole,
     Run,
@@ -221,6 +223,69 @@ class ApiContext:
             verification_rules=create.verification_rules,
             budget=profile.budget,
         )
+
+    async def start_run(self, thread_id: UUID, body: RunCreate) -> Run:
+        """创建 Run 的完整快照并调度执行，供不同 HTTP 入口共用。
+
+        统一消息入口和保留的旧运行接口都经过这里，避免两条路径在 Provider、
+        Profile 快照或持久化顺序上逐渐产生差异。
+        """
+
+        thread = self.require_thread(thread_id)
+        thread.interaction_mode = InteractionMode.AGENT
+        self.repository.save_thread(thread)
+        profile = self.resolve_thread_profile(thread)
+        try:
+            selected_id = body.provider_config_id or profile.default_provider_id
+            fallback_ids = profile.fallback_provider_ids if profile.default_provider_id else None
+            provider_configs, provider = self.resolve_provider_chain(selected_id, fallback_ids)
+            selected = provider_configs[0]
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        task = self.build_task(thread, body, profile)
+        run = Run(
+            thread_id=thread.id,
+            provider=selected.name,
+            provider_config_id=selected.id,
+            agent_profile_id=profile.profile_id,
+            agent_profile_version=profile.version,
+            plan_mode=body.plan_mode or thread.plan_mode,
+        )
+        try:
+            self.repository.save_run(run)
+            self.repository.save_run_task(run.id, task)
+            self.repository.save_provider_snapshot(run.id, provider_configs)
+            self.repository.save_run_agent_profile(run.id, profile)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        self.schedule(run.id, self.execute(run, task, provider, profile))
+        return run
+
+    def stop_run(self, run_id: UUID) -> Run:
+        """停止活跃 Run；等待检查点的 Run 也能立即变为终止状态。"""
+
+        run = self.require_run(run_id)
+        if run.status not in ACTIVE_RUN_STATUSES:
+            raise HTTPException(409, "运行已结束")
+        stopped = self.repository.request_stop(run_id)
+        task = self.tasks.get(run_id)
+        if task and not task.done():
+            task.cancel()
+        elif stopped.status in {
+            RunStatus.WAITING_INPUT,
+            RunStatus.WAITING_CLARIFICATION,
+            RunStatus.WAITING_APPROVAL,
+            RunStatus.PAUSED,
+        }:
+            stopped.transition(RunStatus.STOPPED, "用户在等待状态终止运行")
+            self.repository.save_run(stopped)
+            self.repository.create_event(
+                stopped.id,
+                EventType.RUN_STOPPED,
+                "运行已由用户终止",
+                {"from_waiting_state": True},
+            )
+        return stopped
 
     async def execute(
         self,

@@ -2,15 +2,16 @@
 
 ## 从 v0.4.2 升级到 v0.5.0
 
-v0.5.0 新增独立普通聊天链与 `Thread.interaction_mode`。旧 Thread 缺少该字段时继续按
-Agent 任务读取，避免把历史运行误当成普通聊天；新建对话默认使用 `chat`。SQLite 启动
-迁移新增聊天请求幂等记录，不删除或重写历史 Message、Run、Event、Report 和 Provider。
+v0.5.0 新增独立普通聊天链与 `Thread.interaction_mode`。当前统一自动执行工作台将该字段
+保留为历史兼容细节：旧 Thread 缺少字段时继续按受控执行历史读取，新建 Thread 仍保存默认
+`chat` 值，但用户界面不再显示或要求选择它。SQLite 继续保留聊天请求幂等记录，不删除或
+重写历史 Message、Run、Event、Report 和 Provider。
 
 1. 执行 `scripts/backup.ps1`，同时保留原 `.env`、SQLite 和附件目录。
 2. 拉取 v0.5.0 后运行 `.\yuwang.ps1 check`，再使用 `start -Build` 重建镜像。
-3. 登录设置中心，保存默认聊天模型与默认回复方式，重新执行一次真实 Provider 连接测试。
+3. 登录设置中心，保存默认聊天模型，重新执行一次真实 Provider 连接测试。
 4. 抽查旧 Agent Thread 的 Task Brief、计划、暂停状态、指引、报告和审计仍可读取。
-5. 新建“对话”，发送普通消息并刷新，确认助手消息存在且没有创建 Run；再切换 Agent 任务完成一次暂停/继续验收。
+5. 新建对话，发送普通消息并刷新，确认助手消息存在且没有创建 Run；再发送明确受控执行请求，完成一次暂停/继续验收。
 
 回滚应用前必须恢复升级前一致性备份，不能用删除新表或清空数据库代替回滚。
 

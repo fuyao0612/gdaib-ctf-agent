@@ -2,7 +2,7 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from cryptography.fernet import Fernet
@@ -343,6 +343,45 @@ def test_plain_chat_is_natural_persistent_and_does_not_create_run(
         restored = reopened.get(f"/api/v1/threads/{thread['id']}").json()
         assert len(restored["messages"]) == 6
         assert restored["runs"] == []
+
+
+def test_unified_message_entry_chooses_free_text_or_controlled_run(
+    tmp_path, provider_server
+):
+    """浏览器只发送消息，服务端才决定是否进入受控执行路径。"""
+
+    app = configured_app(tmp_path)
+    app.state.registry.register(FakeEchoTool())
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        create_provider(client, provider_server)
+        thread = client.post("/api/v1/threads", json={"title": "统一入口"}).json()
+
+        greeting = client.post(
+            f"/api/v1/threads/{thread['id']}/message",
+            json={"request_id": str(uuid4()), "content": "你好"},
+        )
+        assert greeting.status_code == 200
+        assert "event: reply_complete" in greeting.text
+        detail = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert detail["runs"] == []
+        assert [item["role"] for item in detail["messages"]] == ["user", "assistant"]
+        assert "response_format" not in provider_server.chat_payloads[-1]
+
+        task = client.post(
+            f"/api/v1/threads/{thread['id']}/message",
+            json={
+                "request_id": str(uuid4()),
+                "content": "完成这道授权 CTF 题，并验证并报告结果",
+            },
+        )
+        assert task.status_code == 200
+        assert "event: execution_started" in task.text
+        detail = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert len(detail["runs"]) == 1
+        assert detail["messages"][-1]["role"] == "user"
+        task_spec = app.state.repository.get_run_task(UUID(detail["runs"][0]["id"]))
+        assert task_spec and task_spec.verification_rules[0].value == ".+"
 
 
 def test_chat_failure_retry_is_idempotent_and_never_saves_partial_reply(

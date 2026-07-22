@@ -210,6 +210,10 @@ export type ChatEvent =
   | { type: "text_delta"; data: { text: string } }
   | { type: "reply_complete"; data: { message: Message } }
   | { type: "reply_failed"; data: { message: string; retryable: boolean } };
+export type UnifiedMessageEvent =
+  | ChatEvent
+  | { type: "execution_started"; data: { run: Run; user_message: Message } }
+  | { type: "execution_stopped"; data: { run: Run } };
 export type CompletionMode = "advisory" | "structured" | "evidence";
 export interface AgentProfileSummary {
   profile_id: string;

@@ -7,7 +7,7 @@
 第一次接触项目时，不建议从最长的状态机或 SQLite 文件开始。按下面顺序大约一小时即可建立全局认识：
 
 1. 按 [README](../README.md#快速启动) 启动系统，完成 Provider 和默认 Agent 配置。
-2. 创建一次普通对话，同时打开浏览器开发者工具的 Network 面板，观察 `turn` 请求和 `events/stream`。
+2. 发送一次普通问题和一次明确受控执行请求，同时打开浏览器开发者工具的 Network 面板，观察 `message` 请求和 `events/stream`。
 3. 阅读 `apps/web/src/types.ts` 和 `apps/web/src/api.ts`，先认识前后端共同使用的数据形状。
 4. 阅读 `apps/web/src/App.tsx` 与 `hooks/useWorkbenchData.ts`，再看 `MessageComposer.tsx`、`RunSummary.tsx` 和 `SettingsCenter.tsx`。
 5. 沿 `apps/api/routes/runs.py` 进入 `apps/api/context.py`，理解 HTTP 层如何调度后台运行。
@@ -27,10 +27,11 @@ sequenceDiagram
     participant P as ProviderChain
     participant S as SQLite
     U->>W: 输入消息并发送
-    W->>A: POST /threads/{id}/turns
-    A->>S: 保存 user Message、Run 与配置快照
-    A-->>W: 202 Run
-    W->>A: 建立 SSE 事件流
+    W->>A: POST /threads/{id}/message
+    A->>A: 保守分派：自由回复或受控执行
+    A->>S: 受控执行时保存 user Message、Run 与配置快照
+    A-->>W: reply_* 或 execution_started
+    W->>A: 受控执行时建立 SSE 事件流
     A->>E: 后台执行不可变 TaskSpec
     E->>S: 构建上下文、读取记忆
     E->>P: 规划/执行/反思模型调用
@@ -44,20 +45,20 @@ sequenceDiagram
 关键入口如下：
 
 1. `apps/web/src/App.tsx` 只协调共享状态与网络动作；`components/` 分别承载任务导航、对话/审计、消息输入、Provider 和 Agent 配置，`api.ts` 统一 Cookie、CSRF 和错误处理。
-2. `apps/api/main.py` 只装配应用；`context.py` 建立仓储、服务与恢复生命周期，`routes/runs.py` 的 `turn` 接口把“保存消息”和“启动运行”合成一个原子用例，并立即返回可订阅的 Run。
+2. `apps/api/main.py` 只装配应用；`routes/messages.py` 用保守规则决定自由回复、受控执行或停止，`context.py` 的 `start_run()` 把“保存消息后的快照”和“启动运行”收敛为一个用例。
 3. `src/yuwang/agent/engine.py` 是稳定运行门面；`nodes.py` 放单步业务节点，`runner.py` 装配 LangGraph 并协调运行/恢复，`finalization.py` 处理报告和记忆收尾，`state.py` 定义可持久化图状态。
 4. `src/yuwang/model_providers/providers.py` 负责协议适配、错误分类、重试与备用模型，不能决定任务成功。
 5. `src/yuwang/storage/sqlite.py` 保存运行快照和事件，`sqlite_workspace.py` 保存会话数据，`sqlite_settings.py` 保存可管理配置。页面刷新或进程重启后以持久化状态为准。
 
 ## 前端一次消息如何到达后端
 
-发送入口在 `MessageComposer.tsx`，但它只收集文本、附件、Provider 和验证规则。真正的共享状态与网络动作在 `App.tsx`：
+发送入口在 `MessageComposer.tsx`，它只收集文本和附件。真正的共享状态与网络动作在 `App.tsx`：
 
-1. `sendAndRun()` 检查当前 Thread、输入内容和运行状态，阻止同一 Thread 重复启动活动 Run。
-2. `api.turn()` 调用 `POST /api/v1/threads/{thread_id}/turns`。`api.ts` 的通用 `request()` 自动携带同源 Cookie、写请求 CSRF、JSON 头和统一错误解析。
-3. `routes/runs.py` 先调用 `save_user_message()` 校验附件归属和竞赛模式，再固化 `TaskSpec`、AgentProfile 与 Provider 快照，保存 `Run` 后返回 202。
+1. `send()` 调用 `useChatActions.send()`，不再让组件选择聊天或任务模式。
+2. `api.message()` 调用 `POST /api/v1/threads/{thread_id}/message`，使用 fetch-SSE 接收自由回复或 `execution_started`。`api.ts` 自动携带同源 Cookie、写请求 CSRF、JSON 头和统一错误解析。
+3. `routes/messages.py` 对明确受控执行意图先调用 `save_user_message()` 校验附件归属和竞赛模式，再调用 `ApiContext.start_run()` 固化 `TaskSpec`、AgentProfile 与 Provider 快照。
 4. API 使用 `ApiContext.schedule()` 启动后台协程。HTTP 请求不用等待模型完成，因此页面可以马上订阅进度。
-5. 前端拿到 Run 后由 `useWorkbenchData.connect()` 建立 EventSource，并在结束事件到达后重新读取 Thread 详情、审计、记忆和报告。
+5. 前端收到 `execution_started` 后由 `useWorkbenchData.connect()` 建立 EventSource，并在结束事件到达后重新读取 Thread 详情、审计、记忆和报告。
 
 扩展新的发送参数时，需要同时修改 `types.ts`、`api.ts`、`apps/api/schemas.py` 和对应路由测试；不要在组件里手写第二套 fetch。
 
