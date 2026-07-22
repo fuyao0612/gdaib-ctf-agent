@@ -958,6 +958,72 @@ def test_unified_message_queues_active_run_guidance_once_and_keeps_timeline_orde
         assert [item["content"] for item in detail["messages"]] == [payload["content"]]
 
 
+def test_guidance_rejects_terminal_race_without_partial_timeline_record(
+    tmp_path, provider_server, monkeypatch
+):
+    """状态在接口初检后变为终态时，消息、指引和事件必须一起回滚。"""
+
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        thread = client.post("/api/v1/threads", json={"title": "终态竞态"}).json()
+        run = Run(thread_id=thread["id"])
+        run.transition(RunStatus.RUNNING)
+        app.state.repository.save_run(run)
+        validate_artifacts = app.state.context.validate_user_message_artifacts
+        stopped = False
+
+        def finish_before_guidance_commit(thread_id, artifact_ids):
+            nonlocal stopped
+            if not stopped:
+                current = app.state.repository.get_run(run.id)
+                assert current
+                current.transition(RunStatus.STOPPED, "test terminal race")
+                app.state.repository.save_run(current)
+                stopped = True
+            validate_artifacts(thread_id, artifact_ids)
+
+        monkeypatch.setattr(
+            app.state.context,
+            "validate_user_message_artifacts",
+            finish_before_guidance_commit,
+        )
+        response = client.post(
+            f"/api/v1/threads/{thread['id']}/message",
+            json={"request_id": str(uuid4()), "content": "这条指引不能留在终态任务中"},
+        )
+
+        assert response.status_code == 409
+        assert app.state.repository.list_guidance(run.id) == []
+        assert app.state.repository.list_messages(thread["id"]) == []
+        assert app.state.repository.list_events(run.id) == []
+
+
+def test_guidance_rejects_stop_requested_run_without_partial_timeline_record(
+    tmp_path, provider_server
+):
+    """停止已排队但尚未写成终态时，也不能接收必然无法应用的新指引。"""
+
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        thread = client.post("/api/v1/threads", json={"title": "停止中的指引"}).json()
+        run = Run(thread_id=thread["id"])
+        run.transition(RunStatus.RUNNING)
+        app.state.repository.save_run(run)
+        app.state.repository.request_stop(run.id, request_id=uuid4())
+
+        response = client.post(
+            f"/api/v1/threads/{thread['id']}/message",
+            json={"request_id": str(uuid4()), "content": "这条指引不能在停止后入队"},
+        )
+
+        assert response.status_code == 409
+        assert app.state.repository.list_guidance(run.id) == []
+        assert app.state.repository.list_messages(thread["id"]) == []
+        assert app.state.repository.list_events(run.id) == []
+
+
 def test_pause_guidance_resume_is_idempotent_and_survives_restart(
     tmp_path, provider_server
 ):

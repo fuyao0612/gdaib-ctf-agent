@@ -14,6 +14,7 @@ from yuwang.domain.models import (
     ModelCall,
     Run,
     RunCheckpoint,
+    RunStatus,
     TaskSpec,
     ToolCall,
 )
@@ -101,6 +102,10 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                 ).fetchone()
                 if active:
                     raise ValueError("thread already has an active run")
+            if value.status in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.STOPPED}:
+                # 与 append-guidance 使用同一把写锁：若指引先提交，就在这里明确
+                # 结算为“未应用”；若终态先提交，随后到达的指引会被原子拒绝。
+                self._settle_terminal_guidance(db, value)
             db.execute(
                 "INSERT OR REPLACE INTO runs VALUES(?,?,?,?,?)",
                 (

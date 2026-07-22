@@ -143,4 +143,29 @@ describe("运行控制面板", () => {
       "因本指引重规划",
     );
   });
+
+  it("明确显示任务终态窗口中未应用的指引", () => {
+    render(
+      <RunControlPanel
+        run={makeRun("stopped")}
+        control={{
+          ...control,
+          status: "stopped",
+          guidance: [
+            {
+              ...control.guidance[0],
+              consumed_at: "2026-07-17T08:01:00Z",
+              discarded_at: "2026-07-17T08:01:00Z",
+            },
+          ],
+        }}
+        events={noEvents}
+        busy={false}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("listitem")).toHaveTextContent("任务已结束，未应用");
+  });
 });

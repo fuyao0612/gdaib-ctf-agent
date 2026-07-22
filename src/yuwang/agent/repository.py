@@ -87,6 +87,12 @@ class AgentRepository(Protocol):
     def save_user_plan_revision(
         self, value: PlanRevision, request_id: UUID | str, payload_hash: str
     ) -> tuple[PlanRevision, bool]: ...
+    def commit_guidance_interaction(
+        self,
+        *,
+        run_id: UUID | str,
+        message: Message,
+    ) -> tuple[Run, RunGuidance, bool, Message]: ...
     def queue_guidance(
         self,
         run_id: UUID | str,
@@ -95,7 +101,16 @@ class AgentRepository(Protocol):
         artifact_ids: list[UUID] | None = None,
     ) -> tuple[RunGuidance, bool]: ...
     def list_guidance(self, run_id: UUID | str) -> list[RunGuidance]: ...
+    def list_pending_guidance(self, run_id: UUID | str) -> list[RunGuidance]: ...
     def consume_guidance(self, run_id: UUID | str) -> list[RunGuidance]: ...
+    def commit_guidance_checkpoint(
+        self,
+        *,
+        run_id: UUID | str,
+        node: str,
+        state: dict[str, Any],
+        guidance: list[RunGuidance],
+    ) -> None: ...
     def request_pause(
         self, run_id: UUID | str, request_id: UUID | str
     ) -> tuple[Run, bool]: ...
