@@ -97,7 +97,12 @@ class AgentRunCoordinator:
         graph.add_conditional_edges(
             "policy_check",
             engine._route_policy,
-            {"replan": "replan", "execute_tool": "execute_tool", "fail": "fail"},
+            {
+                "replan": "replan",
+                "execute_tool": "execute_tool",
+                "await_plan_approval": "await_plan_approval",
+                "fail": "fail",
+            },
         )
         graph.add_edge("execute_tool", "observe")
         graph.add_conditional_edges(

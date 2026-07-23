@@ -40,6 +40,7 @@ from yuwang.settings import (
     ProviderConfig,
     SecretCipher,
     SettingsService,
+    SkillService,
 )
 from yuwang.settings.models import ProviderPreset, resolve_structured_mode
 from yuwang.storage import SQLiteRepository
@@ -55,6 +56,7 @@ class ApiContext:
         config.artifact_root.mkdir(parents=True, exist_ok=True)
         self.repository = SQLiteRepository(config.database_path)
         self.profile_service = AgentProfileService(self.repository)
+        self.skill_service = SkillService(self.repository)
         self.profile_service.ensure_default(self.repository.get_agent_defaults().budget)
         self.policy = PolicyEngine(SecurityConfig())
         self.registry: ToolRegistry = create_reference_registry(config.artifact_root)
@@ -306,6 +308,7 @@ class ApiContext:
             success_conditions=create.success_conditions,
             verification_rules=verification_rules,
             budget=profile.budget,
+            skills=self.skill_service.snapshots_for(thread.skill_ids),
         )
 
     async def start_run(
@@ -332,7 +335,10 @@ class ApiContext:
             selected = provider_configs[0]
         except (ValueError, KeyError) as exc:
             raise HTTPException(409, str(exc)) from exc
-        task = self.build_task(thread, body, profile, origin_message=origin_message)
+        try:
+            task = self.build_task(thread, body, profile, origin_message=origin_message)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
         run = Run(
             thread_id=thread.id,
             provider=selected.name,

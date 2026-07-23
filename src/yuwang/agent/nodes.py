@@ -209,12 +209,24 @@ class WorkflowNodes:
         run.transition(RunStatus.WAITING_APPROVAL)
         engine.repository.save_run(run)
         revision = engine.repository.latest_plan_revision(state.run_id)
-        engine.events.emit(
-            state.run_id,
-            EventType.PLAN_APPROVAL_REQUESTED,
-            "计划等待用户确认",
-            {"plan_version": revision.version if revision else None},
-        )
+        if state.pending_risk_approval_tool:
+            engine.events.emit(
+                state.run_id,
+                EventType.RISK_APPROVAL_REQUESTED,
+                f"中风险工具“{state.pending_risk_approval_tool}”等待用户确认",
+                {
+                    "plan_version": revision.version if revision else None,
+                    "tool": state.pending_risk_approval_tool,
+                    "risk": "medium",
+                },
+            )
+        else:
+            engine.events.emit(
+                state.run_id,
+                EventType.PLAN_APPROVAL_REQUESTED,
+                "计划等待用户确认",
+                {"plan_version": revision.version if revision else None},
+            )
         return engine._result("await_plan_approval", state)
 
     async def select_action(self, raw: GraphState) -> GraphState:
@@ -267,6 +279,19 @@ class WorkflowNodes:
                 )
             )
             state.action = AgentAction(kind="replan", summary="策略拒绝后重新规划")
+        elif decision.requires_approval:
+            fingerprint = engine._fingerprint(state.action)
+            if state.approved_risk_action_fingerprint == fingerprint:
+                return engine._result("policy_check", state)
+            # 中风险工具不创建 ToolCall，更不触发执行；审批信息与当前检查点一同持久化。
+            state.pending_risk_approval_tool = tool.spec.name
+            state.pending_risk_approval_fingerprint = fingerprint
+            engine.events.emit(
+                state.run_id,
+                EventType.STATUS_UPDATE,
+                decision.reason,
+                {"tool": tool.spec.name, "risk": "medium", "requires_approval": True},
+            )
         return engine._result("policy_check", state)
 
     async def execute_tool(self, raw: GraphState) -> GraphState:
@@ -639,6 +664,8 @@ class WorkflowNodes:
         state = engine._state(raw)
         if state.guidance_replan_required:
             return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+        if state.pending_risk_approval_tool:
+            return "await_plan_approval"
         action = state.action
         if action and action.kind == "replan":
             return "replan" if "replan" in engine.profile.workflow.nodes else "fail"

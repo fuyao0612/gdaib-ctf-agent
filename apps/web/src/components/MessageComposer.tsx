@@ -1,4 +1,5 @@
 /** 统一输入区：文本和附件始终走同一消息入口，状态只改变服务端解释方式。 */
+import type { ReactNode } from "react";
 import type { Artifact, ProviderConfig, Run } from "../types";
 import ProviderSelector from "./ProviderSelector";
 
@@ -18,6 +19,7 @@ interface Props {
   onStop: () => void;
   onRetry: () => void;
   onChatRetry: () => void;
+  children?: ReactNode;
 }
 
 function inputCopy(run: Run | null) {
@@ -99,6 +101,7 @@ export default function MessageComposer(props: Props) {
         disabled={props.uploading}
         onChange={props.onProviderChange}
       />
+      {props.children}
       <div className="attachments">
         {props.pendingArtifacts.map((file) => (
           <span key={file.id}>

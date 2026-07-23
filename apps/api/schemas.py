@@ -22,6 +22,7 @@ class ThreadCreate(BaseModel):
     plan_mode: Literal["auto", "approval"] = "auto"
     interaction_mode: InteractionMode = InteractionMode.CHAT
     provider_config_id: UUID | None = None
+    skill_ids: list[UUID] = Field(default_factory=list, max_length=20)
 
 
 class ThreadUpdate(BaseModel):
@@ -30,6 +31,7 @@ class ThreadUpdate(BaseModel):
     interaction_mode: InteractionMode | None = None
     provider_config_id: UUID | None = None
     acknowledge_provider_fallback: bool = False
+    skill_ids: list[UUID] | None = Field(default=None, max_length=20)
 
 
 class MessageCreate(BaseModel):

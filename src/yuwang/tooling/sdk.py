@@ -9,7 +9,7 @@ import mimetypes
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -25,7 +25,8 @@ class ToolSpec(BaseModel):
     description: str
     capabilities: list[str]
     scenarios: list[str]
-    risk: str
+    # 只接受三档固定风险。高风险工具即使未来注册也会由策略默认拒绝。
+    risk: Literal["low", "medium", "high"]
     permissions: list[str]
     requires_network: bool
     allowed_target_types: list[str]

@@ -251,6 +251,9 @@ class DefaultContextBuilder:
                 "verification_rules": [
                     rule.model_dump(mode="json") for rule in state.task.verification_rules
                 ],
+                # Skills 是设置中心创建的声明式任务模板快照；它们不能增加工具、
+                # 授权目标或权限，只能提供提示、步骤和检查清单。
+                "skills": [item.model_dump(mode="json") for item in state.task.skills],
                 "tools": state.tool_schemas,
                 "validation_policy": profile.validation_policy.model_dump(mode="json"),
                 "completion_mode": profile.completion_mode,

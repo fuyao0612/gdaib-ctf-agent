@@ -38,12 +38,17 @@ def create_thread_router(context: ApiContext) -> APIRouter:
                 context.resolve_provider_chain(body.provider_config_id)
             except (KeyError, ValueError) as exc:
                 raise HTTPException(409, str(exc)) from exc
+        try:
+            context.skill_service.snapshots_for(body.skill_ids)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
         return repository.save_thread(
             Thread(
                 title=body.title,
                 mode=body.mode,
                 interaction_mode=body.interaction_mode,
                 provider_config_id=provider_config_id,
+                skill_ids=body.skill_ids,
                 agent_profile_id=profile.profile_id,
                 agent_profile_version=profile.version,
                 plan_mode=body.plan_mode,
@@ -98,6 +103,12 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             thread.provider_fallback_notice = None
         if body.acknowledge_provider_fallback:
             thread.provider_fallback_notice = None
+        if "skill_ids" in body.model_fields_set:
+            try:
+                context.skill_service.snapshots_for(body.skill_ids or [])
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+            thread.skill_ids = body.skill_ids or []
         thread.updated_at = utcnow()
         return repository.save_thread(thread)
 

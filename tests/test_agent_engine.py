@@ -52,6 +52,12 @@ class LargeOutputFakeEchoTool(FakeEchoTool):
         return FakeEchoOutput(echoed="x" * 9_000)
 
 
+class MediumRiskFakeEchoTool(FakeEchoTool):
+    @property
+    def spec(self) -> ToolSpec:
+        return super().spec.model_copy(update={"risk": "medium"})
+
+
 def build_engine(tmp_path, scenario="success", profile=None, components: AgentComponents | None = None):
     repository = SQLiteRepository(tmp_path / "agent.db")
     registry = ToolRegistry()
@@ -140,6 +146,52 @@ async def test_large_tool_output_is_archived_and_checkpoint_keeps_only_reference
     assert checkpoint and "x" * 9_000 not in str(checkpoint.state)
     tool_call = repository.list_tool_calls(run.id)[0]
     assert tool_call.artifact_ids == [artifact.id]
+
+
+@pytest.mark.asyncio
+async def test_medium_risk_tool_requires_explicit_matching_action_approval(tmp_path):
+    repository = SQLiteRepository(tmp_path / "medium-risk.db")
+    registry = ToolRegistry()
+    registry.register(MediumRiskFakeEchoTool())
+    engine = AgentEngine(
+        repository,
+        FakeModelProvider(),
+        registry,
+        PolicyEngine(),
+        artifact_root=tmp_path / "artifacts",
+    )
+    thread = repository.save_thread(Thread(title="medium risk"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(
+        run_id=run.id,
+        task=TaskSpec(body="调用受控工具"),
+        action=AgentAction(
+            kind="call_tool",
+            summary="请求中风险测试工具",
+            tool_name="test_echo",
+            tool_input={"text": "approved"},
+        ),
+    )
+
+    pending = AgentStateModel.model_validate(
+        await engine.nodes.policy_check(state.model_dump(mode="python"))
+    )
+    assert pending.pending_risk_approval_tool == "test_echo"
+    assert pending.pending_risk_approval_fingerprint
+    assert engine.nodes.route_policy(pending.model_dump(mode="python")) == "await_plan_approval"
+    assert repository.list_tool_calls(run.id) == []
+
+    approved = pending.model_copy(
+        update={
+            "approved_risk_action_fingerprint": pending.pending_risk_approval_fingerprint,
+            "pending_risk_approval_tool": None,
+            "pending_risk_approval_fingerprint": None,
+        }
+    )
+    allowed = AgentStateModel.model_validate(
+        await engine.nodes.policy_check(approved.model_dump(mode="python"))
+    )
+    assert engine.nodes.route_policy(allowed.model_dump(mode="python")) == "execute_tool"
 
 
 @pytest.mark.asyncio
@@ -653,6 +705,47 @@ async def test_engine_accounts_provider_reported_requests_and_tokens(tmp_path):
     assert (recorded.input_tokens, recorded.output_tokens) == (31, 7)
     assert recorded.metadata["usage_reported"] is True
     assert recorded.metadata["cost"] == pytest.approx(0.00009)
+
+
+@pytest.mark.asyncio
+async def test_engine_estimates_cost_when_provider_omits_usage(tmp_path):
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"summary":"plan","steps":["one"],"success_approach":"verify"}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    repository = SQLiteRepository(tmp_path / "estimated-metering.db")
+    thread = repository.save_thread(Thread(title="estimated metering"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    provider = OpenAICompatibleProvider(
+        name="estimated",
+        base_url="https://provider.test/v1",
+        api_key="test-provider-key",
+        model="estimated-model",
+        input_price_per_million=2,
+        output_price_per_million=4,
+        structured_mode="json_object",
+        transport=httpx.MockTransport(handler),
+    )
+    engine = AgentEngine(repository, provider, ToolRegistry(), PolicyEngine())
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="estimate this call"))
+
+    await engine._model_call(state, AgentPlan, "estimated metering test")
+
+    recorded = repository.list_model_calls(run.id)[0]
+    assert recorded.metadata["usage_reported"] is False
+    assert recorded.metadata["cost_estimated"] is True
+    assert recorded.metadata["cost"] > 0
+    assert state.model_cost == recorded.metadata["cost"]
 
 
 @pytest.mark.asyncio

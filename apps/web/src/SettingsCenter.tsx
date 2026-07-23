@@ -3,6 +3,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import AgentProfileCenter from "./components/AgentProfileCenter";
 import ProviderSettings from "./components/ProviderSettings";
+import SkillSettings from "./components/SkillSettings";
 import SetupProgress from "./components/SetupProgress";
 import { useAdminSession } from "./hooks/useAdminSession";
 import type {
@@ -10,6 +11,7 @@ import type {
   ChatDefaults,
   ProviderConfig,
   SettingsMode,
+  SkillDefinition,
   SetupStatus,
 } from "./types";
 import "./settings.css";
@@ -27,6 +29,7 @@ export default function SettingsCenter({
 }: Props) {
   const [adminToken, setAdminToken] = useState("");
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  const [skills, setSkills] = useState<SkillDefinition[]>([]);
   const [agentDefaults, setAgentDefaults] = useState<AgentDefaults | null>(
     null,
   );
@@ -39,16 +42,18 @@ export default function SettingsCenter({
   const session = useAdminSession();
 
   const load = useCallback(async (csrf: string) => {
-    const [items, defaults, chat, status] = await Promise.all([
+    const [items, defaults, chat, status, configuredSkills] = await Promise.all([
       api.adminProviders(csrf),
       api.agentDefaults(csrf),
       api.chatDefaults(csrf),
       api.setupStatus(),
+      api.adminSkills(csrf),
     ]);
     setProviders(items);
     setAgentDefaults(defaults);
     setChatDefaults(chat);
     setSetupStatus(status);
+    setSkills(Array.isArray(configuredSkills) ? configuredSkills : []);
   }, []);
 
   useEffect(() => {
@@ -360,6 +365,18 @@ export default function SettingsCenter({
                 onChanged={syncPublicState}
                 mode={mode}
               />
+              {mode === "advanced" && (
+                <SkillSettings
+                  csrf={session.csrf}
+                  skills={skills}
+                  onRefresh={async () => {
+                    await load(session.csrf);
+                    await onChanged();
+                  }}
+                  onNotice={setNotice}
+                  onError={setError}
+                />
+              )}
               {mode === "advanced" && agentDefaults && (
                 <section>
                   <div className="settings-title">

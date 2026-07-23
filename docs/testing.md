@@ -49,6 +49,17 @@ pytest -m real_provider tests/test_real_provider_smoke.py
 `_BASE_URL` 和 `_MODEL`；自定义 OpenAI 兼容接口还必须明确提供 `_BASE_URL` 与 `_MODEL`。
 该测试不会记录或打印完整密钥，真实密钥不得写入 `.env.example`、快照、日志或 PR。
 
+### 非 CTF 评测基线
+
+`yuwang.evaluation.BUILTIN_EVALUATION_CASES` 提供 36 条声明式非 CTF 用例，覆盖普通聊天、
+意图判断、多步任务、用户纠偏、长上下文、附件、暂停/继续/停止、模型切换、Provider 生命周期、
+错误、验证语义、Prompt Injection、刷新/重启恢复、Skills、权限分级和运行历史。用例是可审计的
+输入与断言契约，不包含预写模型回答、可执行代码或测试替身；`tests/test_evaluation_cases.py` 会检查
+覆盖面和安全边界。
+
+未来执行这些用例时必须沿用正式消息与 Run 路径并调用用户配置的真实 Provider。没有可用 API Key
+时应标记为未执行或跳过，不能用本地固定答案替代通过结果。
+
 ## 前端与浏览器
 
 ```powershell

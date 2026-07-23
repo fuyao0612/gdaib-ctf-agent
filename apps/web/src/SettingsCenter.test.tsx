@@ -103,6 +103,8 @@ describe("SettingsCenter", () => {
           });
         if (input.endsWith("/admin/settings/providers") && !init?.method)
           return Response.json([]);
+        if (input.endsWith("/admin/settings/skills") && !init?.method)
+          return Response.json([]);
         if (input.endsWith("/admin/settings/agent-profiles") && !init?.method)
           return Response.json([defaultProfile]);
         if (input.endsWith("/admin/settings/agent") && !init?.method)

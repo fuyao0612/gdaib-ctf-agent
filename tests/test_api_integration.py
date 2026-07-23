@@ -678,6 +678,50 @@ def test_unconfigured_provider_and_admin_auth_are_explicit(tmp_path):
         assert "leak123" not in validation.text
 
 
+def test_skill_api_persists_thread_selection_and_rejects_disabled_skill(tmp_path):
+    app = configured_app(tmp_path)
+    headers = {"Authorization": "Bearer test-admin-token"}
+    with TestClient(app) as client:
+        client.headers.update(headers)
+        created = client.post(
+            "/api/v1/admin/settings/skills",
+            json={
+                "name": "发布检查",
+                "description": "生成发布前检查清单",
+                "prompt": "先核对范围，再给出检查结果。",
+                "steps": ["确认范围"],
+                "checklist": ["已记录验证结果"],
+                "enabled": True,
+            },
+        )
+        assert created.status_code == 201, created.text
+        skill = created.json()
+        assert client.get("/api/v1/skills").json()[0]["id"] == skill["id"]
+
+        thread = client.post(
+            "/api/v1/threads",
+            json={"title": "选择 Skill", "skill_ids": [skill["id"]]},
+        )
+        assert thread.status_code == 201
+        assert thread.json()["skill_ids"] == [skill["id"]]
+
+        disabled = client.put(
+            f"/api/v1/admin/settings/skills/{skill['id']}",
+            json={"name": "发布检查", "prompt": "停用模板", "enabled": False},
+        )
+        assert disabled.status_code == 200
+        update = client.patch(
+            f"/api/v1/threads/{thread.json()['id']}",
+            json={"skill_ids": [skill["id"]]},
+        )
+        assert update.status_code == 409
+        assert "已停用" in update.json()["error"]["message"]
+
+        assert client.delete(f"/api/v1/admin/settings/skills/{skill['id']}").status_code == 204
+        detail = client.get(f"/api/v1/threads/{thread.json()['id']}").json()
+        assert detail["skill_ids"] == []
+
+
 def test_admin_cookie_session_requires_csrf_for_mutations(tmp_path):
     app = configured_app(tmp_path)
     with TestClient(app) as client:
@@ -894,6 +938,11 @@ def test_waiting_input_api_persists_memory_and_resumes(
         assert audit["profile"]["planning_strategy"] == "direct"
         assert audit["profile"]["workflow_preset"] == "direct"
         assert audit["profile"]["context_policy"]["recent_message_limit"] == 7
+        assert audit["history"]["started_at"]
+        assert audit["history"]["finished_at"]
+        assert audit["history"]["token_source"] in {"provider", "mixed", "estimated"}
+        assert audit["history"]["manual_interventions"] >= 1
+        assert audit["history"]["validation_status"] == "unverified"
         assert audit["profile"]["memory_policy"] == {
             "enabled": True,
             "persist_important_facts": False,

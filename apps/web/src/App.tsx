@@ -4,6 +4,7 @@ import { api } from "./api";
 import SettingsCenter from "./SettingsCenter";
 import CreateThreadDialog from "./components/CreateThreadDialog";
 import MessageComposer from "./components/MessageComposer";
+import SkillSelector from "./components/SkillSelector";
 import {
   ConversationView,
   InspectorPanel,
@@ -17,6 +18,7 @@ import type {
   AgentPlan,
   Artifact,
   ProviderConfig,
+  SkillDefinition,
   Thread,
 } from "./types";
 import "./styles.css";
@@ -55,6 +57,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  const [skills, setSkills] = useState<SkillDefinition[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("新对话");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -148,6 +151,15 @@ export default function App() {
   useEffect(() => {
     void refreshProviders().catch(() => setProviders([]));
   }, [refreshProviders]);
+
+  const refreshSkills = useCallback(async () => {
+    const result = await api.listSkills();
+    setSkills(Array.isArray(result) ? result.filter((skill) => skill.enabled) : []);
+  }, []);
+
+  useEffect(() => {
+    void refreshSkills().catch(() => setSkills([]));
+  }, [refreshSkills]);
 
   useEffect(() => {
     const notice = detail?.provider_fallback_notice;
@@ -257,6 +269,22 @@ export default function App() {
       const updated = await api.updateThread(detail.id, { provider_config_id: providerId });
       setDetail((current) =>
         current?.id === updated.id ? { ...current, ...updated } : current,
+      );
+      await loadThreads();
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }
+
+  async function selectSkills(skillIds: string[]) {
+    if (!detail) return;
+    const current = detail.skill_ids ?? [];
+    if (current.length === skillIds.length && current.every((id) => skillIds.includes(id))) return;
+    setError("");
+    try {
+      const updated = await api.updateThread(detail.id, { skill_ids: skillIds });
+      setDetail((currentDetail) =>
+        currentDetail?.id === updated.id ? { ...currentDetail, ...updated } : currentDetail,
       );
       await loadThreads();
     } catch (cause) {
@@ -530,7 +558,14 @@ export default function App() {
               }
               onRetry={() => void retry()}
               onChatRetry={() => void retryMessage()}
-            />
+            >
+              <SkillSelector
+                skills={skills}
+                value={detail.skill_ids ?? []}
+                disabled={uploading || chat.generating}
+                onChange={(skillIds) => void selectSkills(skillIds)}
+              />
+            </MessageComposer>
           </>
         )}
         {error && (
@@ -574,6 +609,7 @@ export default function App() {
           onChanged={async () => {
             await refreshSettings();
             await refreshProviders();
+            await refreshSkills();
             if (detail) await selectThread(detail.id);
             const status = await api.setupStatus();
             setInitialSetup(!status.configured);

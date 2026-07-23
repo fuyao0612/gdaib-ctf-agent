@@ -49,6 +49,7 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                 CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS reports(run_id TEXT PRIMARY KEY, markdown TEXT NOT NULL, json_data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS provider_configs(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS run_tasks(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS run_checkpoints(run_id TEXT NOT NULL, checkpoint_sequence INTEGER NOT NULL, node TEXT NOT NULL, state_schema_version TEXT NOT NULL, elapsed_seconds REAL NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(run_id,checkpoint_sequence));
@@ -72,6 +73,7 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (9);
                 """
             )
             rows = db.execute("SELECT id,data FROM threads").fetchall()
@@ -85,6 +87,8 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                     data["provider_config_id"] = None
                 if "provider_fallback_notice" not in data:
                     data["provider_fallback_notice"] = None
+                if "skill_ids" not in data:
+                    data["skill_ids"] = []
                 db.execute(
                     "UPDATE threads SET data=? WHERE id=?",
                     (json.dumps(data, ensure_ascii=False), row["id"]),

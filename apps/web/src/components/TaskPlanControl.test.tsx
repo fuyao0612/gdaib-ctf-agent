@@ -112,4 +112,24 @@ describe("TaskPlanControl", () => {
     expect(onDecide).toHaveBeenNthCalledWith(1, "reject", 1, "增加回滚步骤");
     expect(onDecide).toHaveBeenNthCalledWith(2, "approve", 1, "增加回滚步骤");
   });
+
+  it("中风险工具会展示具体名称，并要求确认后执行", () => {
+    const onDecide = vi.fn();
+    render(
+      <TaskPlanControl
+        run={run("waiting_approval")}
+        control={{
+          ...control,
+          approval: { kind: "medium_risk_tool", tool: "test_echo", risk: "medium" },
+        }}
+        busy={false}
+        onEdit={vi.fn()}
+        onDecide={onDecide}
+      />,
+    );
+
+    expect(screen.getByTestId("risk-approval")).toHaveTextContent("test_echo");
+    fireEvent.click(screen.getByRole("button", { name: "确认并执行" }));
+    expect(onDecide).toHaveBeenCalledWith("approve", 1, "");
+  });
 });

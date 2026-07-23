@@ -8,6 +8,7 @@ from .providers import create_provider_router
 from .reports import create_report_router
 from .runs import create_run_router
 from .session import create_session_router
+from .skills import create_skill_router
 from .threads import create_thread_router
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "create_report_router",
     "create_run_router",
     "create_session_router",
+    "create_skill_router",
     "create_thread_router",
 ]

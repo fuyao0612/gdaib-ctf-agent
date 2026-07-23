@@ -276,6 +276,53 @@
   border-top: 1px solid var(--line);
 }
 
+.skill-settings {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.skill-list {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.skill-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+
+.skill-list button.selected {
+  border-color: #9bb7e8;
+  background: var(--accent-soft);
+}
+
+.skill-list span,
+.skill-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-list small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.skill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 11px;
+}
+
 .profile-center fieldset {
   margin: 10px 0;
   padding: 14px;

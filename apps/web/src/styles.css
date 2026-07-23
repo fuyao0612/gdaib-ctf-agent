@@ -807,6 +807,17 @@ textarea:disabled {
   overflow-wrap: anywhere;
 }
 
+.risk-approval {
+  margin: 0;
+  padding: 8px 10px;
+  color: #765322;
+  border: 1px solid #e8d2a6;
+  border-radius: 8px;
+  background: #fff9ed;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .provider-selector {
   display: flex;
   align-items: center;
@@ -825,6 +836,36 @@ textarea:disabled {
   border-radius: 4px;
   background: var(--surface);
   color: var(--ink);
+}
+
+.skill-selector {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.skill-selector summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.skill-selector > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 6px;
+}
+
+.skill-selector label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.skill-selector span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .upload-note {

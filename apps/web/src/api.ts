@@ -21,6 +21,8 @@ import type {
   SetupStatus,
   Thread,
   ThreadDetail,
+  SkillDefinition,
+  SkillInput,
 } from "./types";
 
 const API = "/api/v1";
@@ -63,10 +65,10 @@ export const api = {
   setupStatus: () => request<SetupStatus>("/setup/status"),
   listThreads: () => request<Thread[]>("/threads"),
   listAgentProfiles: () => request<AgentProfileSummary[]>("/agent-profiles"),
-  createThread: (title: string) =>
+  createThread: (title: string, skillIds: string[] = []) =>
     request<Thread>("/threads", {
       method: "POST",
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, skill_ids: skillIds }),
     }),
   detail: (id: string) => request<ThreadDetail>(`/threads/${id}`),
   message: async (
@@ -232,6 +234,7 @@ export const api = {
       title?: string;
       archived?: boolean;
       provider_config_id?: string;
+      skill_ids?: string[];
       acknowledge_provider_fallback?: boolean;
     },
   ) =>
@@ -241,6 +244,28 @@ export const api = {
     }),
   deleteThread: (id: string) =>
     request<void>(`/threads/${id}`, { method: "DELETE" }),
+  listSkills: () => request<SkillDefinition[]>("/skills"),
+  adminSkills: (csrf: string) =>
+    request<SkillDefinition[]>("/admin/settings/skills", {
+      headers: adminHeaders(csrf),
+    }),
+  createSkill: (csrf: string, value: SkillInput) =>
+    request<SkillDefinition>("/admin/settings/skills", {
+      method: "POST",
+      headers: adminHeaders(csrf),
+      body: JSON.stringify(value),
+    }),
+  updateSkill: (csrf: string, id: string, value: SkillInput) =>
+    request<SkillDefinition>(`/admin/settings/skills/${id}`, {
+      method: "PUT",
+      headers: adminHeaders(csrf),
+      body: JSON.stringify(value),
+    }),
+  deleteSkill: (csrf: string, id: string) =>
+    request<void>(`/admin/settings/skills/${id}`, {
+      method: "DELETE",
+      headers: adminHeaders(csrf),
+    }),
   adminProviders: (csrf: string) =>
     request<ProviderConfig[]>("/admin/settings/providers", {
       headers: adminHeaders(csrf),

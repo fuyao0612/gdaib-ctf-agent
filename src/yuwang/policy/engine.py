@@ -28,6 +28,7 @@ class SecurityConfig(BaseModel):
 class PolicyDecision(BaseModel):
     allowed: bool
     reason: str
+    requires_approval: bool = False
 
 
 SECRET_PATTERNS = [
@@ -74,6 +75,11 @@ class PolicyEngine:
     def check_tool(
         self, task: TaskSpec, tool: ToolSpec, tool_input: dict[str, object]
     ) -> PolicyDecision:
+        if tool.risk == "high":
+            return PolicyDecision(
+                allowed=False,
+                reason="高风险工具默认拒绝，本阶段不允许自动执行",
+            )
         if tool.requires_network:
             raw_target = next(
                 (str(tool_input[key]) for key in ("url", "target", "host") if key in tool_input),
@@ -92,7 +98,13 @@ class PolicyEngine:
                 return PolicyDecision(allowed=False, reason="目标不在任务授权范围")
             if "localhost" in tool.allowed_target_types and not self.is_local_address(hostname):
                 return PolicyDecision(allowed=False, reason="工具仅允许本地测试目标")
-        return PolicyDecision(allowed=True, reason="工具与目标符合授权策略")
+        if tool.risk == "medium":
+            return PolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                reason="中风险工具需要用户确认后才能执行",
+            )
+        return PolicyDecision(allowed=True, reason="低风险工具与目标符合授权策略")
 
     def validate_upload(self, filename: str, size: int, existing_count: int) -> None:
         safe = Path(filename).name

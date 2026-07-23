@@ -53,6 +53,11 @@ class AgentStateModel(BaseModel):
     elapsed_seconds: float = Field(default=0, ge=0)
     task_brief: TaskBrief | None = None
     plan_approved: bool = False
+    # 仅在中风险工具尚未获得用户确认时填充，恢复后不能绕过该检查点。
+    pending_risk_approval_tool: str | None = None
+    pending_risk_approval_fingerprint: str | None = None
+    # 只允许一次用户明确确认过的同一动作继续；工具名或参数变化会产生新指纹。
+    approved_risk_action_fingerprint: str | None = None
     plan: AgentPlan | None = None
     action: AgentAction | None = None
     observations: list[Observation] = Field(default_factory=list)
@@ -109,6 +114,9 @@ class GraphState(TypedDict, total=False):
     elapsed_seconds: float
     task_brief: dict[str, Any] | None
     plan_approved: bool
+    pending_risk_approval_tool: str | None
+    pending_risk_approval_fingerprint: str | None
+    approved_risk_action_fingerprint: str | None
     plan: dict[str, Any] | None
     action: dict[str, Any] | None
     observations: list[dict[str, Any]]

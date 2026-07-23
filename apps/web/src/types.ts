@@ -20,6 +20,7 @@ export interface Thread {
   interaction_mode: InteractionMode;
   provider_config_id: string | null;
   provider_fallback_notice: string | null;
+  skill_ids?: string[];
   agent_profile_id: string | null;
   agent_profile_version: number | null;
   plan_mode: PlanMode;
@@ -131,6 +132,7 @@ export interface RunControl {
   task_briefs: TaskBrief[];
   plans: PlanRevision[];
   guidance: RunGuidance[];
+  approval?: { kind: "medium_risk_tool"; tool: string; risk: "medium" } | null;
 }
 export type ProviderPreset = "deepseek" | "qwen" | "glm" | "custom";
 export type StructuredMode =
@@ -190,6 +192,25 @@ export interface ProviderDeletionImpact {
   affected_thread_count: number;
   fallback_provider: { id: string; name: string; model: string } | null;
   blocking_reasons: string[];
+}
+export interface SkillDefinition {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  steps: string[];
+  checklist: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+export interface SkillInput {
+  name: string;
+  description: string;
+  prompt: string;
+  steps: string[];
+  checklist: string[];
+  enabled: boolean;
 }
 export interface AgentDefaults {
   budget: {
@@ -326,6 +347,16 @@ export interface RunAudit {
     evidence_level: string;
   };
   usage: Record<string, number>;
+  history?: {
+    model: string | null;
+    started_at: string | null;
+    finished_at: string | null;
+    token_source: "provider" | "estimated" | "mixed" | "unavailable";
+    cost_source: "provider" | "estimated" | "mixed" | "unavailable";
+    manual_interventions: number;
+    execution_status: string;
+    validation_status: string;
+  };
   limits: Record<string, number>;
   profile: {
     name: string;

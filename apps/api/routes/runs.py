@@ -92,6 +92,14 @@ def create_run_router(context: ApiContext) -> APIRouter:
     @router.get("/runs/{run_id}/control")
     async def get_run_control(run_id: UUID) -> dict[str, Any]:
         run = context.require_run(run_id)
+        latest_risk_approval = next(
+            (
+                event
+                for event in reversed(repository.list_events(run_id))
+                if event.type == EventType.RISK_APPROVAL_REQUESTED
+            ),
+            None,
+        )
         return {
             "status": run.status,
             "plan_mode": run.plan_mode,
@@ -106,6 +114,15 @@ def create_run_router(context: ApiContext) -> APIRouter:
             "guidance": [
                 value.model_dump(mode="json") for value in repository.list_guidance(run_id)
             ],
+            "approval": (
+                {
+                    "kind": "medium_risk_tool",
+                    "tool": latest_risk_approval.payload.get("tool"),
+                    "risk": latest_risk_approval.payload.get("risk"),
+                }
+                if run.status == RunStatus.WAITING_APPROVAL and latest_risk_approval
+                else None
+            ),
         }
 
     @router.post("/runs/{run_id}/pause", response_model=Run, status_code=202)
@@ -218,15 +235,42 @@ def create_run_router(context: ApiContext) -> APIRouter:
         state = AgentStateModel.model_validate(checkpoint.state)
         state.plan = revision.plan
         state.plan_approved = approved
+        pending_risk_tool = state.pending_risk_approval_tool
+        pending_risk_fingerprint = state.pending_risk_approval_fingerprint
+        state.pending_risk_approval_tool = None
+        state.pending_risk_approval_fingerprint = None
+        if approved and pending_risk_fingerprint:
+            state.approved_risk_action_fingerprint = pending_risk_fingerprint
         node = "plan_approved" if approved else "plan_rejected"
         if not approved:
             state.supplemental_inputs.append(f"计划拒绝原因：{body.reason or '请重新规划'}")
         repository.save_checkpoint(run_id, node, state.model_dump(mode="json"))
         repository.create_event(
             run_id,
-            EventType.PLAN_APPROVED if approved else EventType.PLAN_REJECTED,
-            "用户已批准执行计划" if approved else "用户已拒绝计划，正在重新规划",
-            {"version": revision.version, "has_reason": bool(body.reason)},
+            (
+                EventType.RISK_APPROVED
+                if approved and pending_risk_tool
+                else EventType.RISK_REJECTED
+                if pending_risk_tool
+                else EventType.PLAN_APPROVED
+                if approved
+                else EventType.PLAN_REJECTED
+            ),
+            (
+                f"用户已确认中风险工具“{pending_risk_tool}”"
+                if approved and pending_risk_tool
+                else f"用户已拒绝中风险工具“{pending_risk_tool}”，正在重新规划"
+                if pending_risk_tool
+                else "用户已批准执行计划"
+                if approved
+                else "用户已拒绝计划，正在重新规划"
+            ),
+            {
+                "version": revision.version,
+                "has_reason": bool(body.reason),
+                "tool": pending_risk_tool,
+                "risk": "medium" if pending_risk_tool else None,
+            },
         )
         schedule_resume(run)
         return run
@@ -312,6 +356,31 @@ def create_run_router(context: ApiContext) -> APIRouter:
         state = checkpoint.state if checkpoint else {}
         task_spec = repository.get_run_task(run_id)
         budget = task_spec.budget if task_spec else None
+        model_calls = repository.list_model_calls(run_id)
+        events = repository.list_events(run_id)
+        reported_usage = [
+            bool(value.metadata.get("usage_reported")) for value in model_calls
+        ]
+        if not reported_usage:
+            token_source = "unavailable"
+        elif all(reported_usage):
+            token_source = "provider"
+        elif any(reported_usage):
+            token_source = "mixed"
+        else:
+            token_source = "estimated"
+        intervention_types = {
+            EventType.INPUT_RECEIVED,
+            EventType.CLARIFICATION_RECEIVED,
+            EventType.PLAN_EDITED,
+            EventType.PLAN_APPROVED,
+            EventType.PLAN_REJECTED,
+            EventType.RISK_APPROVED,
+            EventType.RISK_REJECTED,
+            EventType.GUIDANCE_QUEUED,
+            EventType.PAUSE_REQUESTED,
+            EventType.RUN_RESUMED,
+        }
         return {
             "run": {
                 "execution_status": run.status,
@@ -331,6 +400,18 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 "context_tokens": state.get("context_tokens", 0),
                 "observation_chars": state.get("observation_chars", 0),
                 "context_truncations": state.get("context_truncations", 0),
+            },
+            "history": {
+                "model": model_calls[-1].model if model_calls else None,
+                "started_at": run.started_at,
+                "finished_at": run.finished_at,
+                "token_source": token_source,
+                "cost_source": token_source,
+                "manual_interventions": sum(
+                    event.type in intervention_types for event in events
+                ),
+                "execution_status": run.status,
+                "validation_status": run.validation_status,
             },
             "limits": budget.model_dump(mode="json") if budget else {},
             "profile": (
@@ -353,9 +434,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 if profile
                 else None
             ),
-            "model_calls": [
-                value.model_dump(mode="json") for value in repository.list_model_calls(run_id)
-            ],
+            "model_calls": [value.model_dump(mode="json") for value in model_calls],
             "tool_calls": [
                 value.model_dump(mode="json") for value in repository.list_tool_calls(run_id)
             ],

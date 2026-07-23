@@ -34,6 +34,17 @@ export function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status}`}>{labels[status] ?? status}</span>;
 }
 
+type AccountingSource = NonNullable<RunAudit["history"]>["token_source"];
+
+function accountingLabel(source: AccountingSource): string {
+  return {
+    provider: "厂商计量",
+    estimated: "本地估算",
+    mixed: "厂商计量与本地估算",
+    unavailable: "暂无调用数据",
+  }[source] ?? "未知";
+}
+
 export function EventCard({ event }: { event: Event }) {
   const isToolEvent = event.type.startsWith("tool_");
   return (
@@ -259,6 +270,7 @@ export function InspectorPanel(props: InspectorProps) {
             {props.audit.profile?.workflow_preset}
           </p>
           <p>Provider：{props.audit.run.provider}</p>
+          <p>模型：{props.audit.history?.model ?? "等待首次调用"}</p>
           <p>
             执行：{executionStatusLabel(props.audit.run.execution_status ?? "unknown")} · 验证：
             {validationStatusLabel(props.audit.run.validation_status)} · 证据：
@@ -286,6 +298,14 @@ export function InspectorPanel(props: InspectorProps) {
             <dd>{props.audit.usage.observation_chars ?? 0} 字符</dd>
             <dt>裁剪</dt>
             <dd>{props.audit.usage.context_truncations ?? 0} 次</dd>
+            <dt>开始</dt>
+            <dd>{props.audit.history?.started_at ? new Date(props.audit.history.started_at).toLocaleString() : "尚未开始"}</dd>
+            <dt>结束</dt>
+            <dd>{props.audit.history?.finished_at ? new Date(props.audit.history.finished_at).toLocaleString() : "仍在运行"}</dd>
+            <dt>Token / 费用</dt>
+            <dd>{accountingLabel(props.audit.history?.token_source ?? "unavailable")} / {accountingLabel(props.audit.history?.cost_source ?? "unavailable")}</dd>
+            <dt>人工介入</dt>
+            <dd>{props.audit.history?.manual_interventions ?? 0} 次</dd>
           </dl>
         </section>
       )}

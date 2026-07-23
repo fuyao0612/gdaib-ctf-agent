@@ -38,6 +38,9 @@ export default function TaskPlanControl(props: Props) {
   const [verificationMethods, setVerificationMethods] = useState("");
   const [risks, setRisks] = useState("");
   const [dependencies, setDependencies] = useState("");
+  const mediumRiskApproval = props.control.approval?.kind === "medium_risk_tool"
+    ? props.control.approval
+    : null;
 
   useEffect(() => {
     if (!revision) return;
@@ -90,6 +93,11 @@ export default function TaskPlanControl(props: Props) {
           <summary>执行计划 · v{revision.version} · {revision.source}</summary>
           {props.run.status === "waiting_approval" ? (
             <div className="plan-editor" data-testid="plan-approval-control">
+              {mediumRiskApproval && (
+                <p className="risk-approval" data-testid="risk-approval">
+                  中风险工具“{mediumRiskApproval.tool}”需要你的确认后才能执行。
+                </p>
+              )}
               <label>计划摘要<input aria-label="计划摘要" value={summary} onChange={(event) => setSummary(event.target.value)} /></label>
               <label>步骤（每行一项）<textarea aria-label="计划步骤" value={steps} onChange={(event) => setSteps(event.target.value)} /></label>
               <label>预期结果（每行一项）<textarea aria-label="计划预期结果" value={expectedResults} onChange={(event) => setExpectedResults(event.target.value)} /></label>
@@ -101,7 +109,7 @@ export default function TaskPlanControl(props: Props) {
               <div className="plan-actions">
                 <button disabled={props.busy || !summary.trim() || !splitLines(steps).length} onClick={() => props.onEdit(editedPlan(), revision.version, reason)}>保存新版本</button>
                 <button className="danger" disabled={props.busy || !reason.trim()} onClick={() => props.onDecide("reject", revision.version, reason)}>拒绝并重新规划</button>
-                <button className="primary" disabled={props.busy} onClick={() => props.onDecide("approve", revision.version, reason)}>批准并执行</button>
+                <button className="primary" disabled={props.busy} onClick={() => props.onDecide("approve", revision.version, reason)}>{mediumRiskApproval ? "确认并执行" : "批准并执行"}</button>
               </div>
             </div>
           ) : (
