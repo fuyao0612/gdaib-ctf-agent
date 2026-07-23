@@ -44,7 +44,7 @@ function Read-SensitiveValues {
     $values = @()
     foreach ($line in Get-Content -LiteralPath $envFile) {
         $parts = $line -split '=', 2
-        if ($parts.Count -eq 2 -and $parts[0] -in 'YUWANG_ADMIN_TOKEN','YUWANG_MASTER_KEY') {
+        if ($parts.Count -eq 2 -and $parts[0] -eq 'YUWANG_MASTER_KEY') {
             $values += $parts[1]
         }
     }
@@ -74,7 +74,7 @@ try {
 
     foreach ($value in Read-SensitiveValues) {
         if (-not [string]::IsNullOrWhiteSpace($value) -and $check.Output.Contains($value)) {
-            throw '启动输出包含管理员令牌或主密钥。'
+            throw '启动输出包含主密钥。'
         }
     }
     Write-Host '[启动验收] 敏感值未出现在启动输出中。' -ForegroundColor Green

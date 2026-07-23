@@ -20,7 +20,7 @@ if (-not (Test-Path -LiteralPath $envFile)) {
     throw '项目缺少 .env。请先运行 .\scripts\first-setup.ps1。'
 }
 $raw = Get-Content -Raw -LiteralPath $envFile
-foreach ($name in 'YUWANG_ADMIN_TOKEN','YUWANG_MASTER_KEY') {
+foreach ($name in 'YUWANG_MASTER_KEY') {
     # Windows CRLF 会在行尾留下 \r，只允许行尾 \r，不允许值中出现空白。
     if ($raw -notmatch "(?m)^$name=(?!<)[^\r\n]+\r?$") {
         throw "$name 缺失或仍是占位值。请安全填写后重试，不要把值发到聊天或日志。"

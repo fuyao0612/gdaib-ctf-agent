@@ -13,6 +13,6 @@
 
 ## 密钥与管理面
 
-管理员 API 使用独立 Bearer 令牌并进行常量时间比较。Provider API Key 只从管理面录入，以 `YUWANG_MASTER_KEY` 驱动的 Fernet 认证加密密文保存；公共 Provider API 只返回脱敏视图。主密钥、管理员令牌和 Provider 密钥不得写入 Git、镜像、事件、报告或浏览器持久存储。设置中心中的管理员令牌只保留在当前组件内存，刷新即清除。
+管理 API 使用仅限本机的短生命周期 HttpOnly Cookie 会话；写操作必须携带内存中的 CSRF 令牌。Provider API Key 只从管理面录入，以 `YUWANG_MASTER_KEY` 驱动的 Fernet 认证加密密文保存；公共 Provider API 只返回脱敏视图。本机工作台不应直接暴露到公网，公网部署必须由反向代理或外部身份层保护。主密钥和 Provider 密钥不得写入 Git、镜像、事件、报告或浏览器持久存储。
 
 真实 Provider 默认只允许 HTTPS、验证服务端证书且禁止重定向；不安全 localhost 端点只能由测试进程显式开启。生产 API 镜像只复制后端运行代码，不包含测试目录或前端源文件。

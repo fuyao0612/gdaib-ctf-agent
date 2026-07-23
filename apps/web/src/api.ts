@@ -209,10 +209,9 @@ export const api = {
       >
     >("/provider-presets"),
 
-  createAdminSession: (token: string) =>
+  createAdminSession: () =>
     request<{ csrf_token: string; expires_at: number }>("/admin/session", {
       method: "POST",
-      body: JSON.stringify({ token }),
     }),
   adminSession: async () => {
     const value = await request<{

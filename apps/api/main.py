@@ -84,7 +84,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             try:
                 context.verify_session(
                     request,
-                    request.headers.get("Authorization"),
                     request.headers.get("X-CSRF-Token"),
                 )
             except HTTPException as exc:

@@ -21,10 +21,6 @@ async function expectNoHorizontalOverflow(page: Page) {
 async function configure(page: Page) {
   await page.goto("/");
   await expect(page.getByRole("dialog", { name: "设置中心" })).toBeVisible();
-  await page
-    .getByLabel("管理员令牌")
-    .fill(process.env.YUWANG_E2E_ADMIN_TOKEN!);
-  await page.getByRole("button", { name: "进入设置" }).click();
   await expect(page.locator(".settings-content")).toBeVisible();
 
   const providerSection = page.locator(".settings-content > section").first();

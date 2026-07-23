@@ -87,13 +87,9 @@ describe("SettingsCenter", () => {
             },
             version: "0.5.0",
           });
-        if (
-          input.endsWith("/admin/session") &&
-          init?.method === "POST" &&
-          init.body === JSON.stringify({ token: "wrong-token" })
-        )
+        if (input.endsWith("/admin/session") && !init?.method)
           return Response.json(
-            { error: { message: "管理员鉴权失败" } },
+            { error: { message: "管理员会话无效或已过期" } },
             { status: 401 },
           );
         if (input.endsWith("/admin/session") && init?.method === "POST")
@@ -142,13 +138,9 @@ describe("SettingsCenter", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("keeps the admin token in memory and creates a masked provider", async () => {
+  it("自动建立本机会话并创建脱敏 Provider", async () => {
     const changed = vi.fn(async () => undefined);
     render(<SettingsCenter onClose={() => undefined} onChanged={changed} />);
-    fireEvent.change(screen.getByLabelText("管理员令牌"), {
-      target: { value: "admin-secret" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "进入设置" }));
     await screen.findByText("模型 Provider");
     const keyInput = screen.getByPlaceholderText("输入 Provider API Key");
     expect(keyInput).toHaveAttribute("type", "password");
@@ -178,11 +170,6 @@ describe("SettingsCenter", () => {
         onChanged={async () => undefined}
       />,
     );
-    fireEvent.change(screen.getByLabelText("管理员令牌"), {
-      target: { value: "admin-secret" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "进入设置" }));
-
     const keyInput = await screen.findByPlaceholderText("输入 Provider API Key");
     fireEvent.change(keyInput, { target: { value: "provider-secret" } });
     fireEvent.change(screen.getByLabelText("模型"), {
@@ -215,22 +202,19 @@ describe("SettingsCenter", () => {
     });
   });
 
-  it("管理员令牌错误时给出可操作提示且不泄露输入", async () => {
+  it("不显示管理员令牌输入，也不会提交令牌", async () => {
     render(
       <SettingsCenter
         onClose={() => undefined}
         onChanged={async () => undefined}
       />,
     );
-    fireEvent.change(screen.getByLabelText("管理员令牌"), {
-      target: { value: "wrong-token" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "进入设置" }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("YUWANG_ADMIN_TOKEN");
-    expect(alert).toHaveTextContent("重启服务");
-    expect(alert).not.toHaveTextContent("wrong-token");
-    expect(screen.queryByText("模型 Provider")).not.toBeInTheDocument();
+    await screen.findByText("模型 Provider");
+    expect(screen.queryByLabelText("管理员令牌")).not.toBeInTheDocument();
+    const sessionRequest = vi.mocked(fetch).mock.calls.find(
+      ([url, init]) =>
+        String(url).endsWith("/admin/session") && init?.method === "POST",
+    );
+    expect(sessionRequest?.[1]?.body).toBeUndefined();
   });
 });

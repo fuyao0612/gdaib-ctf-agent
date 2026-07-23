@@ -27,7 +27,6 @@ export default function SettingsCenter({
   onChanged,
   initialSetup = false,
 }: Props) {
-  const [adminToken, setAdminToken] = useState("");
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
   const [skills, setSkills] = useState<SkillDefinition[]>([]);
   const [agentDefaults, setAgentDefaults] = useState<AgentDefaults | null>(
@@ -65,27 +64,6 @@ export default function SettingsCenter({
     if (session.csrf)
       void load(session.csrf).catch((cause) => setError(String(cause)));
   }, [session.csrf, load]);
-
-  async function authenticate(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const csrf = await session.login(adminToken);
-      setAdminToken("");
-      await load(csrf);
-      setNotice("已建立安全管理员会话");
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      setError(
-        message.includes("管理员鉴权失败")
-          ? "管理员令牌不正确。请使用项目根目录 .env 中 YUWANG_ADMIN_TOKEN 的值；如果刚修改过该值，请重启服务后再试。"
-          : message,
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function saveAgentDefaults(event: FormEvent) {
     event.preventDefault();
@@ -141,9 +119,6 @@ export default function SettingsCenter({
           </div>
           <div className="settings-header-actions">
             <button onClick={onClose}>关闭</button>
-            <button onClick={() => void session.logout().finally(onClose)}>
-              退出登录
-            </button>
           </div>
         </header>
         <div className="settings-scroll">
@@ -153,34 +128,19 @@ export default function SettingsCenter({
           />
           {initialSetup && (
             <p className="setup-hint">
-              首次配置只需要管理员登录、填写模型并完成一次真实连接测试。
+              首次配置只需要填写模型并完成一次真实连接测试。
             </p>
           )}
           {!session.authenticated ? (
-            <form className="admin-login" onSubmit={authenticate}>
-              <h3>管理员验证</h3>
-              <p>令牌仅保存在当前页面内存中，关闭或刷新后即清除。</p>
-              <p>
-                请粘贴项目根目录 <code>.env</code> 中{" "}
-                <code>YUWANG_ADMIN_TOKEN</code> 等号后的完整内容。
-              </p>
-              <label>
-                管理员令牌
-                <input
-                  type="password"
-                  aria-label="管理员令牌"
-                  autoComplete="off"
-                  value={adminToken}
-                  onChange={(event) => setAdminToken(event.target.value)}
-                />
-              </label>
-              <button
-                className="primary"
-                disabled={busy || session.busy || !adminToken}
-              >
-                进入设置
-              </button>
-            </form>
+            session.error ? (
+              <div className="admin-login" role="alert">
+                无法建立本机安全会话：{session.error}
+              </div>
+            ) : (
+              <div className="admin-login" role="status">
+                正在建立本机安全会话…
+              </div>
+            )
           ) : (
             <div className="settings-content">
               <div className="settings-mode-switch" role="group" aria-label="设置模式">

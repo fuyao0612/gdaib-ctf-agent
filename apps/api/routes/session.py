@@ -6,23 +6,18 @@ import secrets
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from apps.api.context import ApiContext
-from apps.api.schemas import AdminLogin
 
 
 def create_session_router(context: ApiContext) -> APIRouter:
-    """创建登录、查询和退出路由。"""
+    """创建本机管理会话的路由。"""
 
     router = APIRouter(prefix="/api/v1/admin/session", tags=["session"])
 
     @router.post("")
-    async def create_admin_session(body: AdminLogin, response: Response) -> dict[str, Any]:
-        if not context.config.admin_token:
-            raise HTTPException(503, "管理员鉴权未配置")
-        if not secrets.compare_digest(body.token, context.config.admin_token):
-            raise HTTPException(401, "管理员鉴权失败")
+    async def create_admin_session(response: Response) -> dict[str, Any]:
         session_id = secrets.token_urlsafe(32)
         csrf = secrets.token_urlsafe(32)
         expires_at = time.time() + context.config.admin_session_ttl_seconds
@@ -42,13 +37,12 @@ def create_session_router(context: ApiContext) -> APIRouter:
     async def get_admin_session(request: Request) -> dict[str, Any]:
         session = context.verify_session(
             request,
-            request.headers.get("Authorization"),
             request.headers.get("X-CSRF-Token"),
         )
         return {
             "authenticated": True,
-            "csrf_token": session[1] if session else "",
-            "expires_at": session[0] if session else None,
+            "csrf_token": session[1],
+            "expires_at": session[0],
         }
 
     @router.delete("", status_code=204, dependencies=[Depends(context.require_admin)])

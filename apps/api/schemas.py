@@ -105,10 +105,6 @@ class MemoryToggle(BaseModel):
     enabled: bool
 
 
-class AdminLogin(BaseModel):
-    token: str = Field(min_length=1, max_length=4096)
-
-
 class ProfileCopy(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 

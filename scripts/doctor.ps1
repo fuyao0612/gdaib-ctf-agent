@@ -145,15 +145,12 @@ $values = Get-YuwangEnvValues $ProjectRoot
 if (-not (Test-Path -LiteralPath $envFile)) {
     Add-Diagnostic '失败' '.env' '不存在' '运行 .\yuwang.ps1 setup 生成本机配置。'
 } else {
-    $adminOk = $values.ContainsKey('YUWANG_ADMIN_TOKEN') -and
-        $values['YUWANG_ADMIN_TOKEN'].Length -ge 32 -and
-        -not $values['YUWANG_ADMIN_TOKEN'].StartsWith('<')
     $masterOk = $values.ContainsKey('YUWANG_MASTER_KEY') -and
         (Test-FernetKeyShape $values['YUWANG_MASTER_KEY'])
-    if ($adminOk -and $masterOk) {
+    if ($masterOk) {
         Add-Diagnostic '正常' '.env' '关键配置有效，敏感值未输出' ''
     } else {
-        Add-Diagnostic '失败' '.env' '管理员令牌或主密钥无效' '安全备份后修正配置；不要把密钥发送到聊天或日志。'
+        Add-Diagnostic '失败' '.env' '主密钥无效' '安全备份后修正配置；不要把密钥发送到聊天或日志。'
     }
 }
 
