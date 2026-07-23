@@ -63,7 +63,24 @@ def provider_server():
                 context = json.loads(prompt)
                 if "slow-control" in context.get("untrusted_task", ""):
                     time.sleep(0.12)
-                if "生成公开 Task Brief" in context["purpose"]:
+                if "user_message_untrusted" in context and "allowed_kinds" in context:
+                    message = context["user_message_untrusted"]
+                    if (
+                        "不要执行" in message
+                        or "只说明" in message
+                        or message in {"你好", "我想准备发布说明。"}
+                    ):
+                        response_content = json.dumps({"kind": "chat", "clarification_question": None})
+                    elif "帮我处理一下" in message:
+                        response_content = json.dumps(
+                            {
+                                "kind": "clarify",
+                                "clarification_question": "请补充目标和预期交付物。",
+                            }
+                        )
+                    else:
+                        response_content = json.dumps({"kind": "run", "clarification_question": None})
+                elif "生成公开 Task Brief" in context["purpose"]:
                     needs_clarification = (
                         "需要澄清任务" in context["untrusted_task"]
                         and not context.get("supplemental_inputs")
@@ -385,6 +402,52 @@ def test_unified_message_entry_chooses_free_text_or_controlled_run(
         assert detail["messages"][-1]["role"] == "user"
         task_spec = app.state.repository.get_run_task(UUID(detail["runs"][0]["id"]))
         assert task_spec and task_spec.verification_rules == []
+
+
+def test_semantic_intent_handles_natural_negated_ambiguous_and_contextual_messages(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        create_provider(client, provider_server)
+
+        negated = client.post("/api/v1/threads", json={"title": "否定执行"}).json()
+        response = client.post(
+            f"/api/v1/threads/{negated['id']}/message",
+            json={"request_id": str(uuid4()), "content": "不要执行，只说明风险。"},
+        )
+        assert "event: reply_complete" in response.text
+        assert client.get(f"/api/v1/threads/{negated['id']}").json()["runs"] == []
+
+        ambiguous = client.post("/api/v1/threads", json={"title": "需要澄清"}).json()
+        response = client.post(
+            f"/api/v1/threads/{ambiguous['id']}/message",
+            json={"request_id": str(uuid4()), "content": "帮我处理一下"},
+        )
+        assert "event: reply_complete" in response.text
+        detail = client.get(f"/api/v1/threads/{ambiguous['id']}").json()
+        assert detail["runs"] == []
+        assert detail["messages"][-1]["content"] == "请补充目标和预期交付物。"
+
+        natural = client.post("/api/v1/threads", json={"title": "自然任务"}).json()
+        response = client.post(
+            f"/api/v1/threads/{natural['id']}/message",
+            json={"request_id": str(uuid4()), "content": "把发布清单整理成可执行工作并开始推进。"},
+        )
+        assert "event: execution_started" in response.text
+
+        contextual = client.post("/api/v1/threads", json={"title": "上下文任务"}).json()
+        greeting = client.post(
+            f"/api/v1/threads/{contextual['id']}/message",
+            json={"request_id": str(uuid4()), "content": "我想准备发布说明。"},
+        )
+        assert "event: reply_complete" in greeting.text
+        follow_up = client.post(
+            f"/api/v1/threads/{contextual['id']}/message",
+            json={"request_id": str(uuid4()), "content": "继续刚才那个安排。"},
+        )
+        assert "event: execution_started" in follow_up.text
 
 
 def test_thread_provider_choice_persists_for_chat_and_unified_run_snapshot(

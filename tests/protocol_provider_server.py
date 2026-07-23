@@ -57,6 +57,16 @@ class Handler(BaseHTTPRequestHandler):
         if schema_name == "connectionprobe" or '"status":"ok"' in prompt:
             return {"status": "ok"}
         context = json.loads(prompt)
+        if schema_name == "messageintent" or "user_message_untrusted" in context:
+            message = str(context.get("user_message_untrusted", ""))
+            if message in {"你好", "我想准备发布说明。"} or "不要执行" in message or "只说明" in message:
+                return {"kind": "chat", "clarification_question": None}
+            if "帮我处理一下" in message:
+                return {
+                    "kind": "clarify",
+                    "clarification_question": "请补充目标和预期交付物。",
+                }
+            return {"kind": "run", "clarification_question": None}
         if schema_name == "taskbriefdraft" or "生成公开 Task Brief" in context.get(
             "purpose", ""
         ):

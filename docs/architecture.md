@@ -30,10 +30,11 @@ flowchart LR
 
 用户层只有一条消息入口，内部仍复用两个稳定生命周期：
 
-- `apps/api/routes/messages.py` 调用 `yuwang.dispatch.route_message()`。先识别活动 Run 的状态：
-  停止短语优先，等待补充/澄清时直接提交相应内容，其余活动状态默认追加指引；只有没有
-  活动 Run 时才用保守规则判断是否创建受控 Run。带附件的明确分析、检查、提取或验证请求
-  同样可创建 Run；“只解释，不要执行”等否定表达优先走自由回复。
+- `apps/api/routes/messages.py` 对活动 Run 调用 `yuwang.dispatch.route_active_message()`：停止短语优先，
+  等待补充/澄清时直接提交相应内容，其余活动状态默认追加指引。没有活动 Run 时只使用当前会话
+  Provider 的首项发起一次 `classify_new_message()` 结构化调用，严格校验为 `chat`、`run` 或 `clarify`。
+  超时、调用失败或非法 JSON 一律降级为自由回复，不能误启动 Run；`clarify` 会把模型给出的具体问题
+  作为可重放的普通对话回复保存，不创建 Run。分类提示将用户消息和最近对话明确标为不可信数据。
 - `apps/api/routes/chat.py` 返回 `reply_start/text_delta/reply_complete/reply_failed`，不创建 Run。
 - `ApiContext.start_run()` 固化 TaskSpec、Provider/Profile 快照并调度 LangGraph；`routes/runs.py` 的兼容接口也复用它。
 - `apps/api/run_interactions.py` 把追加指引、用户补充和任务澄清收敛为同一组持久化、幂等和
