@@ -1,5 +1,5 @@
 /** 单页工作台协调器：只管理共享状态和网络动作，页面区域由小组件渲染。 */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import SettingsCenter from "./SettingsCenter";
 import CreateThreadDialog from "./components/CreateThreadDialog";
@@ -16,6 +16,7 @@ import { useRunControlActions } from "./hooks/useRunControlActions";
 import type {
   AgentPlan,
   Artifact,
+  ProviderConfig,
   Thread,
 } from "./types";
 import "./styles.css";
@@ -53,6 +54,7 @@ export default function App() {
   const [uploadingCount, setUploadingCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [providers, setProviders] = useState<ProviderConfig[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("新对话");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -68,6 +70,7 @@ export default function App() {
   // 上传是异步的。切换会话时先更新此 ref，旧会话的迟到响应不能混入新会话的
   // 待发送附件清单。
   const currentThreadIdRef = useRef<string | null>(null);
+  const acknowledgedProviderNoticeRef = useRef<string | null>(null);
   const runControls = useRunControlActions({
     run: activeRun,
     setRun: setActiveRun,
@@ -78,6 +81,7 @@ export default function App() {
   });
   const chat = useChatActions({
     detail,
+    providerConfigId: detail?.provider_config_id ?? null,
     setDetail,
     loadThreads,
     setError,
@@ -123,6 +127,15 @@ export default function App() {
     currentThreadIdRef.current = detail?.id ?? null;
   }, [detail?.id]);
 
+  const refreshProviders = useCallback(async () => {
+    const result = await api.listProviders();
+    if (!Array.isArray(result)) {
+      throw new Error("模型配置列表返回格式无效");
+    }
+    // 输入区只能选择已启用的配置；停用项仍可在设置中管理。
+    setProviders(result.filter((provider) => provider.enabled));
+  }, []);
+
   useEffect(() => {
     void bootstrap()
       .then((result) => {
@@ -131,6 +144,27 @@ export default function App() {
       })
       .catch(() => setError("无法连接后端服务，请检查部署状态。"));
   }, [bootstrap]);
+
+  useEffect(() => {
+    void refreshProviders().catch(() => setProviders([]));
+  }, [refreshProviders]);
+
+  useEffect(() => {
+    const notice = detail?.provider_fallback_notice;
+    if (!detail || !notice) return;
+    const key = `${detail.id}:${notice}`;
+    if (acknowledgedProviderNoticeRef.current === key) return;
+    acknowledgedProviderNoticeRef.current = key;
+    setError(notice);
+    void api
+      .updateThread(detail.id, { acknowledge_provider_fallback: true })
+      .then((updated) =>
+        setDetail((current) =>
+          current?.id === updated.id ? { ...current, ...updated } : current,
+        ),
+      )
+      .catch(() => undefined);
+  }, [detail, setDetail]);
 
   // 弹层均支持 Esc 退出，避免键盘用户被困在设置、创建任务或审计抽屉中。
   useEffect(() => {
@@ -213,6 +247,20 @@ export default function App() {
     if (await chat.send(content, artifacts)) {
       setMessage("");
       setPendingArtifacts([]);
+    }
+  }
+
+  async function selectProvider(providerId: string) {
+    if (!detail || !providerId || providerId === detail.provider_config_id) return;
+    setError("");
+    try {
+      const updated = await api.updateThread(detail.id, { provider_config_id: providerId });
+      setDetail((current) =>
+        current?.id === updated.id ? { ...current, ...updated } : current,
+      );
+      await loadThreads();
+    } catch (cause) {
+      setError(String(cause));
     }
   }
 
@@ -468,10 +516,13 @@ export default function App() {
               activeRun={activeRun}
               message={message}
               pendingArtifacts={pendingArtifacts}
+              providers={providers}
+              providerConfigId={detail.provider_config_id}
               uploading={uploading}
               chatGenerating={chat.generating}
               chatCanRetry={Boolean(chat.failure?.retryable)}
               onMessageChange={setMessage}
+              onProviderChange={(providerId) => void selectProvider(providerId)}
               onUpload={(file) => void upload(file)}
               onSend={() => void send()}
               onStop={() =>
@@ -522,6 +573,8 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           onChanged={async () => {
             await refreshSettings();
+            await refreshProviders();
+            if (detail) await selectThread(detail.id);
             const status = await api.setupStatus();
             setInitialSetup(!status.configured);
           }}

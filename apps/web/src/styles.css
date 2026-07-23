@@ -807,6 +807,26 @@ textarea:disabled {
   overflow-wrap: anywhere;
 }
 
+.provider-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.provider-selector select {
+  min-width: 0;
+  max-width: 360px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
 .upload-note {
   width: min(100%, 820px);
   margin: 0 auto 7px;

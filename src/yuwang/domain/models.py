@@ -107,6 +107,11 @@ class Thread(DomainModel):
     mode: ThreadMode = ThreadMode.NORMAL
     # 旧数据缺少该字段时继续按 Agent 任务恢复；新建会话由 API 显式默认成 chat。
     interaction_mode: InteractionMode = InteractionMode.AGENT
+    # 对话级模型选择独立于全局默认值。Run 启动时再把实际 Provider 固化为快照，
+    # 因此用户切换这里的值绝不会改变已经运行中的任务。
+    provider_config_id: UUID | None = None
+    # 已失效的会话选择被安全回退时保留一次性提示，前端确认展示后会清空它。
+    provider_fallback_notice: str | None = None
     agent_profile_id: UUID | None = None
     agent_profile_version: int | None = Field(default=None, ge=1)
     plan_mode: Literal["auto", "approval"] = "auto"

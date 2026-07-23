@@ -166,23 +166,25 @@ def configured_app(tmp_path):
     )
 
 
-def create_provider(client: TestClient, base_url: str) -> dict:
+def create_provider(client: TestClient, base_url: str, **overrides) -> dict:
+    payload = {
+        "name": "本地协议服务",
+        "preset": "custom",
+        "base_url": base_url,
+        "model": "test-model",
+        "api_key": "test-api-key-value",
+        "enabled": True,
+        "is_default": True,
+        "fallback_order": 0,
+        "timeout_seconds": 5,
+        "max_retries": 0,
+        "structured_mode": "json_schema",
+    }
+    payload.update(overrides)
     response = client.post(
         "/api/v1/admin/settings/providers",
         headers={"Authorization": "Bearer test-admin-token"},
-        json={
-            "name": "本地协议服务",
-            "preset": "custom",
-            "base_url": base_url,
-            "model": "test-model",
-            "api_key": "test-api-key-value",
-            "enabled": True,
-            "is_default": True,
-            "fallback_order": 0,
-            "timeout_seconds": 5,
-            "max_retries": 0,
-            "structured_mode": "json_schema",
-        },
+        json=payload,
     )
     assert response.status_code == 201, response.text
     body = response.json()
@@ -383,6 +385,105 @@ def test_unified_message_entry_chooses_free_text_or_controlled_run(
         assert detail["messages"][-1]["role"] == "user"
         task_spec = app.state.repository.get_run_task(UUID(detail["runs"][0]["id"]))
         assert task_spec and task_spec.verification_rules == []
+
+
+def test_thread_provider_choice_persists_for_chat_and_unified_run_snapshot(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        default = create_provider(client, provider_server, name="全局默认模型")
+        selected = create_provider(
+            client,
+            provider_server,
+            name="会话专用模型",
+            model="test-model-alt",
+            api_key="selected-provider-key",
+            is_default=False,
+            fallback_order=1,
+        )
+        thread = client.post("/api/v1/threads", json={"title": "模型选择"}).json()
+        assert thread["provider_config_id"] == default["id"]
+
+        changed = client.patch(
+            f"/api/v1/threads/{thread['id']}",
+            json={"provider_config_id": selected["id"]},
+        )
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["provider_config_id"] == selected["id"]
+        assert client.get(f"/api/v1/threads/{thread['id']}").json()["provider_config_id"] == selected["id"]
+
+        chat = client.post(
+            f"/api/v1/threads/{thread['id']}/chat",
+            json={"request_id": str(uuid4()), "content": "你好"},
+        )
+        assert chat.status_code == 200
+        assert provider_server.chat_payloads[-1]["model"] == "test-model-alt"
+
+        task = client.post(
+            f"/api/v1/threads/{thread['id']}/message",
+            json={"request_id": str(uuid4()), "content": "完成任务：整理项目文档并给出检查结论"},
+        )
+        assert task.status_code == 200, task.text
+        assert "event: execution_started" in task.text
+        run = client.get(f"/api/v1/threads/{thread['id']}").json()["runs"][-1]
+        assert run["provider_config_id"] == selected["id"]
+        snapshot = app.state.repository.get_provider_snapshot(UUID(run["id"]))
+        assert [item.id for item in snapshot] == [UUID(selected["id"]), UUID(default["id"])]
+        assert "selected-provider-key" not in repr(snapshot)
+
+        next_choice = client.patch(
+            f"/api/v1/threads/{thread['id']}",
+            json={"provider_config_id": default["id"]},
+        )
+        assert next_choice.status_code == 200
+        assert app.state.repository.get_provider_snapshot(UUID(run["id"])) == snapshot
+
+
+def test_provider_delete_api_reports_impact_blocks_default_and_falls_back_thread(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    headers = {"Authorization": "Bearer test-admin-token"}
+    with TestClient(app) as client:
+        client.headers.update(headers)
+        default = create_provider(client, provider_server, name="全局默认模型")
+        selected = create_provider(
+            client,
+            provider_server,
+            name="可安全删除模型",
+            api_key="delete-api-secret-key",
+            is_default=False,
+            fallback_order=1,
+        )
+        thread = client.post("/api/v1/threads", json={"title": "待回退会话"}).json()
+        assert client.patch(
+            f"/api/v1/threads/{thread['id']}",
+            json={"provider_config_id": selected["id"]},
+        ).status_code == 200
+
+        impact = client.get(
+            f"/api/v1/admin/settings/providers/{selected['id']}/deletion-impact"
+        )
+        assert impact.status_code == 200
+        assert impact.json()["affected_thread_count"] == 1
+        assert impact.json()["fallback_provider"]["id"] == default["id"]
+        assert impact.json()["blocking_reasons"] == []
+        assert "delete-api-secret-key" not in impact.text
+
+        deleted = client.delete(f"/api/v1/admin/settings/providers/{selected['id']}")
+        assert deleted.status_code == 204
+        restored = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert restored["provider_config_id"] == default["id"]
+        assert "可安全删除模型" in restored["provider_fallback_notice"]
+        assert client.get("/api/v1/providers").json()[0]["id"] == default["id"]
+
+        blocked = client.delete(f"/api/v1/admin/settings/providers/{default['id']}")
+        assert blocked.status_code == 409
+        assert "全局默认 Provider" in blocked.json()["error"]["message"]
+        missing = client.delete(f"/api/v1/admin/settings/providers/{uuid4()}")
+        assert missing.status_code == 404
 
 
 def test_unified_attachment_analysis_starts_one_task_with_artifact_reference(

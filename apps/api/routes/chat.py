@@ -68,7 +68,11 @@ def prepare_chat_stream(
         if not artifact or artifact.thread_id != thread_id:
             raise HTTPException(400, "附件引用无效")
     defaults = context.get_settings_service().get_chat_defaults()
-    provider_id = body.provider_config_id or defaults.default_provider_id
+    provider_id = (
+        body.provider_config_id
+        or thread.provider_config_id
+        or defaults.default_provider_id
+    )
     try:
         _, provider = context.resolve_provider_chain(provider_id)
         user_message, completed = repository.begin_chat_request(

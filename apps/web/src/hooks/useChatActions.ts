@@ -14,6 +14,7 @@ export interface ChatFailure {
 
 interface Options {
   detail: ThreadDetail | null;
+  providerConfigId: string | null;
   setDetail: Dispatch<SetStateAction<ThreadDetail | null>>;
   loadThreads: () => Promise<unknown>;
   setError: Dispatch<SetStateAction<string>>;
@@ -80,6 +81,7 @@ export function useChatActions(options: Options) {
           content: value.content,
           artifact_ids: value.artifactIds,
           retry,
+          provider_config_id: options.providerConfigId,
         },
         controller.signal,
         (event) => {

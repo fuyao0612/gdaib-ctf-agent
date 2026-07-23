@@ -18,6 +18,8 @@ export interface Thread {
   title: string;
   mode: Mode;
   interaction_mode: InteractionMode;
+  provider_config_id: string | null;
+  provider_fallback_notice: string | null;
   agent_profile_id: string | null;
   agent_profile_version: number | null;
   plan_mode: PlanMode;
@@ -180,6 +182,14 @@ export interface ProviderConfigInput {
   input_price_per_million: number;
   output_price_per_million: number;
   fallback_on: FallbackCategory[];
+}
+export interface ProviderDeletionImpact {
+  id: string;
+  name: string;
+  model: string;
+  affected_thread_count: number;
+  fallback_provider: { id: string; name: string; model: string } | null;
+  blocking_reasons: string[];
 }
 export interface AgentDefaults {
   budget: {

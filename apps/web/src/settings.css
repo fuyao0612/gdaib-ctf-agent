@@ -146,6 +146,24 @@
   gap: 7px;
 }
 
+.provider-delete-confirmation {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: #fff8f8;
+}
+
+.provider-delete-confirmation h4,
+.provider-delete-confirmation p {
+  margin: 0 0 10px;
+}
+
+.provider-delete-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .provider-row {
   min-width: 0;
   display: grid;

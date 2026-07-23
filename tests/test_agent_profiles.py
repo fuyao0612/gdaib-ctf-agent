@@ -179,8 +179,10 @@ def test_v02_database_and_json_rows_migrate_without_profile_fields(tmp_path):
     restored = repository.get_thread(legacy_thread["id"])
     assert restored and restored.agent_profile_id is None
     assert restored.interaction_mode == "agent"
+    assert restored.provider_config_id is None
+    assert restored.provider_fallback_notice is None
     service = AgentProfileService(repository)
     assert service.ensure_default().is_default
     with sqlite3.connect(path) as db:
         versions = {row[0] for row in db.execute("SELECT version FROM schema_migrations")}
-    assert versions == {1, 2, 3, 4, 5, 6, 7}
+    assert versions == {1, 2, 3, 4, 5, 6, 7, 8}

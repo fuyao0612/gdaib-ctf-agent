@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from yuwang.settings.models import AgentDefaults, ChatDefaults, ProviderConfig
@@ -46,6 +47,36 @@ class SQLiteSettingsStore(SQLiteStore):
             cursor = db.execute("DELETE FROM provider_configs WHERE id=?", (str(provider_id),))
             if cursor.rowcount == 0:
                 raise KeyError("Provider 配置不存在")
+
+    def delete_provider_with_thread_fallback(
+        self,
+        provider_id: UUID,
+        fallback_provider_id: UUID | None,
+        notice: str,
+    ) -> int:
+        """事务内回退会话选择并删除 Provider，避免留下引用已删除配置的 Thread。"""
+
+        affected = 0
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute("SELECT id,data FROM threads").fetchall()
+            for row in rows:
+                data = json.loads(row["data"])
+                if data.get("provider_config_id") != str(provider_id):
+                    continue
+                data["provider_config_id"] = (
+                    str(fallback_provider_id) if fallback_provider_id else None
+                )
+                data["provider_fallback_notice"] = notice
+                db.execute(
+                    "UPDATE threads SET data=? WHERE id=?",
+                    (json.dumps(data, ensure_ascii=False), row["id"]),
+                )
+                affected += 1
+            cursor = db.execute("DELETE FROM provider_configs WHERE id=?", (str(provider_id),))
+            if cursor.rowcount == 0:
+                raise KeyError("Provider 配置不存在")
+        return affected
 
     def get_agent_defaults(self) -> AgentDefaults:
         with self.connect() as db:

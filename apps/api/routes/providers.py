@@ -66,6 +66,16 @@ def create_provider_router(context: ApiContext) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @router.get(
+        f"{admin_prefix}/{{provider_id}}/deletion-impact",
+        dependencies=[Depends(context.require_admin)],
+    )
+    async def admin_provider_deletion_impact(provider_id: UUID) -> dict[str, object]:
+        try:
+            return context.get_settings_service().provider_deletion_impact(provider_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
     @router.delete(
         f"{admin_prefix}/{{provider_id}}",
         status_code=204,

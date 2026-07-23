@@ -11,6 +11,7 @@ import type {
   MemoryRecord,
   ProviderConfig,
   ProviderConfigInput,
+  ProviderDeletionImpact,
   Report,
   Run,
   RunAudit,
@@ -75,6 +76,7 @@ export const api = {
       content: string;
       artifact_ids: string[];
       retry: boolean;
+      provider_config_id: string | null;
     },
     signal: AbortSignal,
     onEvent: (event: UnifiedMessageEvent) => void,
@@ -229,6 +231,8 @@ export const api = {
     value: {
       title?: string;
       archived?: boolean;
+      provider_config_id?: string;
+      acknowledge_provider_fallback?: boolean;
     },
   ) =>
     request<Thread>(`/threads/${id}`, {
@@ -258,6 +262,11 @@ export const api = {
       method: "DELETE",
       headers: adminHeaders(csrf),
     }),
+  providerDeletionImpact: (csrf: string, id: string) =>
+    request<ProviderDeletionImpact>(
+      `/admin/settings/providers/${id}/deletion-impact`,
+      { headers: adminHeaders(csrf) },
+    ),
   testProvider: (csrf: string, id: string) =>
     request<{
       status: string;

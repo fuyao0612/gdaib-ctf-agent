@@ -8,7 +8,7 @@ interface Props {
   onTest: (id: string) => void;
   onDiscoverModels: (id: string) => void;
   onEdit: (provider: ProviderConfig) => void;
-  onRemove: (id: string) => void;
+  onRemove: (provider: ProviderConfig) => void;
 }
 
 function connectionSummary(provider: ProviderConfig): string {
@@ -68,15 +68,13 @@ export default function ProviderList({
               </button>
             )}
             <button onClick={() => onEdit(provider)}>编辑</button>
-            {mode === "advanced" && (
-              <button
-                className="danger"
-                disabled={provider.is_default || busy}
-                onClick={() => onRemove(provider.id)}
-              >
-                删除
-              </button>
-            )}
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={() => onRemove(provider)}
+            >
+              删除
+            </button>
           </div>
         </article>
       ))}

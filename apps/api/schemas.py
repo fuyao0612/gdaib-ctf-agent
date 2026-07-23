@@ -21,12 +21,15 @@ class ThreadCreate(BaseModel):
     agent_profile_id: UUID | None = None
     plan_mode: Literal["auto", "approval"] = "auto"
     interaction_mode: InteractionMode = InteractionMode.CHAT
+    provider_config_id: UUID | None = None
 
 
 class ThreadUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=160)
     archived: bool | None = None
     interaction_mode: InteractionMode | None = None
+    provider_config_id: UUID | None = None
+    acknowledge_provider_fallback: bool = False
 
 
 class MessageCreate(BaseModel):
