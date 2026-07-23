@@ -5,7 +5,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from tests.fakes import FakeEchoTool, FakeModelProvider
+from tests.fakes import FakeEchoOutput, FakeEchoTool, FakeModelProvider
 from yuwang.agent import AgentEngine, AgentStateModel, BudgetExceeded
 from yuwang.agent.components import AgentComponents, default_components
 from yuwang.agent.engine import AgentDeclaredFailure
@@ -44,6 +44,12 @@ class SlowFakeModelProvider(FakeModelProvider):
     async def generate_structured(self, *args: Any, **kwargs: Any) -> Any:
         await asyncio.sleep(0.03)
         return await super().generate_structured(*args, **kwargs)
+
+
+class LargeOutputFakeEchoTool(FakeEchoTool):
+    async def execute(self, value):
+        del value
+        return FakeEchoOutput(echoed="x" * 9_000)
 
 
 def build_engine(tmp_path, scenario="success", profile=None, components: AgentComponents | None = None):
@@ -95,6 +101,45 @@ async def test_complete_failure_replan_success_report(tmp_path):
     assert [item.checkpoint_sequence for item in checkpoints] == list(
         range(1, len(checkpoints) + 1)
     )
+
+
+@pytest.mark.asyncio
+async def test_large_tool_output_is_archived_and_checkpoint_keeps_only_reference(tmp_path):
+    repository = SQLiteRepository(tmp_path / "large-output.db")
+    registry = ToolRegistry()
+    registry.register(LargeOutputFakeEchoTool())
+    engine = AgentEngine(
+        repository,
+        FakeModelProvider(),
+        registry,
+        PolicyEngine(),
+        artifact_root=tmp_path / "artifacts",
+    )
+    thread = repository.save_thread(Thread(title="large output"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(
+        run_id=run.id,
+        task=TaskSpec(body="归档长工具输出"),
+        action=AgentAction(
+            kind="call_tool",
+            summary="生成长输出",
+            tool_name="test_echo",
+            tool_input={"text": "ignored"},
+        ),
+    )
+
+    raw = await engine.nodes.execute_tool(state.model_dump(mode="python"))
+    updated = AgentStateModel.model_validate(raw)
+    artifact = repository.list_artifacts(thread.id)[0]
+    checkpoint = repository.latest_checkpoint(run.id)
+
+    assert updated.observations[-1].output["artifact_id"] == str(artifact.id)
+    assert updated.observations[-1].output["content_in_artifact"] is True
+    assert artifact.kind == "tool_output"
+    assert (tmp_path / "artifacts" / artifact.storage_ref).read_text(encoding="utf-8").count("x") == 9_000
+    assert checkpoint and "x" * 9_000 not in str(checkpoint.state)
+    tool_call = repository.list_tool_calls(run.id)[0]
+    assert tool_call.artifact_ids == [artifact.id]
 
 
 @pytest.mark.asyncio

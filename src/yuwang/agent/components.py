@@ -14,7 +14,14 @@ from pydantic import BaseModel, Field
 from yuwang.agent.repository import AgentRepository
 from yuwang.agent.verification import SuccessVerifier, VerificationResult
 from yuwang.control import TaskBrief
-from yuwang.domain.models import AgentAction, AgentPlan, MemoryRecord, Observation, TaskSpec
+from yuwang.domain.models import (
+    AgentAction,
+    AgentPlan,
+    MemoryRecord,
+    Message,
+    Observation,
+    TaskSpec,
+)
 from yuwang.reports import ReportGenerator
 from yuwang.settings.profiles import (
     PLATFORM_PROMPT,
@@ -24,6 +31,8 @@ from yuwang.settings.profiles import (
 )
 
 T = TypeVar("T", bound=BaseModel)
+INLINE_ARTIFACT_CHAR_LIMIT = 2_000
+ARTIFACT_SUMMARY_CHAR_LIMIT = 600
 
 
 class AgentRuntimeState(Protocol):
@@ -142,7 +151,8 @@ class DefaultContextBuilder:
         if truncated and run and policy.include_thread_summary:
             older = messages[: -policy.recent_message_limit]
             summary = (
-                "较早对话摘要（因消息窗口限制生成）：\n"
+                "较早对话摘要（因消息窗口限制生成，可审计范围为 "
+                f"{older[0].id} 至 {older[-1].id}，共 {len(older)} 条）：\n"
                 + "\n".join(f"{item.role}: {item.content[:1000]}" for item in older)[:10_000]
             )
             previous = [
@@ -200,12 +210,21 @@ class DefaultContextBuilder:
             self._attachment_context(artifact_id, policy.text_attachment_char_limit)
             for artifact_id in attachment_ids
         ]
+        latest_user_instruction = self._latest_user_instruction(messages, state)
+        task_context = self._task_context(
+            state,
+            attachment_context,
+            latest_user_instruction,
+        )
         context: dict[str, Any] = {
             "security_layer": SECURITY_PROMPT,
             "platform_layer": PLATFORM_PROMPT,
             "purpose": purpose,
             "untrusted_task": state.task.body,
             "scenario": state.task.scenario,
+            # 最新用户补充独立于滚动摘要，避免较早摘要覆盖纠偏后的约束。
+            "latest_user_instruction_untrusted": latest_user_instruction,
+            "task_context": task_context,
             "conversation": [item.model_dump(mode="json") for item in selected_messages],
             "supplemental_inputs": state.supplemental_inputs,
             "memory": [item.model_dump(mode="json") for item in memories],
@@ -245,7 +264,11 @@ class DefaultContextBuilder:
             context["conversation"] = context["conversation"][-3:]
             context["memory"] = context["memory"][-10:]
             context["attachments_untrusted"] = [
-                {key: value for key, value in item.items() if key != "text"}
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"text", "summary_excerpt"}
+                }
                 for item in attachment_context
             ]
             prompt = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
@@ -265,6 +288,57 @@ class DefaultContextBuilder:
             kept_memory_count=len(memories),
         )
 
+    @staticmethod
+    def _latest_user_instruction(
+        messages: list[Message], state: AgentRuntimeState
+    ) -> str:
+        """运行中补充优先于历史对话；两者都保留在持久化数据里。"""
+
+        if state.supplemental_inputs:
+            return state.supplemental_inputs[-1]
+        for message in reversed(messages):
+            if str(message.role) == "user":
+                return message.content
+        return state.task.body
+
+    @staticmethod
+    def _task_context(
+        state: AgentRuntimeState,
+        attachments: list[dict[str, Any]],
+        latest_user_instruction: str,
+    ) -> dict[str, Any]:
+        """以稳定、可审计字段保存运行摘要，而不是让模型猜测历史含义。"""
+
+        completed_steps = [
+            observation.summary for observation in state.observations if observation.success
+        ][-8:]
+        blockers = [
+            observation.error or observation.summary
+            for observation in state.observations
+            if not observation.success
+        ][-5:]
+        decisions: list[str] = []
+        if state.task_brief:
+            decisions.append(f"Task Brief：{state.task_brief.goal}")
+        if state.plan:
+            decisions.append(f"当前计划：{state.plan.summary}")
+        return {
+            "task_summary": state.task_brief.goal if state.task_brief else state.task.body[:1000],
+            "latest_goal_or_correction_untrusted": latest_user_instruction,
+            "constraints": state.task.constraints,
+            "completed_steps": completed_steps,
+            "blockers": blockers,
+            "key_decisions": decisions,
+            "artifact_references": [
+                {
+                    key: value
+                    for key, value in artifact.items()
+                    if key not in {"text", "summary_excerpt"}
+                }
+                for artifact in attachments
+            ],
+        }
+
     def _attachment_context(self, artifact_id: UUID, char_limit: int) -> dict[str, Any]:
         artifact = self.repository.get_artifact(artifact_id)
         if not artifact:
@@ -277,16 +351,27 @@ class DefaultContextBuilder:
             "size": artifact.size,
             "mime_type": artifact.mime_type,
             "storage_ref": artifact.storage_ref,
+            "trust": "untrusted",
         }
         if Path(artifact.filename).suffix.lower() not in {".txt", ".md", ".json", ".log"}:
+            result["content_in_artifact"] = True
             return result
         path = (self.artifact_root / artifact.storage_ref).resolve()
         if self.artifact_root not in path.parents or not path.is_file():
             return result
-        raw = path.read_bytes()[: min(char_limit * 4, 256_000)]
+        inline_limit = min(char_limit, INLINE_ARTIFACT_CHAR_LIMIT)
+        raw = path.read_bytes()[: min(max(inline_limit, ARTIFACT_SUMMARY_CHAR_LIMIT) * 4, 16_000)]
         text = raw.decode("utf-8", errors="replace")
-        result["text"] = "\n".join(text.splitlines()[:2000])[:char_limit]
-        result["trust"] = "untrusted"
+        normalized = "\n".join(text.splitlines()[:2000])
+        if artifact.size <= inline_limit * 4:
+            result["text"] = normalized[:inline_limit]
+            result["summary"] = "小型文本附件，内容已随 Artifact 引用提供"
+            return result
+        result["content_in_artifact"] = True
+        result["summary"] = (
+            f"大型文本附件，共 {artifact.size} 字节；正文保留在 Artifact。"
+        )
+        result["summary_excerpt"] = normalized[:ARTIFACT_SUMMARY_CHAR_LIMIT]
         return result
 
 

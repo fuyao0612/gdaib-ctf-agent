@@ -72,10 +72,8 @@ class AgentEngine:
             **AgentProfileInput(name="默认安全 Agent").model_dump(),
             version=1,
         )
-        self.components = components or default_components(
-            repository,
-            artifact_root or Path("data/artifacts"),
-        )
+        self.artifact_root = (artifact_root or Path("data/artifacts")).resolve()
+        self.components = components or default_components(repository, self.artifact_root)
         self.context_builder = self.components.context_builder
         self.planner = self.components.planner
         self.action_selector = self.components.action_selector

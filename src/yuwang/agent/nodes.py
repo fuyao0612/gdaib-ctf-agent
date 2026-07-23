@@ -6,6 +6,8 @@ Engine 写检查点。LangGraph 只负责编排这些普通异步函数，不拥
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
@@ -23,6 +25,7 @@ from yuwang.control import (
 from yuwang.domain.models import (
     AgentAction,
     AgentPlan,
+    Artifact,
     CallStatus,
     EventType,
     EvidenceLevel,
@@ -42,6 +45,54 @@ class WorkflowNodes:
 
     def __init__(self, engine: AgentEngine) -> None:
         self.engine = engine
+
+    def _archive_large_tool_output(
+        self,
+        state: Any,
+        call_id: UUID,
+        output: dict[str, Any],
+        summary: str,
+    ) -> tuple[dict[str, Any], list[UUID]]:
+        """超出上下文预算的工具输出写入 Artifact，检查点仅保留可追溯引用。"""
+
+        serialized = json.dumps(output, ensure_ascii=False, sort_keys=True, default=str)
+        if len(serialized) <= 8_000:
+            return output, []
+        run = self.engine.repository.get_run(state.run_id)
+        if not run:
+            return output, []
+        content = serialized.encode("utf-8")
+        storage_ref = f"{run.thread_id}/tool-output-{run.id}-{call_id}.json"
+        destination = self.engine.artifact_root / storage_ref
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+        artifact = self.engine.repository.save_artifact(
+            Artifact(
+                thread_id=run.thread_id,
+                run_id=run.id,
+                filename=f"tool-output-{call_id}.json",
+                kind="tool_output",
+                sha256=hashlib.sha256(content).hexdigest(),
+                size=len(content),
+                mime_type="application/json",
+                storage_ref=storage_ref,
+            )
+        )
+        self.engine.events.emit(
+            state.run_id,
+            EventType.ARTIFACT_CREATED,
+            "工具长输出已归档为 Artifact",
+            {"artifact_id": str(artifact.id), "call_id": str(call_id), "size": artifact.size},
+        )
+        return (
+            {
+                "artifact_id": str(artifact.id),
+                "summary": summary,
+                "original_chars": len(serialized),
+                "content_in_artifact": True,
+            },
+            [artifact.id],
+        )
 
     async def ingest(self, raw: GraphState) -> GraphState:
         engine = self.engine
@@ -248,6 +299,14 @@ class WorkflowNodes:
         )
         if not result.success:
             state.tool_failures += 1
+        output, generated_artifact_ids = self._archive_large_tool_output(
+            state,
+            call_id,
+            result.output,
+            result.summary,
+        )
+        artifact_ids = [UUID(value) for value in result.artifact_ids]
+        artifact_ids.extend(generated_artifact_ids)
         engine.repository.save_tool_call(
             ToolCall(
                 id=call_id,
@@ -258,14 +317,14 @@ class WorkflowNodes:
                 duration_ms=result.duration_ms,
                 status=CallStatus.SUCCEEDED if result.success else CallStatus.FAILED,
                 error=result.error.message if result.error else None,
-                artifact_ids=[UUID(value) for value in result.artifact_ids],
+                artifact_ids=artifact_ids,
             )
         )
         observation = Observation(
             call_id=call_id,
             tool_name=state.action.tool_name,
             success=result.success,
-            output=result.output,
+            output=output,
             summary=result.summary,
             error=result.error.message if result.error else None,
         )
@@ -286,6 +345,7 @@ class WorkflowNodes:
                 "success": result.success,
                 "duration_ms": result.duration_ms,
                 "error": result.error.model_dump() if result.error else None,
+                "artifact_ids": [str(value) for value in artifact_ids],
             },
         )
         return engine._result("execute_tool", state)
