@@ -41,6 +41,10 @@ class RunStatus(StrEnum):
     STOPPED = "stopped"
 
 
+ValidationStatus = Literal["pending", "unverified", "partial", "validated", "failed"]
+EvidenceLevel = Literal["none", "model", "structured", "external"]
+
+
 ACTIVE_RUN_STATUSES = {
     RunStatus.QUEUED,
     RunStatus.RUNNING,
@@ -145,8 +149,9 @@ class Run(DomainModel):
     stop_request_id: UUID | None = None
     error: str | None = None
     completion_mode: str = "evidence"
-    validation_status: Literal["pending", "unverified", "validated", "failed"] = "pending"
-    evidence_level: Literal["none", "model", "structured", "external"] = "none"
+    # status 描述执行生命周期；验证结论与证据强度必须独立展示，不能由完成状态推断。
+    validation_status: ValidationStatus = "pending"
+    evidence_level: EvidenceLevel = "none"
     created_at: datetime = Field(default_factory=utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -291,7 +296,7 @@ class RunCheckpoint(DomainModel):
     run_id: UUID
     checkpoint_sequence: int = Field(ge=1)
     node: str
-    state_schema_version: str = "2.0"
+    state_schema_version: str = "3.0"
     state: dict[str, Any]
     elapsed_seconds: float = Field(ge=0)
     created_at: datetime = Field(default_factory=utcnow)

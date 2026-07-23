@@ -11,6 +11,11 @@ import type {
   ThreadDetail,
 } from "../types";
 import { ResultCard, RunProgress } from "./RunSummary";
+import {
+  evidenceLevelLabel,
+  executionStatusLabel,
+  validationStatusLabel,
+} from "./run-presentation";
 import TaskPlanControl from "./TaskPlanControl";
 import RunControlPanel from "./RunControlPanel";
 
@@ -255,8 +260,9 @@ export function InspectorPanel(props: InspectorProps) {
           </p>
           <p>Provider：{props.audit.run.provider}</p>
           <p>
-            验证：{props.audit.run.validation_status} · 证据：
-            {props.audit.run.evidence_level}
+            执行：{executionStatusLabel(props.audit.run.execution_status ?? "unknown")} · 验证：
+            {validationStatusLabel(props.audit.run.validation_status)} · 证据：
+            {evidenceLevelLabel(props.audit.run.evidence_level)}
           </p>
           <dl>
             <dt>步骤</dt>

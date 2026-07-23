@@ -43,7 +43,7 @@ export interface Run {
   agent_profile_version: number | null;
   plan_mode: PlanMode;
   completion_mode: CompletionMode;
-  validation_status: "pending" | "unverified" | "validated" | "failed";
+  validation_status: "pending" | "unverified" | "partial" | "validated" | "failed";
   evidence_level: "none" | "model" | "structured" | "external";
   attempt: number;
   stop_requested: boolean;
@@ -318,6 +318,7 @@ export interface MemoryRecord {
 }
 export interface RunAudit {
   run: {
+    execution_status?: string;
     provider: string;
     agent_profile_id: string | null;
     agent_profile_version: number | null;

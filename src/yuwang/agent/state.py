@@ -9,10 +9,17 @@ from __future__ import annotations
 from typing import Any, TypedDict
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yuwang.control import TaskBrief
-from yuwang.domain.models import AgentAction, AgentPlan, Observation, TaskSpec
+from yuwang.domain.models import (
+    AgentAction,
+    AgentPlan,
+    EvidenceLevel,
+    Observation,
+    TaskSpec,
+    ValidationStatus,
+)
 
 
 class BudgetExceeded(RuntimeError):
@@ -54,10 +61,12 @@ class AgentStateModel(BaseModel):
     context_anchor: str | None = None
     no_progress_count: int = 0
     replan_count: int = 0
-    verified: bool = False
+    # 只控制图是否可以进入收尾，绝不表示验证已通过。旧检查点中的 verified
+    # 在 model_validator 中迁移到这里，避免恢复后混淆执行与验证语义。
+    completion_ready: bool = False
     verification_summary: str = "尚未验证"
-    validation_status: str = "pending"
-    evidence_level: str = "none"
+    validation_status: ValidationStatus = "pending"
+    evidence_level: EvidenceLevel = "none"
     supplemental_inputs: list[str] = Field(default_factory=list)
     supplemental_artifact_ids: list[UUID] = Field(default_factory=list)
     guidance_replan_required: bool = False
@@ -71,6 +80,19 @@ class AgentStateModel(BaseModel):
     structured_output: dict[str, Any] | None = None
     tool_schemas: list[dict[str, Any]] = Field(default_factory=list)
     remaining_budget: dict[str, float | int] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_verified(cls, value: Any) -> Any:
+        """读取旧检查点时仅迁移流程标记，不把它解释为验证结果。"""
+
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        legacy_verified = data.pop("verified", None)
+        if "completion_ready" not in data and legacy_verified is not None:
+            data["completion_ready"] = bool(legacy_verified)
+        return data
 
 
 class GraphState(TypedDict, total=False):
@@ -95,7 +117,7 @@ class GraphState(TypedDict, total=False):
     context_anchor: str | None
     no_progress_count: int
     replan_count: int
-    verified: bool
+    completion_ready: bool
     verification_summary: str
     validation_status: str
     evidence_level: str

@@ -222,8 +222,8 @@ async def test_provider_failure_is_safe_and_reported(tmp_path):
                     },
                 },
             ),
-            # Schema 仅校验结构，不能作为外部成功证据。
-            "unverified",
+            # Schema 校验是部分验证，不能作为外部成功证据。
+            "partial",
             "structured",
         ),
     ],
@@ -243,6 +243,80 @@ async def test_pure_model_completion_modes_keep_trust_distinct(
     assert report and report[1]["evidence_level"] == expected_level
     if scenario == "advisory":
         assert "未经外部验证" in report[0]
+
+
+@pytest.mark.asyncio
+async def test_completed_run_without_verifier_is_explicitly_unverified(tmp_path):
+    repository, engine = build_engine(tmp_path)
+    thread = repository.save_thread(Thread(title="no verifier"))
+    run = repository.save_run(Run(thread_id=thread.id))
+
+    await engine.run(run.id, TaskSpec(body="生成可审阅建议"))
+
+    finished = repository.get_run(run.id)
+    report = repository.get_report(run.id)
+    assert finished and finished.status == RunStatus.COMPLETED
+    assert finished.validation_status == "unverified"
+    assert report and report[1]["trust_notice"] == "结果未经外部验证"
+    assert "验证通过" not in report[0]
+    completed = next(
+        event for event in repository.list_events(run.id) if event.type == EventType.RUN_COMPLETED
+    )
+    assert completed.payload["execution_status"] == "completed"
+    assert completed.payload["validation_status"] == "unverified"
+
+
+@pytest.mark.asyncio
+async def test_failed_deterministic_validation_is_not_reported_as_pending(tmp_path):
+    repository, engine = build_engine(tmp_path)
+    thread = repository.save_thread(Thread(title="failed validation"))
+    run = repository.save_run(Run(thread_id=thread.id))
+
+    await engine.run(
+        run.id,
+        TaskSpec(body="生成需要验证的结果", verification_rules=[{"kind": "regex", "value": "never"}]),
+    )
+
+    finished = repository.get_run(run.id)
+    report = repository.get_report(run.id)
+    assert finished and finished.status == RunStatus.FAILED
+    assert finished.validation_status == "failed"
+    assert finished.evidence_level == "external"
+    assert report and report[1]["trust_notice"] == "验证失败，结果不能视为已验证成功"
+    failed = next(
+        event for event in repository.list_events(run.id) if event.type == EventType.RUN_FAILED
+    )
+    assert failed.payload["execution_status"] == "failed"
+    assert failed.payload["validation_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_structured_completion_is_partial_validation(tmp_path):
+    profile = profile_for(
+        completion_mode="structured",
+        validation_policy={
+            "require_external_evidence": False,
+            "json_schema": {
+                "type": "object",
+                "required": ["title", "priority"],
+                "properties": {
+                    "title": {"type": "string"},
+                    "priority": {"type": "integer"},
+                },
+            },
+        },
+    )
+    repository, engine = build_engine(tmp_path, "structured", profile)
+    thread = repository.save_thread(Thread(title="structured validation"))
+    run = repository.save_run(Run(thread_id=thread.id))
+
+    await engine.run(run.id, TaskSpec(body="生成结构化结果"))
+
+    finished = repository.get_run(run.id)
+    report = repository.get_report(run.id)
+    assert finished and finished.status == RunStatus.COMPLETED
+    assert finished.validation_status == "partial"
+    assert report and report[1]["trust_notice"] == "已完成部分校验，尚未完成外部验证"
 
 
 @pytest.mark.asyncio

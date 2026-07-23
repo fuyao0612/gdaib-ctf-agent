@@ -314,6 +314,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
         budget = task_spec.budget if task_spec else None
         return {
             "run": {
+                "execution_status": run.status,
                 "provider": run.provider,
                 "agent_profile_id": str(run.agent_profile_id) if run.agent_profile_id else None,
                 "agent_profile_version": run.agent_profile_version,

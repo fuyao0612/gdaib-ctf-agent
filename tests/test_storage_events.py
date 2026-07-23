@@ -89,5 +89,5 @@ def test_checkpoints_are_append_only_versioned_state(tmp_path):
     checkpoints = repository.list_checkpoints(run_id)
     assert [item.checkpoint_sequence for item in checkpoints] == [1, 2]
     assert [item.state["value"] for item in checkpoints] == [1, 2]
-    assert checkpoints[-1].state_schema_version == "2.0"
+    assert checkpoints[-1].state_schema_version == "3.0"
     assert repository.latest_checkpoint(run_id) == checkpoints[-1]

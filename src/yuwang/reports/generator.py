@@ -8,6 +8,30 @@ from yuwang.domain.models import Event, Run, TaskSpec
 from yuwang.policy import redact
 
 
+def trust_notice(validation_status: str) -> str:
+    """把验证结论翻译为用户可见的可信度说明。"""
+
+    return {
+        "pending": "验证尚未完成，不能视为验证通过",
+        "unverified": "结果未经外部验证",
+        "partial": "已完成部分校验，尚未完成外部验证",
+        "validated": "结果已通过确定性外部验证",
+        "failed": "验证失败，结果不能视为已验证成功",
+    }.get(validation_status, "验证状态未知，不能视为验证通过")
+
+
+def completion_summary(validation_status: str) -> str:
+    """运行完成仅说明执行结束；验证结论由 validation_status 单独决定。"""
+
+    return {
+        "pending": "执行已结束，但验证状态尚未确认",
+        "unverified": "执行已结束，结果未经过外部验证",
+        "partial": "执行已结束，已完成部分校验但未完成外部验证",
+        "validated": "执行已结束，结果已通过确定性外部验证",
+        "failed": "执行已结束，但验证失败",
+    }.get(validation_status, "执行已结束，验证状态未知")
+
+
 class ReportGenerator:
     """把运行、事件和计量快照渲染成可下载的 Markdown/JSON 报告。"""
 
@@ -29,23 +53,24 @@ class ReportGenerator:
         policy = [event.summary for event in events if str(event.type) == "policy_checked"]
         plan_data = metrics.get("plan") or {}
         plan_steps = plan_data.get("steps", []) if isinstance(plan_data, dict) else []
+        validation_status = str(metrics.get("validation_status", run.validation_status))
+        evidence_level = str(metrics.get("evidence_level", run.evidence_level))
         data = {
             "schema_version": "1.0",
             "run_id": str(run.id),
             "task_summary": redact(task.body[:500]),
+            "execution_status": str(run.status),
+            # status 是早期报告字段；保留它以便旧客户端下载，同时用 execution_status
+            # 明确说明这只描述生命周期，绝不代表验证通过。
             "mode": str(task.mode),
             "status": str(run.status),
             "completion_mode": metrics.get("completion_mode", run.completion_mode),
-            "validation_status": metrics.get("validation_status", run.validation_status),
-            "evidence_level": metrics.get("evidence_level", run.evidence_level),
-            "trust_notice": (
-                "模型生成，未经外部验证"
-                if metrics.get("validation_status") == "unverified"
-                else "结果已按配置验证"
-            ),
+            "validation_status": validation_status,
+            "evidence_level": evidence_level,
+            "trust_notice": trust_notice(validation_status),
             "final_answer": metrics.get("final_answer"),
             "structured_output": metrics.get("structured_output"),
-            "result": metrics.get("verification", "成功条件已验证")
+            "result": metrics.get("verification") or completion_summary(validation_status)
             if str(run.status) == "completed"
             else (run.error or "运行未完成"),
             "plan": plan_steps,
@@ -70,6 +95,7 @@ class ReportGenerator:
                 f"- 运行：`{run.id}`",
                 f"- 模式：`{task.mode}`",
                 f"- 状态：**{run.status}**",
+                f"- 执行状态：`{data['execution_status']}`",
                 f"- 完成模式：`{data['completion_mode']}`",
                 f"- 验证状态：`{data['validation_status']}`",
                 f"- 证据等级：`{data['evidence_level']}`",

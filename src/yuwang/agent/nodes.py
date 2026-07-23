@@ -25,10 +25,12 @@ from yuwang.domain.models import (
     AgentPlan,
     CallStatus,
     EventType,
+    EvidenceLevel,
     EvidenceRecord,
     Observation,
     RunStatus,
     ToolCall,
+    ValidationStatus,
 )
 
 if TYPE_CHECKING:
@@ -356,22 +358,67 @@ class WorkflowNodes:
             return "plan"
         return "plan" if self.should_plan() else "select_action"
 
+    def _record_validation(
+        self,
+        state: Any,
+        *,
+        validation_status: ValidationStatus,
+        evidence_level: EvidenceLevel,
+        summary: str,
+        completion_ready: bool,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """同步验证结论，避免 Run、事件和检查点表达不同的可信度。"""
+
+        engine = self.engine
+        state.validation_status = validation_status
+        state.evidence_level = evidence_level
+        state.verification_summary = summary
+        state.completion_ready = completion_ready
+        run = engine.repository.get_run(state.run_id)
+        if run:
+            run.validation_status = validation_status
+            run.evidence_level = evidence_level
+            engine.repository.save_run(run)
+        engine.events.emit(
+            state.run_id,
+            EventType.STATUS_UPDATE,
+            summary,
+            {
+                "execution_status": str(run.status) if run else RunStatus.RUNNING.value,
+                "validation_status": validation_status,
+                "evidence_level": evidence_level,
+                "completion_ready": completion_ready,
+                **(details or {}),
+            },
+        )
+
+    @staticmethod
+    def _candidate_evidence_level(state: Any, candidate: Any) -> EvidenceLevel:
+        """候选值只有关联到成功工具调用时才算外部证据。"""
+
+        if candidate is None:
+            return "none"
+        if any(
+            item.call_id == candidate.source_call_id and item.success
+            for item in state.observations
+        ):
+            return "external"
+        return "model"
+
     async def verify(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
         if engine.profile.completion_mode == "advisory":
             if not state.action or not state.action.answer:
                 raise AgentDeclaredFailure("建议回答模式缺少模型答案")
-            state.verified = True
-            state.validation_status = "unverified"
-            state.evidence_level = "model"
             state.final_answer = state.action.answer
-            state.verification_summary = "模型生成，未经外部验证"
-            engine.events.emit(
-                state.run_id,
-                EventType.STATUS_UPDATE,
-                state.verification_summary,
-                {"verified": False, "evidence_level": "model"},
+            self._record_validation(
+                state,
+                validation_status="unverified",
+                evidence_level="model",
+                summary="模型生成，未执行外部验证",
+                completion_ready=True,
             )
             return engine._result("verify", state)
         if engine.profile.completion_mode == "structured":
@@ -383,20 +430,23 @@ class WorkflowNodes:
             try:
                 validate_json_schema(instance=state.action.structured_output, schema=schema)
             except JsonSchemaValidationError as exc:
-                state.verification_summary = f"结构化输出校验失败：{exc.message[:200]}"
+                self._record_validation(
+                    state,
+                    validation_status="failed",
+                    evidence_level="model",
+                    summary=f"结构化输出校验失败：{exc.message[:200]}",
+                    completion_ready=False,
+                )
                 return engine._result("verify", state)
-            state.verified = True
             # JSON Schema 只能证明模型输出的形状符合约束，不能证明任务结论
-            # 已被外部系统验证。运行仍可完成，但界面必须保持“未外部验证”。
-            state.validation_status = "unverified"
-            state.evidence_level = "structured"
+            # 已被外部系统验证。运行仍可完成，但界面必须保持“部分验证”。
             state.structured_output = state.action.structured_output
-            state.verification_summary = "结构化输出已通过 JSON Schema 校验，未外部验证"
-            engine.events.emit(
-                state.run_id,
-                EventType.STATUS_UPDATE,
-                state.verification_summary,
-                {"verified": False, "evidence_level": "structured"},
+            self._record_validation(
+                state,
+                validation_status="partial",
+                evidence_level="structured",
+                summary="结构化输出已通过 JSON Schema 校验，未完成外部验证",
+                completion_ready=True,
             )
             return engine._result("verify", state)
         candidate = state.action.candidate if state.action else None
@@ -404,25 +454,22 @@ class WorkflowNodes:
             # 任务可以给出可用结论，但没有确定性外部条件时绝不声称“已验证成功”。
             if not state.action or not (state.action.answer or candidate):
                 raise AgentDeclaredFailure("未配置验证条件且模型未提供可展示结论")
-            state.verified = True
-            state.validation_status = "unverified"
-            state.evidence_level = "none"
             # 候选值交给收尾层按“候选、来源、验证等级”统一呈现；不能只把
             # 一个 Flag 样式字符串当作最终已确认答案输出。
             state.final_answer = state.action.answer
-            state.verification_summary = "未配置确定性外部验证条件，结果未外部验证"
-            engine.events.emit(
-                state.run_id,
-                EventType.STATUS_UPDATE,
-                state.verification_summary,
-                {"verified": False, "evidence_level": "none"},
+            self._record_validation(
+                state,
+                validation_status="unverified",
+                evidence_level=(
+                    self._candidate_evidence_level(state, candidate)
+                    if candidate
+                    else "model"
+                ),
+                summary="未配置确定性外部验证条件，结果未外部验证",
+                completion_ready=True,
             )
             return engine._result("verify", state)
         result = engine.verifier.verify(state.task, candidate, state.observations)
-        state.verified = result.verified
-        state.validation_status = "validated" if result.verified else "pending"
-        state.evidence_level = "external" if result.verified else "none"
-        state.verification_summary = result.summary
         if candidate:
             engine.repository.save_evidence(
                 EvidenceRecord(
@@ -435,12 +482,17 @@ class WorkflowNodes:
                     rule_kind=result.rule_kind,
                 )
             )
-        engine.events.emit(
-            state.run_id,
-            EventType.STATUS_UPDATE,
-            result.summary,
-            {
-                "verified": result.verified,
+        self._record_validation(
+            state,
+            validation_status="validated" if result.verified else "failed",
+            evidence_level=(
+                "external"
+                if result.verified
+                else self._candidate_evidence_level(state, candidate)
+            ),
+            summary=result.summary,
+            completion_ready=result.verified,
+            details={
                 "evidence_call_id": result.evidence_call_id,
                 "rule_kind": result.rule_kind,
             },
@@ -450,9 +502,25 @@ class WorkflowNodes:
     async def complete(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
-        if not state.verified:
+        if not state.completion_ready:
             raise AgentDeclaredFailure("未通过确定性成功验证")
-        engine.events.emit(state.run_id, EventType.STATUS_UPDATE, "验证通过，正在生成报告")
+        summary = {
+            "validated": "外部验证通过，正在生成报告",
+            "partial": "结构化校验已完成，外部验证尚未完成，正在生成报告",
+            "unverified": "未执行外部验证，正在生成报告",
+        }.get(state.validation_status, "正在生成报告")
+        run = engine.repository.get_run(state.run_id)
+        engine.events.emit(
+            state.run_id,
+            EventType.STATUS_UPDATE,
+            summary,
+            {
+                "execution_status": str(run.status) if run else RunStatus.RUNNING.value,
+                "validation_status": state.validation_status,
+                "evidence_level": state.evidence_level,
+                "completion_ready": True,
+            },
+        )
         return engine._result("complete", state)
 
     async def request_input(self, raw: GraphState) -> GraphState:
@@ -521,7 +589,7 @@ class WorkflowNodes:
         state = engine._state(raw)
         if state.guidance_replan_required:
             return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
-        if state.verified:
+        if state.completion_ready:
             return "complete"
         return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
 
