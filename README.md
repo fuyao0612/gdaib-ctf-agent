@@ -328,8 +328,9 @@ python examples/local_api.py
 .\scripts\check.ps1
 ```
 
-测试分层、真实 Provider 冒烟和单独命令见 [测试文档](docs/testing.md)。生产源码和
-镜像不得包含 `tests/` 中的协议服务或测试替身。
+测试分层、四类真实 Provider 兼容性矩阵和单独命令见 [测试文档](docs/testing.md)。没有配置
+隔离测试密钥时，真实验收会明确显示“跳过”，不能将其当作厂商兼容性通过。生产源码和镜像不得
+包含 `tests/` 中的协议服务或测试替身。
 
 ## 数据、安全与部署
 
