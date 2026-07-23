@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import re
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
@@ -31,8 +32,10 @@ class PolicyDecision(BaseModel):
 
 SECRET_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|token|password|secret)\s*[:=]\s*([^\s,;]+)"),
+    re.compile(r"(?i)(authorization)\s*:\s*bearer\s+([^\s,;]+)"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
 ]
+SENSITIVE_FIELD_NAMES = {"api_key", "token", "password", "secret", "authorization"}
 
 
 def redact(value: str) -> str:
@@ -43,6 +46,25 @@ def redact(value: str) -> str:
         else:
             result = pattern.sub("[REDACTED]", result)
     return result
+
+
+def redact_data(value: Any) -> Any:
+    """递归脱敏事件、报告等公开结构，保留字段形状而不保留密钥。"""
+
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]"
+            if key.casefold() in SENSITIVE_FIELD_NAMES
+            else redact_data(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_data(item) for item in value)
+    return value
 
 
 class PolicyEngine:

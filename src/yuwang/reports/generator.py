@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from yuwang.domain.models import Event, Run, TaskSpec
-from yuwang.policy import redact
+from yuwang.policy import redact, redact_data
 
 
 def trust_notice(validation_status: str) -> str:
@@ -88,6 +88,9 @@ class ReportGenerator:
             "errors": [run.error] if run.error else [],
             "policy_checks": policy,
         }
+        sanitized_data = redact_data(data)
+        assert isinstance(sanitized_data, dict)
+        data = sanitized_data
         markdown = "\n".join(
             [
                 "# 御网智元运行报告",

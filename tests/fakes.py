@@ -58,15 +58,28 @@ class FakeModelProvider:
             )
         if output_type is TaskBriefDraft:
             context = json.loads(prompt)
+            # 某些 Provider 链路测试直接构造最小 Prompt；测试桩兼容该输入，
+            # 生产 ContextBuilder 仍只输出分层后的上下文。
+            user_input = context.get("untrusted_user_input", {})
+            supplemental = user_input.get(
+                "supplemental_inputs", context.get("supplemental_inputs", [])
+            )
+            execution_constraints = context.get("trusted_execution_constraints", {})
             needs_clarification = (
-                self.scenario == "clarification" and not context.get("supplemental_inputs")
+                self.scenario == "clarification" and not supplemental
             )
             return output_type.model_validate(
                 {
                     "goal": "完成用户提交的安全任务",
-                    "authorized_scope": context.get("authorized_targets", []),
-                    "constraints": context.get("constraints", []),
-                    "success_criteria": context.get("success_conditions", []),
+                    "authorized_scope": execution_constraints.get(
+                        "authorized_targets", context.get("authorized_targets", [])
+                    ),
+                    "constraints": execution_constraints.get(
+                        "constraints", context.get("constraints", [])
+                    ),
+                    "success_criteria": execution_constraints.get(
+                        "success_conditions", context.get("success_conditions", [])
+                    ),
                     "expected_output": "可审核结果",
                     "known_information": ["已保存原始任务"],
                     "assumptions": [],
@@ -82,8 +95,14 @@ class FakeModelProvider:
                 {"facts": ["用户希望获得中文回答", "用户希望获得中文回答"]}
             )
         context = json.loads(prompt)
-        observations = context.get("observations_untrusted", context.get("observations", []))
-        supplemental = context.get("supplemental_inputs", [])
+        user_input = context.get("untrusted_user_input", {})
+        observations = context.get(
+            "untrusted_tool_content",
+            context.get("observations_untrusted", context.get("observations", [])),
+        )
+        supplemental = user_input.get(
+            "supplemental_inputs", context.get("supplemental_inputs", [])
+        )
         if self.scenario == "request_input" and not supplemental:
             return output_type.model_validate(
                 AgentAction(kind="request_input", summary="请补充目标受众").model_dump()

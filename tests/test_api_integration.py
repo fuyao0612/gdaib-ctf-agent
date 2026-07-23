@@ -61,7 +61,11 @@ def provider_server():
                 response_content = '{"status":"ok"}'
             else:
                 context = json.loads(prompt)
-                if "slow-control" in context.get("untrusted_task", ""):
+                user_input = context.get("untrusted_user_input", {})
+                trusted_constraints = context.get("trusted_execution_constraints", {})
+                task = str(user_input.get("task", ""))
+                supplemental_inputs = user_input.get("supplemental_inputs", [])
+                if "slow-control" in task:
                     time.sleep(0.12)
                 if "user_message_untrusted" in context and "allowed_kinds" in context:
                     message = context["user_message_untrusted"]
@@ -82,15 +86,14 @@ def provider_server():
                         response_content = json.dumps({"kind": "run", "clarification_question": None})
                 elif "生成公开 Task Brief" in context["purpose"]:
                     needs_clarification = (
-                        "需要澄清任务" in context["untrusted_task"]
-                        and not context.get("supplemental_inputs")
+                        "需要澄清任务" in task and not supplemental_inputs
                     )
                     response_content = json.dumps(
                         {
                             "goal": "完成协议集成任务",
-                            "authorized_scope": context.get("authorized_targets", []),
-                            "constraints": context.get("constraints", []),
-                            "success_criteria": context.get("success_conditions", []),
+                            "authorized_scope": trusted_constraints.get("authorized_targets", []),
+                            "constraints": trusted_constraints.get("constraints", []),
+                            "success_criteria": trusted_constraints.get("success_conditions", []),
                             "expected_output": "可审核结果",
                             "known_information": ["原始要求已保存"],
                             "assumptions": [],
@@ -110,9 +113,9 @@ def provider_server():
                         }
                     )
                 else:
-                    observations = context.get("observations_untrusted", context.get("observations", []))
-                    if "需要补充" in context["untrusted_task"]:
-                        if not context.get("supplemental_inputs"):
+                    observations = context.get("untrusted_tool_content", [])
+                    if "需要补充" in task:
+                        if not supplemental_inputs:
                             action = {
                                 "kind": "request_input",
                                 "summary": "请补充目标受众",

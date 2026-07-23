@@ -217,32 +217,45 @@ class DefaultContextBuilder:
             latest_user_instruction,
         )
         context: dict[str, Any] = {
-            "security_layer": SECURITY_PROMPT,
-            "platform_layer": PLATFORM_PROMPT,
+            "system_policy_layer": {
+                "security": SECURITY_PROMPT,
+                "platform": PLATFORM_PROMPT,
+                "immutable": True,
+            },
             "purpose": purpose,
-            "untrusted_task": state.task.body,
-            "scenario": state.task.scenario,
-            # 最新用户补充独立于滚动摘要，避免较早摘要覆盖纠偏后的约束。
-            "latest_user_instruction_untrusted": latest_user_instruction,
-            "task_context": task_context,
-            "conversation": [item.model_dump(mode="json") for item in selected_messages],
-            "supplemental_inputs": state.supplemental_inputs,
-            "memory": [item.model_dump(mode="json") for item in memories],
-            "attachments_untrusted": attachment_context,
-            "authorized_targets": state.task.authorized_targets,
-            "constraints": state.task.constraints,
-            "success_conditions": state.task.success_conditions,
-            "verification_rules": [
-                rule.model_dump(mode="json") for rule in state.task.verification_rules
+            "untrusted_user_input": {
+                "task": state.task.body,
+                "scenario": state.task.scenario,
+                # 最新用户补充独立于滚动摘要，避免较早摘要覆盖纠偏后的约束。
+                "latest_instruction": latest_user_instruction,
+                "supplemental_inputs": state.supplemental_inputs,
+            },
+            # 包含用户和模型回复，二者都不能提升为系统指令或授权事实。
+            "untrusted_conversation": [
+                item.model_dump(mode="json") for item in selected_messages
             ],
-            "tools": state.tool_schemas,
-            "current_plan": state.plan.model_dump(mode="json") if state.plan else None,
-            "task_brief": (
-                state.task_brief.model_dump(mode="json") if state.task_brief else None
-            ),
-            "observations_untrusted": observations,
+            "untrusted_model_content": {
+                "task_context": task_context,
+                "memory": [item.model_dump(mode="json") for item in memories],
+                "current_plan": state.plan.model_dump(mode="json") if state.plan else None,
+                "task_brief": (
+                    state.task_brief.model_dump(mode="json") if state.task_brief else None
+                ),
+            },
+            "untrusted_attachment_content": attachment_context,
+            "untrusted_tool_content": observations,
+            "trusted_execution_constraints": {
+                "authorized_targets": state.task.authorized_targets,
+                "constraints": state.task.constraints,
+                "success_conditions": state.task.success_conditions,
+                "verification_rules": [
+                    rule.model_dump(mode="json") for rule in state.task.verification_rules
+                ],
+                "tools": state.tool_schemas,
+                "validation_policy": profile.validation_policy.model_dump(mode="json"),
+                "completion_mode": profile.completion_mode,
+            },
             "completion_mode": profile.completion_mode,
-            "validation_policy": profile.validation_policy.model_dump(mode="json"),
             "remaining_budget": state.remaining_budget,
         }
         context["user_instruction"] = SafeTemplateRenderer.render(
@@ -253,7 +266,7 @@ class DefaultContextBuilder:
                 "thread_summary": "\n".join(
                     item.content for item in memories if item.kind == "thread_summary"
                 ),
-                "current_plan": context["current_plan"] or "",
+                "current_plan": context["untrusted_model_content"]["current_plan"] or "",
                 "observations": observations,
                 "remaining_budget": state.remaining_budget,
             },
@@ -261,9 +274,11 @@ class DefaultContextBuilder:
         prompt = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
         token_limit = self.repository.get_agent_defaults().context_token_budget
         if len(prompt) // 4 > token_limit:
-            context["conversation"] = context["conversation"][-3:]
-            context["memory"] = context["memory"][-10:]
-            context["attachments_untrusted"] = [
+            context["untrusted_conversation"] = context["untrusted_conversation"][-3:]
+            context["untrusted_model_content"]["memory"] = context["untrusted_model_content"][
+                "memory"
+            ][-10:]
+            context["untrusted_attachment_content"] = [
                 {
                     key: value
                     for key, value in item.items()
