@@ -6,10 +6,12 @@ import asyncio
 import socket
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from cryptography.fernet import Fernet
 
+from yuwang.domain.models import Run, TaskSpec, ToolSnapshot
 from yuwang.settings import SecretCipher
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolExecutor, ToolRegistry
@@ -131,3 +133,52 @@ def test_mcp_config_model_requires_separated_transport_fields() -> None:
         McpServerConfig(name="bad", transport="stdio")
     with pytest.raises(ValueError, match="必须提供 url"):
         McpServerConfig(name="bad", transport="streamable_http")
+
+
+def test_mcp_deletion_impact_blocks_active_snapshot_reference(tmp_path) -> None:
+    repository = SQLiteRepository(tmp_path / "mcp.db")
+    service = McpService(
+        repository,
+        SecretCipher(Fernet.generate_key().decode()),
+        McpClient(allowed_commands=set(), allow_insecure_local=True),
+    )
+    created = service.create(
+        McpServerInput(
+            name="待检查 MCP",
+            transport="streamable_http",
+            url="http://127.0.0.1:9876/mcp",
+        )
+    )
+
+    snapshot = ToolSnapshot(
+        tool_id=f"mcp.{created.id}.echo",
+        namespace=f"mcp.{created.id}",
+        name="echo",
+        display_name="echo",
+        version="1.0.0",
+        source_type="mcp",
+        source=f"mcp:{created.id}",
+        description="测试 MCP 工具",
+        capabilities=["mcp"],
+        scenarios=["mcp"],
+        risk="medium",
+        permissions=["mcp:call"],
+        requires_network=False,
+        allowed_target_types=[],
+        timeout_seconds=30,
+        error_codes=[],
+        idempotent=False,
+        artifact_types=[],
+        input_schema={"type": "object", "additionalProperties": False},
+        output_schema={"type": "object", "additionalProperties": False},
+    )
+    run = repository.save_run(Run(thread_id=uuid4()))
+    repository.save_run_task(run.id, TaskSpec(body="检查 MCP 引用", tool_snapshots=[snapshot]))
+
+    impact = service.deletion_impact(created.id)
+
+    assert impact.active_run_count == 1
+    assert impact.historical_snapshot_count == 1
+    assert impact.blocking_reasons
+    with pytest.raises(ValueError, match="运行中的任务"):
+        service.delete(created.id, ToolRegistry())

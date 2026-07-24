@@ -10,7 +10,7 @@ from yuwang.settings.security import SecretCipher
 
 from ..registry import ToolRegistry
 from .client import McpClient
-from .models import McpServerConfig, McpServerInput, McpServerView
+from .models import McpDeletionImpact, McpServerConfig, McpServerInput, McpServerView
 from .plugin import McpToolPlugin
 from .security import validate_http_config, validate_stdio_config
 
@@ -24,6 +24,7 @@ class McpRepository(Protocol):
     def get_mcp_server(self, server_id: UUID) -> McpServerConfig | None: ...
     def save_mcp_server(self, value: McpServerConfig) -> McpServerConfig: ...
     def delete_mcp_server(self, server_id: UUID) -> None: ...
+    def get_mcp_deletion_impact(self, server_id: UUID) -> tuple[int, int]: ...
 
 
 class McpService:
@@ -71,8 +72,27 @@ class McpService:
 
     def delete(self, server_id: UUID, registry: ToolRegistry) -> None:
         config = self.get(server_id)
+        impact = self.deletion_impact(server_id)
+        if impact.blocking_reasons:
+            raise ValueError("；".join(impact.blocking_reasons))
         registry.unregister_source(f"mcp:{config.id}")
         self.repository.delete_mcp_server(server_id)
+
+    def deletion_impact(self, server_id: UUID) -> McpDeletionImpact:
+        config = self.get(server_id)
+        active_runs, historical_snapshots = self.repository.get_mcp_deletion_impact(server_id)
+        reasons = (
+            [f"有 {active_runs} 个运行中的任务仍引用此 MCP 服务，需先停止或完成"]
+            if active_runs
+            else []
+        )
+        return McpDeletionImpact(
+            id=config.id,
+            name=config.name,
+            active_run_count=active_runs,
+            historical_snapshot_count=historical_snapshots,
+            blocking_reasons=reasons,
+        )
 
     async def refresh(self, server_id: UUID, registry: ToolRegistry) -> list[dict[str, object]]:
         config = self.get(server_id)

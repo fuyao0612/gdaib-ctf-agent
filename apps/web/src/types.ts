@@ -3,6 +3,67 @@ export type Mode = "normal" | "competition";
 export type InteractionMode = "chat" | "agent";
 export type PlanMode = "auto" | "approval";
 export type SettingsMode = "beginner" | "advanced";
+export type ToolSourceType = "builtin" | "python_plugin" | "mcp";
+export type ToolRisk = "low" | "medium" | "high";
+export type ToolHealthStatus = "healthy" | "degraded" | "unavailable" | "disabled";
+export interface ToolSpec {
+  id: string;
+  namespace: string;
+  name: string;
+  display_name: string;
+  version: string;
+  author: string;
+  source: string;
+  source_type: ToolSourceType;
+  description: string;
+  capabilities: string[];
+  scenarios: string[];
+  risk: ToolRisk;
+  permissions: string[];
+  requires_network: boolean;
+  allowed_target_types: string[];
+  timeout_seconds: number;
+  error_codes: string[];
+  idempotent: boolean;
+  artifact_types: string[];
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  config_schema: Record<string, unknown>;
+  supports_cancellation: boolean;
+  supports_progress: boolean;
+  enabled: boolean;
+  health: { status: ToolHealthStatus; checked_at: string; last_error: string | null };
+}
+export type McpTransport = "stdio" | "streamable_http";
+export interface McpServerInput {
+  name: string;
+  transport: McpTransport;
+  command: string | null;
+  args: string[];
+  url: string | null;
+  auth_token?: string | null;
+  enabled: boolean;
+  connect_timeout_seconds: number;
+  call_timeout_seconds: number;
+  allowed_tools: string[];
+  blocked_tools: string[];
+}
+export interface McpServerView extends Omit<McpServerInput, "auth_token"> {
+  id: string;
+  has_auth: boolean;
+  health_status: "healthy" | "degraded" | "unavailable" | "disabled" | "untested";
+  last_connected_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface McpDeletionImpact {
+  id: string;
+  name: string;
+  active_run_count: number;
+  historical_snapshot_count: number;
+  blocking_reasons: string[];
+}
 export type RunStatus =
   | "queued"
   | "running"

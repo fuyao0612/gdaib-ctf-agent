@@ -94,3 +94,19 @@ class McpServerView(BaseModel):
     last_error: str | None
     created_at: str
     updated_at: str
+
+
+class McpDeletionImpact(BaseModel):
+    """删除 MCP 服务前返回的只读影响摘要。
+
+    历史 Run 的工具快照本身不会被删除；仍在执行的 Run 则必须先结束，避免删除
+    服务配置后让已获批准的调用失去运行时依赖。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    name: str
+    active_run_count: int = Field(ge=0)
+    historical_snapshot_count: int = Field(ge=0)
+    blocking_reasons: list[str] = Field(default_factory=list)

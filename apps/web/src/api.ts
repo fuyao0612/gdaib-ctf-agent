@@ -23,6 +23,10 @@ import type {
   ThreadDetail,
   SkillDefinition,
   SkillInput,
+  McpDeletionImpact,
+  McpServerInput,
+  McpServerView,
+  ToolSpec,
 } from "./types";
 
 const API = "/api/v1";
@@ -63,6 +67,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   setupStatus: () => request<SetupStatus>("/setup/status"),
+  tools: () => request<ToolSpec[]>("/tools"),
   listThreads: () => request<Thread[]>("/threads"),
   listAgentProfiles: () => request<AgentProfileSummary[]>("/agent-profiles"),
   createThread: (title: string, skillIds: string[] = []) =>
@@ -246,6 +251,41 @@ export const api = {
   listSkills: () => request<SkillDefinition[]>("/skills"),
   adminSkills: (csrf: string) =>
     request<SkillDefinition[]>("/admin/settings/skills", {
+      headers: adminHeaders(csrf),
+    }),
+  mcpServers: (csrf: string) =>
+    request<McpServerView[]>("/admin/settings/mcp-servers", {
+      headers: adminHeaders(csrf),
+    }),
+  createMcpServer: (csrf: string, value: McpServerInput) =>
+    request<McpServerView>("/admin/settings/mcp-servers", {
+      method: "POST",
+      headers: adminHeaders(csrf),
+      body: JSON.stringify(value),
+    }),
+  updateMcpServer: (csrf: string, id: string, value: McpServerInput) =>
+    request<McpServerView>(`/admin/settings/mcp-servers/${id}`, {
+      method: "PUT",
+      headers: adminHeaders(csrf),
+      body: JSON.stringify(value),
+    }),
+  deleteMcpServer: (csrf: string, id: string) =>
+    request<void>(`/admin/settings/mcp-servers/${id}`, {
+      method: "DELETE",
+      headers: adminHeaders(csrf),
+    }),
+  mcpDeletionImpact: (csrf: string, id: string) =>
+    request<McpDeletionImpact>(
+      `/admin/settings/mcp-servers/${id}/deletion-impact`,
+      { headers: adminHeaders(csrf) },
+    ),
+  refreshMcpServer: (csrf: string, id: string) =>
+    request<{ tools: ToolSpec[] }>(`/admin/settings/mcp-servers/${id}/refresh`, {
+      method: "POST",
+      headers: adminHeaders(csrf),
+    }),
+  mcpStdioCommands: (csrf: string) =>
+    request<{ commands: string[] }>("/admin/settings/mcp-servers/stdio-commands", {
       headers: adminHeaders(csrf),
     }),
   createSkill: (csrf: string, value: SkillInput) =>

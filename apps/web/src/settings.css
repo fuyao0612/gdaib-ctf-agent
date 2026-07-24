@@ -281,6 +281,131 @@
   border-top: 1px solid var(--line);
 }
 
+.tool-extensions {
+  min-width: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.tool-list,
+.mcp-server-list {
+  display: grid;
+  gap: 8px;
+}
+
+.tool-row,
+.mcp-server-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tool-main,
+.mcp-server-row > div:first-child {
+  min-width: 0;
+}
+
+.tool-main strong,
+.tool-main small,
+.mcp-server-row strong,
+.mcp-server-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-main small,
+.mcp-server-row small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.tool-main p,
+.tool-error {
+  margin: 7px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tool-error {
+  color: #95444d;
+}
+
+.tool-flags,
+.mcp-server-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.tool-flags span {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: #f0f2f5;
+  color: #536170;
+  font-size: 9px;
+}
+
+.tool-flags .risk-low { background: #edf6f2; color: #477568; }
+.tool-flags .risk-medium { background: #fff5df; color: #8a661b; }
+.tool-flags .risk-high { background: #fbf0f1; color: #95444d; }
+.tool-flags .health-healthy { background: #edf6f2; color: #477568; }
+.tool-flags .health-disabled { background: #f0f2f5; color: #687381; }
+
+.tool-details {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.tool-details summary,
+.tool-details details > summary {
+  color: #596474;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.tool-details dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+  margin: 9px 0;
+  font-size: 11px;
+}
+
+.tool-details dt { color: var(--muted); }
+.tool-details dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.tool-details pre { max-height: 210px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-server-title { margin-top: 16px; }
+
+.mcp-server-row {
+  grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
+}
+
+.mcp-confirmation {
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  padding: 10px;
+  border: 1px solid #d6bf89;
+  border-radius: 7px;
+  background: #fffaf0;
+  font-size: 11px;
+}
+
+.mcp-confirmation h4,
+.mcp-confirmation p { margin: 0 0 8px; }
+.mcp-form { margin-top: 14px; }
+
 .skill-list {
   display: grid;
   gap: 5px;
@@ -450,7 +575,9 @@
 
   .form-grid,
   .workflow-nodes,
-  .provider-row {
+  .provider-row,
+  .tool-row,
+  .mcp-server-row {
     grid-template-columns: 1fr;
   }
 
@@ -461,6 +588,15 @@
   .settings-mode-switch {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .tool-flags,
+  .mcp-server-actions {
+    justify-content: flex-start;
+  }
+
+  .tool-details dl {
+    grid-template-columns: 1fr;
   }
 
   .setup-progress {

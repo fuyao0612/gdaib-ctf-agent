@@ -790,6 +790,28 @@ def test_health_readiness_and_setup_status_are_distinct(tmp_path, provider_serve
         assert client.get("/api/v1/readiness").json()["status"] == "ready"
 
 
+def test_mcp_admin_routes_expose_allowlist_and_deletion_impact(tmp_path):
+    from yuwang.tooling.mcp.models import McpServerConfig
+
+    app = configured_app(tmp_path)
+    server = McpServerConfig(
+        name="待删除 MCP",
+        transport="streamable_http",
+        url="https://mcp.example.test/mcp",
+    )
+    app.state.repository.save_mcp_server(server)
+    with TestClient(app) as client:
+        open_local_session(client)
+        commands = client.get("/api/v1/admin/settings/mcp-servers/stdio-commands")
+        assert commands.status_code == 200
+        assert isinstance(commands.json()["commands"], list)
+        impact = client.get(f"/api/v1/admin/settings/mcp-servers/{server.id}/deletion-impact")
+        assert impact.status_code == 200
+        assert impact.json()["active_run_count"] == 0
+        assert impact.json()["historical_snapshot_count"] == 0
+        assert client.delete(f"/api/v1/admin/settings/mcp-servers/{server.id}").status_code == 204
+
+
 def test_agent_profile_api_versions_preview_export_and_thread_snapshot(tmp_path):
     app = configured_app(tmp_path)
     headers: dict[str, str]
