@@ -84,6 +84,7 @@ class SettingsService:
             input_price_per_million=value.input_price_per_million,
             output_price_per_million=value.output_price_per_million,
             structured_mode=value.structured_mode,
+            tool_call_mode=value.tool_call_mode,
             fallback_on=value.fallback_on,
         )
         self.repository.save_provider_config(config, set_default=config.is_default)
@@ -213,22 +214,22 @@ class SettingsService:
             selected = next((value for value in providers if value.id == selected_id), None)
             if not selected:
                 raise ValueError("所选 Provider 不存在或未启用")
-            rest = [value for value in providers if value.id != selected_id]
-            if fallback_ids is not None:
-                positions = {value: index for index, value in enumerate(fallback_ids)}
-                rest = [value for value in rest if value.id in positions]
-                rest.sort(key=lambda value: positions[value.id])
-                return [selected, *rest]
-            return [selected, *sorted(rest, key=self._fallback_key)]
+            if not fallback_ids:
+                return [selected]
+            positions = {value: index for index, value in enumerate(fallback_ids)}
+            fallbacks = [
+                value
+                for value in providers
+                if value.id != selected_id and value.id in positions
+            ]
+            fallbacks.sort(key=lambda value: positions[value.id])
+            return [selected, *fallbacks]
         default = next((value for value in providers if value.is_default), None)
         if not default:
             raise ValueError("需要配置模型：请在设置中心启用并选择默认 Provider")
-        rest = [value for value in providers if value.id != default.id]
-        return [default, *sorted(rest, key=self._fallback_key)]
-
-    @staticmethod
-    def _fallback_key(value: ProviderConfig) -> tuple[int, str]:
-        return (value.fallback_order if value.fallback_order is not None else 999, value.name)
+        # 没有选中的 Profile Provider 时，不能把全局 fallback_order 推断成备用链。
+        # 只有 Agent Profile 显式传入 fallback_provider_ids 才能发起多 Provider 调用。
+        return [default]
 
     def get_agent_defaults(self) -> AgentDefaults:
         return self.repository.get_agent_defaults()

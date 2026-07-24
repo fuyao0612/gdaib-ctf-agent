@@ -87,7 +87,7 @@ def test_provider_crud_default_fallback_and_key_never_in_view_or_database_plaint
         )
     )
     chain = service.resolve_chain()
-    assert [item.id for item in chain] == [first.id, second.id]
+    assert [item.id for item in chain] == [first.id]
     with pytest.raises(ValueError, match="默认 Provider"):
         service.delete_provider(first.id)
 
@@ -117,8 +117,17 @@ def test_provider_fallback_requires_explicit_profile_chain_and_default_cannot_be
     second = service.create_provider(
         input_config(name="未配置备用", api_key="second-secret", is_default=False)
     )
+    third = service.create_provider(
+        input_config(name="第二备用", api_key="third-secret", is_default=False)
+    )
 
+    assert [item.id for item in service.resolve_chain(first.id)] == [first.id]
     assert [item.id for item in service.resolve_chain(first.id, [])] == [first.id]
+    assert [item.id for item in service.resolve_chain(first.id, [third.id, second.id])] == [
+        first.id,
+        third.id,
+        second.id,
+    ]
     with pytest.raises(ValueError, match="不能取消唯一默认"):
         service.update_provider(
             first.id,
@@ -131,6 +140,16 @@ def test_provider_fallback_requires_explicit_profile_chain_and_default_cannot_be
     )
     providers = service.list_providers()
     assert [item.id for item in providers if item.is_default] == [second.id]
+
+
+def test_creating_provider_preserves_explicit_tool_call_mode(tmp_path):
+    repository = SQLiteRepository(tmp_path / "settings.db")
+    service = SettingsService(repository, SecretCipher(Fernet.generate_key().decode()))
+
+    created = service.create_provider(input_config(tool_call_mode="native"))
+
+    assert created.tool_call_mode == "native"
+    assert service.get_provider(created.id).tool_call_mode == "native"
 
 
 def test_agent_defaults_persist(tmp_path):
