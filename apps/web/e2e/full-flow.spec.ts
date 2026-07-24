@@ -34,7 +34,9 @@ async function configure(page: Page) {
   const providerRow = providerSection.locator(".provider-row").first();
   await expect(providerRow).toContainText("自定义模型服务");
   await providerRow.getByRole("button", { name: /测试/ }).click();
-  await expect(page.locator(".settings-notice")).toContainText("连接测试成功");
+  await expect(page.locator(".settings-feedback .settings-notice")).toContainText(
+    "连接测试成功",
+  );
 
   const chatSection = page
     .locator(".settings-content > section")
@@ -42,7 +44,9 @@ async function configure(page: Page) {
   await expect(chatSection.getByLabel("外观")).toHaveValue("light");
   await chatSection.getByLabel("默认聊天模型").selectOption({ index: 1 });
   await chatSection.getByRole("button", { name: "保存聊天设置" }).click();
-  await expect(page.locator(".settings-notice")).toContainText("聊天与界面偏好已保存");
+  await expect(page.locator(".settings-feedback .settings-notice")).toContainText(
+    "聊天与界面偏好已保存",
+  );
   await page.getByRole("button", { name: "关闭", exact: true }).click();
 }
 

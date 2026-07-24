@@ -56,6 +56,36 @@ flowchart LR
 | `paused` | 保存追加指引；恢复后由安全节点消费。 |
 | 任意活动状态的停止短语 | 终止当前 Run。 |
 
+## 工具平台 V1
+
+```mermaid
+flowchart LR
+  Plugin["ToolPlugin / MCP adapter"] --> Spec["ToolSpec"]
+  Spec --> Registry["ToolRegistry"]
+  Registry --> Selection["Profile / Thread allowlist"]
+  Selection --> Snapshot["TaskSpec ToolSnapshot"]
+  Snapshot --> Request["ToolCallRequest"]
+  Request --> Policy["PolicyEngine / approval"]
+  Policy --> Executor["ToolExecutor"]
+  Executor --> Runtime["InProcess or Docker sandbox"]
+  Runtime --> Result["ToolCallResult / ToolProgress"]
+  Result --> Audit["ToolCall + Event + Evidence + Report"]
+```
+
+`ToolSpec` 是内置工具、显式启用的 Python entry point 插件和 MCP 适配器的唯一注册协议。结构化 JSON
+调用与 OpenAI 兼容 Function Calling 都先转换为 `ToolCallRequest`；Agent 状态机只处理统一请求和结果，
+不按工具来源分支。Provider 的 `structured`、`native` 和 `disabled` 模式由配置快照固定，失败不会自动
+切换调用模式或 Provider；多 Provider 仅来自 Agent Profile 显式的备用链。
+
+MCP stdio 使用可执行文件允许列表与分离的 `command`/`args`，Streamable HTTP 强制 HTTPS（开发测试的
+localhost 例外）并执行 SSRF/DNS 重绑定防护。MCP 描述、Schema 和输出都是不可信数据，仍必须通过
+`PolicyEngine`、目标范围和用户审批。中风险外部二进制仅可通过内部网络可达的 Docker sandbox 执行；
+Docker 不可用时返回不可用状态，绝不回退到宿主机。低风险纯 Python 工具可以使用受超时保护的进程内运行时。
+
+每个 Run 固化 ToolSnapshot、Provider、工具调用模式和 Agent Profile；工具开始、进度、结束和产生的
+Artifact 先写入事件与审计存储，再推送给前端。工具输出始终是不可信观察，超长内容仅以 Artifact 引用
+进入模型上下文。
+
 ## Agent 状态机
 
 ```mermaid

@@ -180,6 +180,22 @@ Web 始终调用统一消息入口。没有活动任务时，后端优先识别�
 项目只执行显式注册的工具。新增工具时必须声明输入模型、风险等级、超时和输出摘要，
 并补充失败、越权和审计测试；不要把任意命令执行包装成“通用工具”。
 
+## 可扩展工具平台
+
+- 所有内置工具、安装包发现的 Python 插件和 MCP 工具都使用同一份 `ToolSpec`、`ToolRegistry`、
+  `ToolExecutor` 与 `ToolCallRequest/ToolCallResult` 契约。模型只能看到当前 Agent Profile 和 Thread
+  已启用的工具，Run 开始后会冻结工具、Provider 和 Agent Profile 快照。
+- Provider 明确选择 `structured`、`native` 或 `disabled` 工具调用模式；结构化 JSON 和 OpenAI
+  兼容的 Function Calling 最终都会进入同一执行与审计链路。除 Agent Profile 显式声明的备用链外，
+  不会向其他 Provider 发送请求。
+- MCP 同时支持管理员允许列表内的 stdio 与 Streamable HTTP 服务，并经过工具过滤、超时、策略、
+  审批和脱敏审计。中风险外部二进制工具只能在内部 Docker 沙箱运行，Docker 不可用时不会回退到宿主机。
+- 首批低风险 CTF 工具包括编码解码、文件检查、字符串提取、安全解包、候选 Flag 格式核验和古典密码分析；
+  它们只处理当前 Thread 已授权的 Artifact 或本地受控目标，候选 Flag 不会被表述为赛题平台提交成功。
+
+开发和贡献入口见 [工具 SDK](docs/tool-sdk.md)、[MCP 接入](docs/mcp-integration.md)、
+[工具安全边界](docs/tool-security.md) 和 [扩展开发](docs/extensions.md)。
+
 ## Docker 与开发模式
 
 日常体验和验收使用默认 Docker 模式：依赖最少、端口固定、前后端版本一致。
