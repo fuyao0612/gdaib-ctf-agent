@@ -23,7 +23,7 @@ def _strict_object_schemas(value: Any) -> Any:
     if isinstance(value, dict):
         copied = {key: _strict_object_schemas(item) for key, item in value.items()}
         if copied.get("type") == "object" or "properties" in copied:
-            copied.setdefault("additionalProperties", False)
+            copied["additionalProperties"] = False
         return copied
     if isinstance(value, list):
         return [_strict_object_schemas(item) for item in value]

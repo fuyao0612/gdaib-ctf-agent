@@ -21,11 +21,12 @@ from yuwang.domain.models import (
 from yuwang.settings.models import ProviderConfig
 from yuwang.settings.profiles import AgentProfileVersion
 from yuwang.storage.sqlite_control import SQLiteControlStore
+from yuwang.storage.sqlite_mcp import SQLiteMcpStore
 from yuwang.storage.sqlite_settings import SQLiteSettingsStore
 from yuwang.storage.sqlite_workspace import SQLiteWorkspaceStore
 
 
-class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlStore):
+class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteMcpStore, SQLiteControlStore):
     """显式 SQLite 数据访问层。
 
     输入和输出均为领域模型，调用方看不到 SQL 行。未来替换数据库时实现
@@ -66,6 +67,7 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                 CREATE TABLE IF NOT EXISTS run_guidance(run_id TEXT NOT NULL, sequence INTEGER NOT NULL, request_id TEXT NOT NULL, data TEXT NOT NULL, consumed_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY(run_id,sequence), UNIQUE(run_id,request_id));
                 CREATE TABLE IF NOT EXISTS run_pause_requests(run_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, requested_at TEXT NOT NULL, consumed_at TEXT);
                 CREATE TABLE IF NOT EXISTS chat_requests(request_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, status TEXT NOT NULL, user_message_id TEXT NOT NULL, assistant_message_id TEXT, error TEXT, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS mcp_servers(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (8);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (7);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
@@ -74,6 +76,7 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (9);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (10);
                 """
             )
             rows = db.execute("SELECT id,data FROM threads").fetchall()

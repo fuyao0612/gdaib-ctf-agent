@@ -58,6 +58,24 @@ class ToolRegistry:
     def all_health(self) -> dict[str, ToolHealth]:
         return dict(self._health)
 
+    def unregister_source(self, source: str) -> None:
+        """在服务刷新或删除时移除同一来源的当前工具，不影响历史 Run 快照。"""
+
+        removed_ids = [tool_id for tool_id, tool in self._tools.items() if tool.spec.source == source]
+        for tool_id in removed_ids:
+            self._tools.pop(tool_id, None)
+            self._health.pop(tool_id, None)
+        self._aliases.clear()
+        self._ambiguous_aliases.clear()
+        for tool_id, tool in self._tools.items():
+            name = tool.spec.name
+            previous = self._aliases.get(name)
+            if previous is None and name not in self._ambiguous_aliases:
+                self._aliases[name] = tool_id
+            elif previous != tool_id:
+                self._aliases.pop(name, None)
+                self._ambiguous_aliases.add(name)
+
     def discover(
         self,
         enabled_plugins: Iterable[str],

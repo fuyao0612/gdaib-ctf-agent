@@ -7,3 +7,4 @@ python-multipart==0.0.27
 langgraph==1.2.9
 cryptography==46.0.7
 jsonschema==4.26.0
+mcp==1.26.0

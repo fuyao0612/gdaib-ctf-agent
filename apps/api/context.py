@@ -46,6 +46,8 @@ from yuwang.settings import (
 from yuwang.settings.models import ProviderPreset, resolve_structured_mode
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import create_reference_registry
+from yuwang.tooling.mcp import McpService
+from yuwang.tooling.mcp.client import McpClient
 from yuwang.tooling.sdk import ToolRegistry
 
 
@@ -61,9 +63,19 @@ class ApiContext:
         self.profile_service.ensure_default(self.repository.get_agent_defaults().budget)
         self.policy = PolicyEngine(SecurityConfig())
         self.registry: ToolRegistry = create_reference_registry(config.artifact_root)
+        self.mcp_client = McpClient(
+            allowed_commands={self._normalized_mcp_command(value) for value in config.mcp_stdio_allowed_commands},
+            allow_insecure_local=config.allow_insecure_local_mcp,
+        )
         self.tasks: dict[UUID, asyncio.Task[None]] = {}
         # 会话只用于单实例自托管工作台；重启即失效，浏览器仅保存 HttpOnly Cookie。
         self.admin_sessions: dict[str, tuple[float, str]] = {}
+
+    @staticmethod
+    def _normalized_mcp_command(value: str) -> str:
+        from pathlib import Path
+
+        return str(Path(value).resolve()).casefold()
 
     def cleanup_callback(self, run_id: UUID) -> Callable[[asyncio.Task[None]], None]:
         """后台运行结束后从内存索引移除，数据库记录仍完整保留。"""
@@ -87,6 +99,11 @@ class ApiContext:
             cipher,
             allow_insecure_local=self.config.allow_insecure_local_provider,
         )
+
+    def get_mcp_service(self) -> McpService:
+        """MCP 认证与 Provider 密钥复用同一主密钥，但不向路由暴露明文。"""
+
+        return McpService(self.repository, self.get_settings_service().cipher, self.mcp_client)
 
     def verify_session(
         self,
