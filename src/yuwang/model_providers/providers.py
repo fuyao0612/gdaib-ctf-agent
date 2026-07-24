@@ -12,6 +12,12 @@ from typing import Any, Protocol, TypeVar
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from yuwang.tooling.adapters.function_calling import (
+    FunctionCallingError,
+    FunctionToolCatalog,
+    NativeToolSelection,
+)
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -58,6 +64,7 @@ class ModelProvider(Protocol):
     """模型能力同时覆盖自由文本聊天与 Agent 结构化输出。"""
 
     name: str
+    tool_call_mode: str
 
     async def generate_structured(
         self,
@@ -85,6 +92,15 @@ class ModelProvider(Protocol):
         timeout: float | None = None,
     ) -> AsyncIterator[str]: ...
 
+    async def generate_native_tool_selection(
+        self,
+        prompt: str,
+        catalog: FunctionToolCatalog,
+        *,
+        timeout: float | None = None,
+        request_budget: int | None = None,
+    ) -> NativeToolSelection: ...
+
 
 class ProviderChain:
     """按顺序尝试 Provider，并同时限制错误类别和整条链的重试预算。"""
@@ -97,6 +113,7 @@ class ProviderChain:
             raise ValueError("Provider 链不能为空")
         self.providers = providers
         self.retry_budget = retry_budget
+        self.tool_call_mode = str(getattr(providers[0], "tool_call_mode", "structured"))
         self.last_call_metrics: ProviderCallMetrics | None = None
 
     async def generate_structured(
@@ -172,6 +189,46 @@ class ProviderChain:
             raise last_error
         raise ProviderError(ProviderErrorCategory.SERVICE, "没有可用 Provider")
 
+    async def generate_native_tool_selection(
+        self,
+        prompt: str,
+        catalog: FunctionToolCatalog,
+        *,
+        timeout: float | None = None,
+        request_budget: int | None = None,
+    ) -> NativeToolSelection:
+        """只在 Provider 同样配置为 native 时允许故障转移，绝不跨模式降级。"""
+
+        if self.tool_call_mode != "native":
+            raise ProviderError(
+                ProviderErrorCategory.SERVICE,
+                "当前 Provider 未配置原生 Function Calling，请在设置中心选择 native 模式",
+            )
+        last_error: ProviderError | None = None
+        remaining_retries = request_budget if request_budget is not None else self.retry_budget + 1
+        for provider in self.providers:
+            if str(getattr(provider, "tool_call_mode", "structured")) != "native":
+                continue
+            try:
+                result = await provider.generate_native_tool_selection(
+                    prompt,
+                    catalog,
+                    timeout=timeout,
+                    request_budget=remaining_retries,
+                )
+                self.last_call_metrics = getattr(provider, "last_call_metrics", None)
+                return result
+            except ProviderError as exc:
+                last_error = exc
+                if exc.category.value not in set(getattr(provider, "fallback_on", [])):
+                    break
+        if last_error:
+            raise last_error
+        raise ProviderError(
+            ProviderErrorCategory.SERVICE,
+            "备用 Provider 未配置原生 Function Calling，无法在不切换模式的情况下调用工具",
+        )
+
     async def generate_text(
         self,
         messages: list[dict[str, str]],
@@ -241,6 +298,7 @@ class OpenAICompatibleProvider:
         timeout_seconds: float = 60,
         max_retries: int = 2,
         structured_mode: str = "json_object",
+        tool_call_mode: str = "structured",
         fallback_on: Sequence[str] | None = None,
         request_overrides: dict[str, Any] | None = None,
         input_price_per_million: float = 0,
@@ -256,6 +314,7 @@ class OpenAICompatibleProvider:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.structured_mode = structured_mode
+        self.tool_call_mode = tool_call_mode
         self.fallback_on = list(fallback_on or ["rate_limit", "timeout", "service"])
         self.request_overrides = request_overrides or {}
         self.input_price_per_million = input_price_per_million
@@ -350,6 +409,42 @@ class OpenAICompatibleProvider:
             except ProviderError as exc:
                 last_error = exc
                 if not exc.retryable or request_index >= self.max_retries:
+                    metrics = self._metrics(request_index + 1, started, None)
+                    self.last_call_metrics = metrics
+                    exc.metrics = metrics
+                    raise
+                await asyncio.sleep(min(0.25 * (2**request_index), 4.0))
+        raise last_error or ProviderError(ProviderErrorCategory.SERVICE, "Provider 调用失败")
+
+    async def generate_native_tool_selection(
+        self,
+        prompt: str,
+        catalog: FunctionToolCatalog,
+        *,
+        timeout: float | None = None,
+        request_budget: int | None = None,
+    ) -> NativeToolSelection:
+        """通过 OpenAI ``tools``/``tool_calls`` 协议选择一次受控工具。"""
+
+        if self.tool_call_mode != "native":
+            raise ProviderError(
+                ProviderErrorCategory.SERVICE,
+                "Provider 未启用原生 Function Calling；请切换为 native 后重试",
+            )
+        effective_timeout = timeout or self.timeout_seconds
+        allowed_requests = min(self.max_retries + 1, request_budget or self.max_retries + 1)
+        started = time.perf_counter()
+        last_error: ProviderError | None = None
+        for request_index in range(allowed_requests):
+            try:
+                result, usage = await self._request_native_tool_selection(
+                    prompt, catalog, effective_timeout
+                )
+                self.last_call_metrics = self._metrics(request_index + 1, started, usage)
+                return result
+            except ProviderError as exc:
+                last_error = exc
+                if not exc.retryable or request_index + 1 >= allowed_requests:
                     metrics = self._metrics(request_index + 1, started, None)
                     self.last_call_metrics = metrics
                     exc.metrics = metrics
@@ -574,6 +669,59 @@ class OpenAICompatibleProvider:
         except (KeyError, TypeError, ValueError, ValidationError) as exc:
             raise ProviderError(
                 ProviderErrorCategory.INVALID_OUTPUT, "模型未返回符合配置的结构化 JSON"
+            ) from exc
+
+    async def _request_native_tool_selection(
+        self, prompt: str, catalog: FunctionToolCatalog, timeout: float
+    ) -> tuple[NativeToolSelection, dict[str, int] | None]:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "仅能从提供的工具中选择一个来完成当前步骤。若无需工具，"
+                        "只返回一个符合 AgentAction 契约的 JSON，且 kind 不能是 call_tool。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "tools": catalog.tools,
+            "tool_choice": "auto",
+            **self.request_overrides,
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                verify=True,
+                follow_redirects=False,
+                transport=self._transport,
+            ) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+        except httpx.TimeoutException as exc:
+            raise ProviderError(ProviderErrorCategory.TIMEOUT, "模型请求超时", True) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(ProviderErrorCategory.SERVICE, "模型网络请求失败") from exc
+        self._raise_for_status(response.status_code)
+        try:
+            body = response.json()
+            return catalog.parse_response(body), self._parse_usage(body.get("usage"))
+        except FunctionCallingError as exc:
+            raise ProviderError(
+                ProviderErrorCategory.INVALID_OUTPUT,
+                f"原生 Function Calling 响应无效：{exc}",
+            ) from exc
+        except (TypeError, ValueError) as exc:
+            raise ProviderError(
+                ProviderErrorCategory.INVALID_OUTPUT,
+                "原生 Function Calling 响应格式不兼容，请检查 Provider 的 native 配置",
             ) from exc
 
     def _response_format(self, output_type: type[BaseModel]) -> dict[str, Any] | None:

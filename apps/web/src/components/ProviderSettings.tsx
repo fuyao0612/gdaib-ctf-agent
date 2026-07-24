@@ -134,7 +134,7 @@ export default function ProviderSettings(props: Props) {
       await props.onRefresh();
       await props.onChanged();
       props.onNotice(
-        `连接测试成功：${result.model} · ${result.structured_mode} · ${result.latency_ms} ms`,
+        `连接测试成功：${result.model} · ${result.structured_mode} · ${result.tool_call_mode} · ${result.latency_ms} ms`,
       );
     } catch (cause) {
       await props.onRefresh().catch(() => undefined);

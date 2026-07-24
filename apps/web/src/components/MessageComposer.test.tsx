@@ -15,6 +15,7 @@ const provider: ProviderConfig = {
   timeout_seconds: 30,
   max_retries: 0,
   structured_mode: "json_object",
+  tool_call_mode: "structured",
   input_price_per_million: 0,
   output_price_per_million: 0,
   resolved_structured_mode: "json_object",

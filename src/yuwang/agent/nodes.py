@@ -233,7 +233,7 @@ class WorkflowNodes:
     async def select_action(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
-        action = await engine.action_selector.select(state, cast(Any, engine._model_call))
+        action = await engine.select_action(state)
         state.action = AgentAction.model_validate(action)
         fingerprint = engine._fingerprint(state.action)
         repeats = state.action_fingerprints.count(fingerprint)

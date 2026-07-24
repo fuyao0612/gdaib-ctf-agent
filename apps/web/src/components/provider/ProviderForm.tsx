@@ -5,6 +5,7 @@ import type {
   ProviderPreset,
   SettingsMode,
   StructuredMode,
+  ToolCallMode,
 } from "../../types";
 import { FALLBACK_CATEGORIES } from "./model";
 
@@ -188,6 +189,22 @@ export default function ProviderForm({
                 <option value="json_schema">JSON Schema</option>
                 <option value="json_object">JSON Object</option>
                 <option value="prompt_json">提示词兼容模式</option>
+              </select>
+            </label>
+            <label>
+              工具调用模式
+              <select
+                value={form.tool_call_mode}
+                onChange={(event) =>
+                  onChange({
+                    ...form,
+                    tool_call_mode: event.target.value as ToolCallMode,
+                  })
+                }
+              >
+                <option value="structured">结构化 JSON（推荐）</option>
+                <option value="native">原生 Function Calling</option>
+                <option value="disabled">禁用工具调用</option>
               </select>
             </label>
           </>

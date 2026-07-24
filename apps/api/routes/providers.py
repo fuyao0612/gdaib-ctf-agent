@@ -105,6 +105,7 @@ def create_provider_router(context: ApiContext) -> APIRouter:
                 timeout_seconds=value.timeout_seconds,
                 max_retries=value.max_retries,
                 structured_mode=resolve_structured_mode(value.preset, value.structured_mode),
+                tool_call_mode=value.tool_call_mode,
                 fallback_on=value.fallback_on,
                 input_price_per_million=value.input_price_per_million,
                 output_price_per_million=value.output_price_per_million,
@@ -128,6 +129,7 @@ def create_provider_router(context: ApiContext) -> APIRouter:
             "provider": metrics.provider,
             "model": metrics.model,
             "structured_mode": provider.structured_mode,
+            "tool_call_mode": provider.tool_call_mode,
             "latency_ms": metrics.duration_ms,
             "usage_reported": metrics.usage_reported,
         }
@@ -148,6 +150,7 @@ def create_provider_router(context: ApiContext) -> APIRouter:
                 timeout_seconds=value.timeout_seconds,
                 max_retries=0,
                 structured_mode=resolve_structured_mode(value.preset, value.structured_mode),
+                tool_call_mode=value.tool_call_mode,
             )
             models = await provider.discover_models()
         except KeyError as exc:

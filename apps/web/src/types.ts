@@ -140,6 +140,7 @@ export type StructuredMode =
   | "json_schema"
   | "json_object"
   | "prompt_json";
+export type ToolCallMode = "structured" | "native" | "disabled";
 export type FallbackCategory =
   | "rate_limit"
   | "timeout"
@@ -157,6 +158,7 @@ export interface ProviderConfig {
   timeout_seconds: number;
   max_retries: number;
   structured_mode: StructuredMode;
+  tool_call_mode: ToolCallMode;
   input_price_per_million: number;
   output_price_per_million: number;
   resolved_structured_mode: string;
@@ -181,6 +183,7 @@ export interface ProviderConfigInput {
   timeout_seconds: number;
   max_retries: number;
   structured_mode: StructuredMode;
+  tool_call_mode: ToolCallMode;
   input_price_per_million: number;
   output_price_per_million: number;
   fallback_on: FallbackCategory[];

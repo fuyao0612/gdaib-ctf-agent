@@ -504,7 +504,9 @@ def test_thread_provider_choice_persists_for_chat_and_unified_run_snapshot(
         run = client.get(f"/api/v1/threads/{thread['id']}").json()["runs"][-1]
         assert run["provider_config_id"] == selected["id"]
         snapshot = app.state.repository.get_provider_snapshot(UUID(run["id"]))
-        assert [item.id for item in snapshot] == [UUID(selected["id"]), UUID(default["id"])]
+        # 会话选择不会再隐式把其他 Provider 加入备用链；只有 Agent Profile
+        # 显式配置 fallback_provider_ids 时，Run 快照才会包含备用项。
+        assert [item.id for item in snapshot] == [UUID(selected["id"])]
         assert "selected-provider-key" not in repr(snapshot)
 
         next_choice = client.patch(

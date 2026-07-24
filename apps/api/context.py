@@ -129,6 +129,7 @@ class ApiContext:
                 timeout_seconds=value.timeout_seconds,
                 max_retries=min(value.max_retries, defaults.provider_retry_budget),
                 structured_mode=resolve_structured_mode(value.preset, value.structured_mode),
+                tool_call_mode=value.tool_call_mode,
                 fallback_on=value.fallback_on,
                 input_price_per_million=value.input_price_per_million,
                 output_price_per_million=value.output_price_per_million,
@@ -353,7 +354,9 @@ class ApiContext:
         profile = self.resolve_thread_profile(thread)
         try:
             selected_id = body.provider_config_id or thread.provider_config_id or profile.default_provider_id
-            fallback_ids = profile.fallback_provider_ids if profile.default_provider_id else None
+            # 备用链只能来自 Agent Profile 的明确配置；对话选择不会隐式加入
+            # 其他已启用 Provider，避免意外把任务发送给未选择的模型服务。
+            fallback_ids = profile.fallback_provider_ids
             provider_configs, provider = self.resolve_provider_chain(selected_id, fallback_ids)
             selected = provider_configs[0]
         except (ValueError, KeyError) as exc:

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, TypeVar, cast
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from yuwang.agent.components import AgentComponents, default_components
 from yuwang.agent.finalization import AgentFinalizer
@@ -44,6 +44,7 @@ from yuwang.model_providers import ModelProvider, ProviderCallMetrics, ProviderE
 from yuwang.policy import PolicyEngine
 from yuwang.settings import AgentProfileInput, AgentProfileVersion
 from yuwang.tooling import ToolExecutor, ToolRegistry
+from yuwang.tooling.adapters.function_calling import FunctionToolCatalog
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -174,10 +175,13 @@ class AgentEngine:
             raise AgentDeclaredFailure("检测到任务或配置上下文漂移")
         state.context_anchor = anchor
         # 新 Run 使用已固化的工具快照；旧 Run 没有快照时才兼容读取注册表。
-        state.tool_schemas = (
+        tool_schemas = (
             [snapshot.model_dump(mode="json") for snapshot in state.task.tool_snapshots]
             if state.task.tool_snapshots
             else [spec.model_dump(mode="json") for spec in self.registry.specs()]
+        )
+        state.tool_schemas = (
+            tool_schemas if getattr(self.provider, "tool_call_mode", "structured") != "disabled" else []
         )
         state.remaining_budget = {
             "steps": budget.max_steps - state.step,
@@ -209,6 +213,86 @@ class AgentEngine:
                 },
             )
         return result.prompt
+
+    async def select_action(self, state: AgentStateModel) -> AgentAction:
+        """按 Run 已固化的 Provider 模式选择动作，不在失败后切换调用协议。"""
+
+        tool_call_mode = str(getattr(self.provider, "tool_call_mode", "structured"))
+        if tool_call_mode != "native":
+            action = await self.action_selector.select(state, cast(Any, self._model_call))
+            if tool_call_mode == "disabled" and action.kind == "call_tool":
+                return AgentAction(
+                    kind="fail",
+                    summary="当前 Provider 已禁用工具调用，不能执行模型请求的工具动作",
+                )
+            return action
+        if not state.task.tool_snapshots:
+            raise AgentDeclaredFailure("原生 Function Calling 需要 Run 工具快照")
+        prompt = self._context(state, "使用原生 Function Calling 选择下一动作")
+        catalog = FunctionToolCatalog.from_snapshots(state.task.tool_snapshots)
+        started = time.perf_counter()
+        try:
+            selection = await asyncio.wait_for(
+                self.provider.generate_native_tool_selection(
+                    prompt,
+                    catalog,
+                    timeout=state.task.budget.step_timeout_seconds,
+                ),
+                timeout=state.task.budget.step_timeout_seconds,
+            )
+        except Exception as exc:
+            category = exc.category if isinstance(exc, ProviderError) else "timeout"
+            metrics = getattr(exc, "metrics", None)
+            self._record_native_tool_selection(
+                state, "failed", category, metrics, started
+            )
+            raise
+        metrics = getattr(self.provider, "last_call_metrics", None)
+        self._record_native_tool_selection(state, "succeeded", None, metrics, started)
+        if selection.invocation:
+            return AgentAction(
+                kind="call_tool",
+                summary=f"原生 Function Calling 选择 {selection.invocation.tool_id}",
+                tool_name=selection.invocation.tool_id,
+                tool_input=selection.invocation.arguments,
+            )
+        if not selection.content:
+            raise AgentDeclaredFailure("原生 Function Calling 未返回工具调用或受控动作")
+        try:
+            action = AgentAction.model_validate_json(selection.content)
+        except ValidationError as exc:
+            raise AgentDeclaredFailure("原生 Function Calling 的非工具动作不是合法 JSON") from exc
+        if action.kind == "call_tool":
+            raise AgentDeclaredFailure("原生 Function Calling 未通过 tool_calls 返回工具请求")
+        return action
+
+    def _record_native_tool_selection(
+        self,
+        state: AgentStateModel,
+        status: CallStatus | str,
+        category: str | None,
+        metrics: ProviderCallMetrics | None,
+        started: float,
+    ) -> None:
+        request_count = metrics.request_count if metrics else 1
+        input_tokens = metrics.input_tokens if metrics else 0
+        output_tokens = metrics.output_tokens if metrics else 0
+        state.model_calls += request_count
+        state.tokens += (metrics.total_tokens if metrics else 0)
+        state.model_cost += metrics.cost if metrics else 0
+        self.repository.save_model_call(
+            ModelCall(
+                run_id=state.run_id,
+                provider=metrics.provider if metrics else self.provider.name,
+                model=metrics.model if metrics else str(getattr(self.provider, "model", "unknown")),
+                duration_ms=metrics.duration_ms if metrics else int((time.perf_counter() - started) * 1000),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                status=CallStatus(status),
+                error_category=category,
+                metadata={"purpose": "native_tool_selection", "tool_call_mode": "native"},
+            )
+        )
 
     async def _model_call(
         self,

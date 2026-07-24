@@ -22,7 +22,9 @@ from yuwang.settings.security import SecretCipher
 class SettingsRepository(Protocol):
     def list_provider_configs(self) -> list[ProviderConfig]: ...
     def get_provider_config(self, provider_id: UUID) -> ProviderConfig | None: ...
-    def save_provider_config(self, value: ProviderConfig) -> ProviderConfig: ...
+    def save_provider_config(
+        self, value: ProviderConfig, *, set_default: bool = False
+    ) -> ProviderConfig: ...
     def set_default_provider(self, provider_id: UUID) -> None: ...
     def delete_provider_config(self, provider_id: UUID) -> None: ...
     def delete_provider_with_thread_fallback(
@@ -84,15 +86,15 @@ class SettingsService:
             structured_mode=value.structured_mode,
             fallback_on=value.fallback_on,
         )
-        self.repository.save_provider_config(config)
-        if config.is_default:
-            self.repository.set_default_provider(config.id)
+        self.repository.save_provider_config(config, set_default=config.is_default)
         return self.get_provider(config.id).public_view()
 
     def update_provider(self, provider_id: UUID, value: ProviderConfigInput) -> ProviderConfigView:
         current = self.get_provider(provider_id)
         if current.is_default and not value.enabled:
             raise ValueError("默认 Provider 不能直接停用，请先切换默认项")
+        if current.is_default and not value.is_default:
+            raise ValueError("不能取消唯一默认 Provider，请先选择新的默认项")
         current.name = value.name
         resolve_structured_mode(value.preset, value.structured_mode)
         current.preset = value.preset
@@ -108,11 +110,10 @@ class SettingsService:
         current.input_price_per_million = value.input_price_per_million
         current.output_price_per_million = value.output_price_per_million
         current.structured_mode = value.structured_mode
+        current.tool_call_mode = value.tool_call_mode
         current.fallback_on = value.fallback_on
         current.updated_at = utcnow().isoformat()
-        self.repository.save_provider_config(current)
-        if current.is_default:
-            self.repository.set_default_provider(current.id)
+        self.repository.save_provider_config(current, set_default=current.is_default)
         return self.get_provider(current.id).public_view()
 
     def provider_deletion_impact(self, provider_id: UUID) -> dict[str, object]:

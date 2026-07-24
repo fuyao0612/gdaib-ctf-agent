@@ -296,6 +296,7 @@ export const api = {
       status: string;
       model: string;
       structured_mode: string;
+      tool_call_mode: string;
       latency_ms: number;
     }>(`/admin/settings/providers/${id}/test`, {
       method: "POST",
