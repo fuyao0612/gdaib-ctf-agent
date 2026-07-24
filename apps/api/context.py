@@ -31,6 +31,7 @@ from yuwang.domain.models import (
     TaskSpec,
     Thread,
     ThreadMode,
+    ToolSnapshot,
 )
 from yuwang.model_providers import ModelProvider, OpenAICompatibleProvider, ProviderChain
 from yuwang.policy import PolicyEngine, SecurityConfig
@@ -292,6 +293,34 @@ class ApiContext:
         verification_rules = (
             create.verification_rules or profile.validation_policy.evidence_rules
         )
+        tool_snapshots = [
+            ToolSnapshot(
+                tool_id=spec.id,
+                namespace=spec.namespace,
+                name=spec.name,
+                display_name=spec.display_name or spec.name,
+                version=spec.version,
+                source_type=spec.source_type,
+                source=spec.source,
+                description=spec.description,
+                capabilities=spec.capabilities,
+                scenarios=spec.scenarios,
+                risk=spec.risk,
+                permissions=spec.permissions,
+                requires_network=spec.requires_network,
+                allowed_target_types=spec.allowed_target_types,
+                timeout_seconds=spec.timeout_seconds,
+                error_codes=spec.error_codes,
+                idempotent=spec.idempotent,
+                artifact_types=spec.artifact_types,
+                input_schema=spec.input_schema,
+                output_schema=spec.output_schema,
+                config_schema=spec.config_schema,
+                supports_cancellation=spec.supports_cancellation,
+                supports_progress=spec.supports_progress,
+            )
+            for spec in self.registry.specs()
+        ]
         return TaskSpec(
             body=origin_message.content,
             origin_message_id=origin_message.id,
@@ -302,6 +331,7 @@ class ApiContext:
             verification_rules=verification_rules,
             budget=profile.budget,
             skills=self.skill_service.snapshots_for(thread.skill_ids),
+            tool_snapshots=tool_snapshots,
         )
 
     async def start_run(

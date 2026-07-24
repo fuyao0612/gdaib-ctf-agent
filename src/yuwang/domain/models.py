@@ -250,6 +250,36 @@ class SkillSnapshot(BaseModel):
     checklist: list[str] = Field(default_factory=list, max_length=30)
 
 
+class ToolSnapshot(BaseModel):
+    """Run 开始时固化的工具协议快照，不随注册表或设置中心变化。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tool_id: str = Field(min_length=1, max_length=240)
+    namespace: str = Field(min_length=1, max_length=160)
+    name: str = Field(min_length=1, max_length=120)
+    display_name: str = Field(min_length=1, max_length=160)
+    version: str = Field(min_length=1, max_length=80)
+    source_type: Literal["builtin", "python_plugin", "mcp"]
+    source: str = Field(min_length=1, max_length=300)
+    description: str = Field(min_length=1, max_length=2_000)
+    capabilities: list[str] = Field(default_factory=list)
+    scenarios: list[str] = Field(default_factory=list)
+    risk: Literal["low", "medium", "high"]
+    permissions: list[str] = Field(default_factory=list)
+    requires_network: bool
+    allowed_target_types: list[str] = Field(default_factory=list)
+    timeout_seconds: float = Field(gt=0, le=120)
+    error_codes: list[str] = Field(default_factory=list)
+    idempotent: bool
+    artifact_types: list[str] = Field(default_factory=list)
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+    config_schema: dict[str, Any] = Field(default_factory=dict)
+    supports_cancellation: bool = False
+    supports_progress: bool = False
+
+
 class TaskSpec(DomainModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True, frozen=True)
     body: str = Field(min_length=1, max_length=100_000)
@@ -266,6 +296,9 @@ class TaskSpec(DomainModel):
     verification_rules: list[VerificationRule] = Field(default_factory=list)
     # 运行开始后 Skill 不再跟随设置中心修改，恢复与审计均使用这里的快照。
     skills: list[SkillSnapshot] = Field(default_factory=list, max_length=20)
+    # 与 Provider/Profile 一样，工具定义也在运行开始时冻结。旧 Run 缺少该字段时
+    # 保持可恢复，并仅在明确兼容路径中读取当前显式注册工具。
+    tool_snapshots: list[ToolSnapshot] = Field(default_factory=list, max_length=100)
 
 
 class CallStatus(StrEnum):
@@ -291,6 +324,11 @@ class ToolCall(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     run_id: UUID
     tool_name: str
+    tool_id: str | None = None
+    tool_version: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    target_scope: list[str] = Field(default_factory=list)
+    approval_fingerprint: str | None = None
     input_summary: str
     result_summary: str | None = None
     duration_ms: int = Field(ge=0)

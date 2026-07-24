@@ -35,6 +35,7 @@ from yuwang.domain.models import (
     ToolCall,
     ValidationStatus,
 )
+from yuwang.tooling import ToolCallRequest
 
 if TYPE_CHECKING:
     from yuwang.agent.engine import AgentEngine
@@ -301,11 +302,26 @@ class WorkflowNodes:
             raise AgentDeclaredFailure("没有可执行工具动作")
         state.tool_calls += 1
         call_id = uuid4()
+        tool = engine.registry.get(state.action.tool_name)
+        request = ToolCallRequest(
+            call_id=call_id,
+            run_id=state.run_id,
+            tool_id=tool.spec.id,
+            tool_version=tool.spec.version,
+            arguments=state.action.tool_input,
+            target_scope=state.task.authorized_targets,
+            approval_fingerprint=state.approved_risk_action_fingerprint,
+        )
         engine.repository.save_tool_call(
             ToolCall(
                 id=call_id,
                 run_id=state.run_id,
                 tool_name=state.action.tool_name,
+                tool_id=request.tool_id,
+                tool_version=request.tool_version,
+                arguments=request.arguments,
+                target_scope=request.target_scope,
+                approval_fingerprint=request.approval_fingerprint,
                 input_summary=state.action.summary,
                 duration_ms=0,
                 status=CallStatus.STARTED,
@@ -317,9 +333,8 @@ class WorkflowNodes:
             f"开始调用 {state.action.tool_name}",
             {"call_id": str(call_id), "tool": state.action.tool_name},
         )
-        result = await engine.executor.execute(
-            state.action.tool_name,
-            state.action.tool_input,
+        result = await engine.executor.execute_call(
+            request,
             state.task.budget.step_timeout_seconds,
         )
         if not result.success:
@@ -337,6 +352,11 @@ class WorkflowNodes:
                 id=call_id,
                 run_id=state.run_id,
                 tool_name=state.action.tool_name,
+                tool_id=result.executed_tool_id,
+                tool_version=result.executed_tool_version,
+                arguments=request.arguments,
+                target_scope=request.target_scope,
+                approval_fingerprint=request.approval_fingerprint,
                 input_summary=state.action.summary,
                 result_summary=result.summary,
                 duration_ms=result.duration_ms,

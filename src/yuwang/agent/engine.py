@@ -173,7 +173,12 @@ class AgentEngine:
         if state.context_anchor and state.context_anchor != anchor:
             raise AgentDeclaredFailure("检测到任务或配置上下文漂移")
         state.context_anchor = anchor
-        state.tool_schemas = [spec.model_dump(mode="json") for spec in self.registry.specs()]
+        # 新 Run 使用已固化的工具快照；旧 Run 没有快照时才兼容读取注册表。
+        state.tool_schemas = (
+            [snapshot.model_dump(mode="json") for snapshot in state.task.tool_snapshots]
+            if state.task.tool_snapshots
+            else [spec.model_dump(mode="json") for spec in self.registry.specs()]
+        )
         state.remaining_budget = {
             "steps": budget.max_steps - state.step,
             "model_calls": budget.max_model_calls - state.model_calls,
