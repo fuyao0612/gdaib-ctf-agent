@@ -18,6 +18,9 @@ export interface Thread {
   title: string;
   mode: Mode;
   interaction_mode: InteractionMode;
+  provider_config_id: string | null;
+  provider_fallback_notice: string | null;
+  skill_ids?: string[];
   agent_profile_id: string | null;
   agent_profile_version: number | null;
   plan_mode: PlanMode;
@@ -41,7 +44,7 @@ export interface Run {
   agent_profile_version: number | null;
   plan_mode: PlanMode;
   completion_mode: CompletionMode;
-  validation_status: "pending" | "unverified" | "validated" | "failed";
+  validation_status: "pending" | "unverified" | "partial" | "validated" | "failed";
   evidence_level: "none" | "model" | "structured" | "external";
   attempt: number;
   stop_requested: boolean;
@@ -129,6 +132,7 @@ export interface RunControl {
   task_briefs: TaskBrief[];
   plans: PlanRevision[];
   guidance: RunGuidance[];
+  approval?: { kind: "medium_risk_tool"; tool: string; risk: "medium" } | null;
 }
 export type ProviderPreset = "deepseek" | "qwen" | "glm" | "custom";
 export type StructuredMode =
@@ -180,6 +184,33 @@ export interface ProviderConfigInput {
   input_price_per_million: number;
   output_price_per_million: number;
   fallback_on: FallbackCategory[];
+}
+export interface ProviderDeletionImpact {
+  id: string;
+  name: string;
+  model: string;
+  affected_thread_count: number;
+  fallback_provider: { id: string; name: string; model: string } | null;
+  blocking_reasons: string[];
+}
+export interface SkillDefinition {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  steps: string[];
+  checklist: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+export interface SkillInput {
+  name: string;
+  description: string;
+  prompt: string;
+  steps: string[];
+  checklist: string[];
+  enabled: boolean;
 }
 export interface AgentDefaults {
   budget: {
@@ -308,6 +339,7 @@ export interface MemoryRecord {
 }
 export interface RunAudit {
   run: {
+    execution_status?: string;
     provider: string;
     agent_profile_id: string | null;
     agent_profile_version: number | null;
@@ -315,6 +347,16 @@ export interface RunAudit {
     evidence_level: string;
   };
   usage: Record<string, number>;
+  history?: {
+    model: string | null;
+    started_at: string | null;
+    finished_at: string | null;
+    token_source: "provider" | "estimated" | "mixed" | "unavailable";
+    cost_source: "provider" | "estimated" | "mixed" | "unavailable";
+    manual_interventions: number;
+    execution_status: string;
+    validation_status: string;
+  };
   limits: Record<string, number>;
   profile: {
     name: string;

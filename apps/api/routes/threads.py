@@ -32,11 +32,23 @@ def create_thread_router(context: ApiContext) -> APIRouter:
     @router.post("/threads", response_model=Thread, status_code=201)
     async def create_thread(body: ThreadCreate) -> Thread:
         profile = context.profile_service.resolve(body.agent_profile_id)
+        provider_config_id = body.provider_config_id or context.default_thread_provider_id()
+        if body.provider_config_id:
+            try:
+                context.resolve_provider_chain(body.provider_config_id)
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+        try:
+            context.skill_service.snapshots_for(body.skill_ids)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
         return repository.save_thread(
             Thread(
                 title=body.title,
                 mode=body.mode,
                 interaction_mode=body.interaction_mode,
+                provider_config_id=provider_config_id,
+                skill_ids=body.skill_ids,
                 agent_profile_id=profile.profile_id,
                 agent_profile_version=profile.version,
                 plan_mode=body.plan_mode,
@@ -45,7 +57,7 @@ def create_thread_router(context: ApiContext) -> APIRouter:
 
     @router.get("/threads", response_model=list[Thread])
     async def list_threads() -> list[Thread]:
-        return repository.list_threads()
+        return [context.reconcile_thread_provider(thread) for thread in repository.list_threads()]
 
     @router.get("/threads/{thread_id}")
     async def get_thread(thread_id: UUID) -> dict[str, Any]:
@@ -79,6 +91,24 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             thread.archived = body.archived
         if body.interaction_mode is not None:
             thread.interaction_mode = body.interaction_mode
+        if "provider_config_id" in body.model_fields_set:
+            if body.provider_config_id is None:
+                raise HTTPException(400, "请选择一个已启用的 Provider")
+            try:
+                context.resolve_provider_chain(body.provider_config_id)
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+            # 只更新对话的下一次选择；Run 已保存自己的不可变 Provider 快照。
+            thread.provider_config_id = body.provider_config_id
+            thread.provider_fallback_notice = None
+        if body.acknowledge_provider_fallback:
+            thread.provider_fallback_notice = None
+        if "skill_ids" in body.model_fields_set:
+            try:
+                context.skill_service.snapshots_for(body.skill_ids or [])
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+            thread.skill_ids = body.skill_ids or []
         thread.updated_at = utcnow()
         return repository.save_thread(thread)
 

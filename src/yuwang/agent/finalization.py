@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from yuwang.agent.state import AgentStateModel, GraphState
 from yuwang.domain.models import (
@@ -35,8 +35,8 @@ class AgentFinalizer:
             raise RuntimeError("运行记录不存在")
         await self.persist_memories(state, run)
         run.completion_mode = engine.profile.completion_mode
-        run.validation_status = cast(Any, state.validation_status)
-        run.evidence_level = cast(Any, state.evidence_level)
+        run.validation_status = state.validation_status
+        run.evidence_level = state.evidence_level
         run.transition(RunStatus.COMPLETED)
         engine.repository.save_run(run)
         markdown, data = engine.reporter.generate(
@@ -85,11 +85,21 @@ class AgentFinalizer:
                 content=self.assistant_content(state),
             )
         )
+        completion_summary = {
+            "validated": "运行完成，外部验证通过，最终报告已生成",
+            "partial": "运行完成，已完成结构化校验，尚未完成外部验证",
+            "unverified": "运行完成，未执行外部验证，最终报告已生成",
+        }.get(state.validation_status, "运行完成，最终报告已生成")
         engine.events.emit(
             run.id,
             EventType.RUN_COMPLETED,
-            "运行完成，最终报告已生成",
-            {"report_available": True},
+            completion_summary,
+            {
+                "report_available": True,
+                "execution_status": str(run.status),
+                "validation_status": run.validation_status,
+                "evidence_level": run.evidence_level,
+            },
         )
         return engine._result("generate_report", state)
 

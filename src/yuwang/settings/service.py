@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import UUID
 
-from yuwang.domain.models import utcnow
+from yuwang.domain.models import Run, Thread, utcnow
 from yuwang.settings.models import (
     AgentDefaults,
     ChatDefaults,
@@ -15,6 +15,7 @@ from yuwang.settings.models import (
     resolve_structured_mode,
     validate_provider_url,
 )
+from yuwang.settings.profiles import AgentProfileVersion
 from yuwang.settings.security import SecretCipher
 
 
@@ -24,6 +25,12 @@ class SettingsRepository(Protocol):
     def save_provider_config(self, value: ProviderConfig) -> ProviderConfig: ...
     def set_default_provider(self, provider_id: UUID) -> None: ...
     def delete_provider_config(self, provider_id: UUID) -> None: ...
+    def delete_provider_with_thread_fallback(
+        self, provider_id: UUID, fallback_provider_id: UUID | None, notice: str
+    ) -> int: ...
+    def list_threads(self) -> list[Thread]: ...
+    def list_active_runs_by_provider_id(self, provider_id: UUID) -> list[Run]: ...
+    def list_agent_profiles(self) -> list[AgentProfileVersion]: ...
     def get_agent_defaults(self) -> AgentDefaults: ...
     def save_agent_defaults(self, value: AgentDefaults) -> None: ...
     def get_chat_defaults(self) -> ChatDefaults: ...
@@ -84,6 +91,8 @@ class SettingsService:
 
     def update_provider(self, provider_id: UUID, value: ProviderConfigInput) -> ProviderConfigView:
         current = self.get_provider(provider_id)
+        if current.is_default and not value.enabled:
+            raise ValueError("默认 Provider 不能直接停用，请先切换默认项")
         current.name = value.name
         resolve_structured_mode(value.preset, value.structured_mode)
         current.preset = value.preset
@@ -106,11 +115,73 @@ class SettingsService:
             self.repository.set_default_provider(current.id)
         return self.get_provider(current.id).public_view()
 
+    def provider_deletion_impact(self, provider_id: UUID) -> dict[str, object]:
+        """返回可展示的删除影响，并把无法安全解除的引用变成明确阻断原因。"""
+
+        current = self.get_provider(provider_id)
+        fallback = self._fallback_default(excluding=provider_id)
+        reasons: list[str] = []
+        if current.is_default:
+            reasons.append("该配置是全局默认 Provider，请先切换默认项")
+        chat_defaults = self.get_chat_defaults()
+        if chat_defaults.default_provider_id == provider_id:
+            reasons.append("该配置是默认聊天模型，请先在聊天设置中切换默认项")
+        profiles = [
+            profile.name
+            for profile in self.repository.list_agent_profiles()
+            if profile.default_provider_id == provider_id
+            or provider_id in profile.fallback_provider_ids
+        ]
+        if profiles:
+            reasons.append(f"仍被 Agent 配置引用：{'、'.join(profiles)}")
+        active_runs = self.repository.list_active_runs_by_provider_id(provider_id)
+        if active_runs:
+            reasons.append(f"仍被 {len(active_runs)} 个活动 Run 使用")
+        threads = [
+            thread
+            for thread in self.repository.list_threads()
+            if thread.provider_config_id == provider_id
+        ]
+        if threads and not fallback:
+            reasons.append("没有可用的全局默认 Provider，无法安全回退会话选择")
+        return {
+            "id": str(current.id),
+            "name": current.name,
+            "model": current.model,
+            "affected_thread_count": len(threads),
+            "fallback_provider": (
+                {"id": str(fallback.id), "name": fallback.name, "model": fallback.model}
+                if fallback
+                else None
+            ),
+            "blocking_reasons": reasons,
+        }
+
     def delete_provider(self, provider_id: UUID) -> None:
         current = self.get_provider(provider_id)
-        if current.is_default:
-            raise ValueError("默认 Provider 不能删除，请先切换默认项")
-        self.repository.delete_provider_config(provider_id)
+        impact = self.provider_deletion_impact(provider_id)
+        raw_reasons = impact["blocking_reasons"]
+        reasons = [str(value) for value in raw_reasons] if isinstance(raw_reasons, list) else []
+        if reasons:
+            raise ValueError(f"无法删除 Provider：{'；'.join(reasons)}")
+        fallback = self._fallback_default(excluding=provider_id)
+        notice = (
+            f"已删除原选择的 Provider“{current.name} · {current.model}”，"
+            "会话已回退到全局默认模型。"
+        )
+        self.repository.delete_provider_with_thread_fallback(
+            provider_id, fallback.id if fallback else None, notice
+        )
+
+    def _fallback_default(self, *, excluding: UUID | None = None) -> ProviderConfig | None:
+        """只使用已启用的全局默认 Provider 作为会话选择的安全回退。"""
+
+        providers = [
+            value
+            for value in self.repository.list_provider_configs()
+            if value.enabled and value.id != excluding
+        ]
+        return next((value for value in providers if value.is_default), None)
 
     def decrypt_api_key(self, provider_id: UUID) -> str:
         return self.cipher.decrypt(self.get_provider(provider_id).encrypted_api_key)

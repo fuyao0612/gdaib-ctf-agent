@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import getpass
 import os
 import sys
 import time
@@ -17,10 +16,6 @@ def fail(message: str) -> None:
 
 def main() -> None:
     base_url = os.getenv("YUWANG_API_URL", "http://localhost:8080/api/v1")
-    token = os.getenv("YUWANG_ADMIN_TOKEN") or getpass.getpass("管理员令牌：")
-    if not token.strip():
-        fail("未提供管理员令牌。请读取项目根目录 .env 中的 YUWANG_ADMIN_TOKEN。")
-
     try:
         with httpx.Client(base_url=base_url, timeout=30, follow_redirects=False) as client:
             setup = client.get("/setup/status").raise_for_status().json()
@@ -30,7 +25,7 @@ def main() -> None:
             if not checks.get("agent"):
                 fail("默认 Agent 无法解析到已连接 Provider。请检查默认配置。")
 
-            login = client.post("/admin/session", json={"token": token}).raise_for_status().json()
+            login = client.post("/admin/session").raise_for_status().json()
             client.headers["X-CSRF-Token"] = login["csrf_token"]
             providers: list[dict[str, Any]] = client.get("/providers").raise_for_status().json()
             profiles: list[dict[str, Any]] = client.get("/agent-profiles").raise_for_status().json()

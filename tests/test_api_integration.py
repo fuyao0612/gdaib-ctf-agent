@@ -61,19 +61,39 @@ def provider_server():
                 response_content = '{"status":"ok"}'
             else:
                 context = json.loads(prompt)
-                if "slow-control" in context.get("untrusted_task", ""):
+                user_input = context.get("untrusted_user_input", {})
+                trusted_constraints = context.get("trusted_execution_constraints", {})
+                task = str(user_input.get("task", ""))
+                supplemental_inputs = user_input.get("supplemental_inputs", [])
+                if "slow-control" in task:
                     time.sleep(0.12)
-                if "生成公开 Task Brief" in context["purpose"]:
+                if "user_message_untrusted" in context and "allowed_kinds" in context:
+                    message = context["user_message_untrusted"]
+                    if (
+                        "不要执行" in message
+                        or "只说明" in message
+                        or message in {"你好", "我想准备发布说明。"}
+                    ):
+                        response_content = json.dumps({"kind": "chat", "clarification_question": None})
+                    elif "帮我处理一下" in message:
+                        response_content = json.dumps(
+                            {
+                                "kind": "clarify",
+                                "clarification_question": "请补充目标和预期交付物。",
+                            }
+                        )
+                    else:
+                        response_content = json.dumps({"kind": "run", "clarification_question": None})
+                elif "生成公开 Task Brief" in context["purpose"]:
                     needs_clarification = (
-                        "需要澄清任务" in context["untrusted_task"]
-                        and not context.get("supplemental_inputs")
+                        "需要澄清任务" in task and not supplemental_inputs
                     )
                     response_content = json.dumps(
                         {
                             "goal": "完成协议集成任务",
-                            "authorized_scope": context.get("authorized_targets", []),
-                            "constraints": context.get("constraints", []),
-                            "success_criteria": context.get("success_conditions", []),
+                            "authorized_scope": trusted_constraints.get("authorized_targets", []),
+                            "constraints": trusted_constraints.get("constraints", []),
+                            "success_criteria": trusted_constraints.get("success_conditions", []),
                             "expected_output": "可审核结果",
                             "known_information": ["原始要求已保存"],
                             "assumptions": [],
@@ -93,9 +113,9 @@ def provider_server():
                         }
                     )
                 else:
-                    observations = context.get("observations_untrusted", context.get("observations", []))
-                    if "需要补充" in context["untrusted_task"]:
-                        if not context.get("supplemental_inputs"):
+                    observations = context.get("untrusted_tool_content", [])
+                    if "需要补充" in task:
+                        if not supplemental_inputs:
                             action = {
                                 "kind": "request_input",
                                 "summary": "请补充目标受众",
@@ -159,30 +179,40 @@ def configured_app(tmp_path):
         Settings(
             database_path=tmp_path / "api.db",
             artifact_root=tmp_path / "artifacts",
-            admin_token="test-admin-token",
             master_key=Fernet.generate_key().decode(),
             allow_insecure_local_provider=True,
         )
     )
 
 
-def create_provider(client: TestClient, base_url: str) -> dict:
+def open_local_session(client: TestClient) -> dict[str, str]:
+    response = client.post("/api/v1/admin/session")
+    assert response.status_code == 200, response.text
+    csrf = response.json()["csrf_token"]
+    headers = {"X-CSRF-Token": csrf}
+    client.headers.update(headers)
+    return headers
+
+
+def create_provider(client: TestClient, base_url: str, **overrides) -> dict:
+    payload = {
+        "name": "本地协议服务",
+        "preset": "custom",
+        "base_url": base_url,
+        "model": "test-model",
+        "api_key": "test-api-key-value",
+        "enabled": True,
+        "is_default": True,
+        "fallback_order": 0,
+        "timeout_seconds": 5,
+        "max_retries": 0,
+        "structured_mode": "json_schema",
+    }
+    payload.update(overrides)
     response = client.post(
         "/api/v1/admin/settings/providers",
-        headers={"Authorization": "Bearer test-admin-token"},
-        json={
-            "name": "本地协议服务",
-            "preset": "custom",
-            "base_url": base_url,
-            "model": "test-model",
-            "api_key": "test-api-key-value",
-            "enabled": True,
-            "is_default": True,
-            "fallback_order": 0,
-            "timeout_seconds": 5,
-            "max_retries": 0,
-            "structured_mode": "json_schema",
-        },
+        headers={},
+        json=payload,
     )
     assert response.status_code == 201, response.text
     body = response.json()
@@ -190,13 +220,13 @@ def create_provider(client: TestClient, base_url: str) -> dict:
     assert body["has_api_key"] is True
     tested = client.post(
         f"/api/v1/admin/settings/providers/{body['id']}/test",
-        headers={"Authorization": "Bearer test-admin-token"},
+        headers={},
     )
     assert tested.status_code == 200, tested.text
     assert tested.json()["usage_reported"] is True
     discovered = client.get(
         f"/api/v1/admin/settings/providers/{body['id']}/models",
-        headers={"Authorization": "Bearer test-admin-token"},
+        headers={},
     )
     assert discovered.status_code == 200
     assert discovered.json()["models"] == ["test-model", "test-model-alt"]
@@ -207,7 +237,7 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
     app = configured_app(tmp_path)
     app.state.registry.register(FakeEchoTool())
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         assert client.get("/api/v1/health").json()["version"] == "0.5.0"
         provider = create_provider(client, provider_server)
         thread = client.post("/api/v1/threads", json={"title": "集成任务", "mode": "normal"}).json()
@@ -250,7 +280,7 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         assert len(client.get("/api/v1/providers").json()) == 1
         assert len(client.get("/api/v1/tools").json()) == 3
     with TestClient(app) as reopened:
-        reopened.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(reopened)
         detail = reopened.get(f"/api/v1/threads/{thread['id']}").json()
         assert detail["messages"] and detail["runs"] and detail["artifacts"]
         assert detail["messages"][-1]["role"] == "assistant"
@@ -261,7 +291,7 @@ def test_plain_chat_is_natural_persistent_and_does_not_create_run(
 ):
     app = configured_app(tmp_path)
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         provider = create_provider(client, provider_server)
         thread = client.post("/api/v1/threads", json={"title": "新对话"}).json()
         assert thread["interaction_mode"] == "chat"
@@ -340,7 +370,7 @@ def test_plain_chat_is_natural_persistent_and_does_not_create_run(
         ]
 
     with TestClient(app) as reopened:
-        reopened.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(reopened)
         restored = reopened.get(f"/api/v1/threads/{thread['id']}").json()
         assert len(restored["messages"]) == 6
         assert restored["runs"] == []
@@ -354,7 +384,7 @@ def test_unified_message_entry_chooses_free_text_or_controlled_run(
     app = configured_app(tmp_path)
     app.state.registry.register(FakeEchoTool())
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         create_provider(client, provider_server)
         thread = client.post("/api/v1/threads", json={"title": "统一入口"}).json()
 
@@ -385,12 +415,156 @@ def test_unified_message_entry_chooses_free_text_or_controlled_run(
         assert task_spec and task_spec.verification_rules == []
 
 
+def test_semantic_intent_handles_natural_negated_ambiguous_and_contextual_messages(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        open_local_session(client)
+        create_provider(client, provider_server)
+
+        negated = client.post("/api/v1/threads", json={"title": "否定执行"}).json()
+        response = client.post(
+            f"/api/v1/threads/{negated['id']}/message",
+            json={"request_id": str(uuid4()), "content": "不要执行，只说明风险。"},
+        )
+        assert "event: reply_complete" in response.text
+        assert client.get(f"/api/v1/threads/{negated['id']}").json()["runs"] == []
+
+        ambiguous = client.post("/api/v1/threads", json={"title": "需要澄清"}).json()
+        response = client.post(
+            f"/api/v1/threads/{ambiguous['id']}/message",
+            json={"request_id": str(uuid4()), "content": "帮我处理一下"},
+        )
+        assert "event: reply_complete" in response.text
+        detail = client.get(f"/api/v1/threads/{ambiguous['id']}").json()
+        assert detail["runs"] == []
+        assert detail["messages"][-1]["content"] == "请补充目标和预期交付物。"
+
+        natural = client.post("/api/v1/threads", json={"title": "自然任务"}).json()
+        response = client.post(
+            f"/api/v1/threads/{natural['id']}/message",
+            json={"request_id": str(uuid4()), "content": "把发布清单整理成可执行工作并开始推进。"},
+        )
+        assert "event: execution_started" in response.text
+
+        contextual = client.post("/api/v1/threads", json={"title": "上下文任务"}).json()
+        greeting = client.post(
+            f"/api/v1/threads/{contextual['id']}/message",
+            json={"request_id": str(uuid4()), "content": "我想准备发布说明。"},
+        )
+        assert "event: reply_complete" in greeting.text
+        follow_up = client.post(
+            f"/api/v1/threads/{contextual['id']}/message",
+            json={"request_id": str(uuid4()), "content": "继续刚才那个安排。"},
+        )
+        assert "event: execution_started" in follow_up.text
+
+
+def test_thread_provider_choice_persists_for_chat_and_unified_run_snapshot(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        open_local_session(client)
+        default = create_provider(client, provider_server, name="全局默认模型")
+        selected = create_provider(
+            client,
+            provider_server,
+            name="会话专用模型",
+            model="test-model-alt",
+            api_key="selected-provider-key",
+            is_default=False,
+            fallback_order=1,
+        )
+        thread = client.post("/api/v1/threads", json={"title": "模型选择"}).json()
+        assert thread["provider_config_id"] == default["id"]
+
+        changed = client.patch(
+            f"/api/v1/threads/{thread['id']}",
+            json={"provider_config_id": selected["id"]},
+        )
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["provider_config_id"] == selected["id"]
+        assert client.get(f"/api/v1/threads/{thread['id']}").json()["provider_config_id"] == selected["id"]
+
+        chat = client.post(
+            f"/api/v1/threads/{thread['id']}/chat",
+            json={"request_id": str(uuid4()), "content": "你好"},
+        )
+        assert chat.status_code == 200
+        assert provider_server.chat_payloads[-1]["model"] == "test-model-alt"
+
+        task = client.post(
+            f"/api/v1/threads/{thread['id']}/message",
+            json={"request_id": str(uuid4()), "content": "完成任务：整理项目文档并给出检查结论"},
+        )
+        assert task.status_code == 200, task.text
+        assert "event: execution_started" in task.text
+        run = client.get(f"/api/v1/threads/{thread['id']}").json()["runs"][-1]
+        assert run["provider_config_id"] == selected["id"]
+        snapshot = app.state.repository.get_provider_snapshot(UUID(run["id"]))
+        assert [item.id for item in snapshot] == [UUID(selected["id"]), UUID(default["id"])]
+        assert "selected-provider-key" not in repr(snapshot)
+
+        next_choice = client.patch(
+            f"/api/v1/threads/{thread['id']}",
+            json={"provider_config_id": default["id"]},
+        )
+        assert next_choice.status_code == 200
+        assert app.state.repository.get_provider_snapshot(UUID(run["id"])) == snapshot
+
+
+def test_provider_delete_api_reports_impact_blocks_default_and_falls_back_thread(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        open_local_session(client)
+        default = create_provider(client, provider_server, name="全局默认模型")
+        selected = create_provider(
+            client,
+            provider_server,
+            name="可安全删除模型",
+            api_key="delete-api-secret-key",
+            is_default=False,
+            fallback_order=1,
+        )
+        thread = client.post("/api/v1/threads", json={"title": "待回退会话"}).json()
+        assert client.patch(
+            f"/api/v1/threads/{thread['id']}",
+            json={"provider_config_id": selected["id"]},
+        ).status_code == 200
+
+        impact = client.get(
+            f"/api/v1/admin/settings/providers/{selected['id']}/deletion-impact"
+        )
+        assert impact.status_code == 200
+        assert impact.json()["affected_thread_count"] == 1
+        assert impact.json()["fallback_provider"]["id"] == default["id"]
+        assert impact.json()["blocking_reasons"] == []
+        assert "delete-api-secret-key" not in impact.text
+
+        deleted = client.delete(f"/api/v1/admin/settings/providers/{selected['id']}")
+        assert deleted.status_code == 204
+        restored = client.get(f"/api/v1/threads/{thread['id']}").json()
+        assert restored["provider_config_id"] == default["id"]
+        assert "可安全删除模型" in restored["provider_fallback_notice"]
+        assert client.get("/api/v1/providers").json()[0]["id"] == default["id"]
+
+        blocked = client.delete(f"/api/v1/admin/settings/providers/{default['id']}")
+        assert blocked.status_code == 409
+        assert "全局默认 Provider" in blocked.json()["error"]["message"]
+        missing = client.delete(f"/api/v1/admin/settings/providers/{uuid4()}")
+        assert missing.status_code == 404
+
+
 def test_unified_attachment_analysis_starts_one_task_with_artifact_reference(
     tmp_path, provider_server
 ):
     app = configured_app(tmp_path)
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         create_provider(client, provider_server)
         thread = client.post("/api/v1/threads", json={"title": "附件分析"}).json()
         artifact = client.post(
@@ -420,7 +594,7 @@ def test_unified_run_keeps_its_own_origin_when_a_later_message_is_saved(
 
     app = configured_app(tmp_path)
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         create_provider(client, provider_server)
         thread = client.post("/api/v1/threads", json={"title": "来源绑定"}).json()
         context = app.state.context
@@ -457,7 +631,7 @@ def test_chat_failure_retry_is_idempotent_and_never_saves_partial_reply(
 ):
     app = configured_app(tmp_path)
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         provider = create_provider(client, provider_server)
         thread = client.post("/api/v1/threads", json={"title": "新对话"}).json()
         request_id = str(uuid4())
@@ -490,7 +664,7 @@ def test_unconfigured_provider_and_admin_auth_are_explicit(tmp_path):
     app = configured_app(tmp_path)
     with TestClient(app) as client:
         assert client.get("/api/v1/admin/settings/providers").status_code == 401
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         thread = client.post("/api/v1/threads", json={"title": "needs model"}).json()
         client.post(f"/api/v1/threads/{thread['id']}/messages", json={"content": "task"})
         response = client.post(f"/api/v1/threads/{thread['id']}/runs", json={})
@@ -498,7 +672,7 @@ def test_unconfigured_provider_and_admin_auth_are_explicit(tmp_path):
         assert "需要配置模型" in response.json()["error"]["message"]
         validation = client.post(
             "/api/v1/admin/settings/providers",
-            headers={"Authorization": "Bearer test-admin-token"},
+            headers={},
             json={
                 "name": "bad",
                 "preset": "custom",
@@ -511,15 +685,54 @@ def test_unconfigured_provider_and_admin_auth_are_explicit(tmp_path):
         assert "leak123" not in validation.text
 
 
+def test_skill_api_persists_thread_selection_and_rejects_disabled_skill(tmp_path):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        open_local_session(client)
+        created = client.post(
+            "/api/v1/admin/settings/skills",
+            json={
+                "name": "发布检查",
+                "description": "生成发布前检查清单",
+                "prompt": "先核对范围，再给出检查结果。",
+                "steps": ["确认范围"],
+                "checklist": ["已记录验证结果"],
+                "enabled": True,
+            },
+        )
+        assert created.status_code == 201, created.text
+        skill = created.json()
+        assert client.get("/api/v1/skills").json()[0]["id"] == skill["id"]
+
+        thread = client.post(
+            "/api/v1/threads",
+            json={"title": "选择 Skill", "skill_ids": [skill["id"]]},
+        )
+        assert thread.status_code == 201
+        assert thread.json()["skill_ids"] == [skill["id"]]
+
+        disabled = client.put(
+            f"/api/v1/admin/settings/skills/{skill['id']}",
+            json={"name": "发布检查", "prompt": "停用模板", "enabled": False},
+        )
+        assert disabled.status_code == 200
+        update = client.patch(
+            f"/api/v1/threads/{thread.json()['id']}",
+            json={"skill_ids": [skill["id"]]},
+        )
+        assert update.status_code == 409
+        assert "已停用" in update.json()["error"]["message"]
+
+        assert client.delete(f"/api/v1/admin/settings/skills/{skill['id']}").status_code == 204
+        detail = client.get(f"/api/v1/threads/{thread.json()['id']}").json()
+        assert detail["skill_ids"] == []
+
+
 def test_admin_cookie_session_requires_csrf_for_mutations(tmp_path):
     app = configured_app(tmp_path)
     with TestClient(app) as client:
         assert client.get("/api/v1/threads").status_code == 401
-        assert client.post("/api/v1/admin/session", json={"token": "wrong"}).status_code == 401
-
-        login = client.post(
-            "/api/v1/admin/session", json={"token": "test-admin-token"}
-        )
+        login = client.post("/api/v1/admin/session")
         assert login.status_code == 200
         assert "HttpOnly" in login.headers["set-cookie"]
         assert "SameSite=strict" in login.headers["set-cookie"]
@@ -569,6 +782,7 @@ def test_health_readiness_and_setup_status_are_distinct(tmp_path, provider_serve
         }
         assert client.get("/api/v1/readiness").status_code == 503
 
+        open_local_session(client)
         create_provider(client, provider_server)
         assert client.get("/api/v1/setup/status").json()["configured"] is True
         assert client.get("/api/v1/readiness").json()["status"] == "ready"
@@ -576,9 +790,9 @@ def test_health_readiness_and_setup_status_are_distinct(tmp_path, provider_serve
 
 def test_agent_profile_api_versions_preview_export_and_thread_snapshot(tmp_path):
     app = configured_app(tmp_path)
-    headers = {"Authorization": "Bearer test-admin-token"}
+    headers: dict[str, str]
     with TestClient(app) as client:
-        client.headers.update(headers)
+        headers = open_local_session(client)
         defaults = client.get("/api/v1/admin/settings/agent-profiles", headers=headers)
         assert defaults.status_code == 200 and defaults.json()[0]["is_default"]
         created = client.post(
@@ -631,9 +845,9 @@ def test_waiting_input_api_persists_memory_and_resumes(
     tmp_path, provider_server, monkeypatch
 ):
     app = configured_app(tmp_path)
-    headers = {"Authorization": "Bearer test-admin-token"}
+    headers: dict[str, str]
     with TestClient(app) as client:
-        client.headers.update(headers)
+        headers = open_local_session(client)
         provider = create_provider(client, provider_server)
         profile_response = client.post(
             "/api/v1/admin/settings/agent-profiles",
@@ -727,6 +941,11 @@ def test_waiting_input_api_persists_memory_and_resumes(
         assert audit["profile"]["planning_strategy"] == "direct"
         assert audit["profile"]["workflow_preset"] == "direct"
         assert audit["profile"]["context_policy"]["recent_message_limit"] == 7
+        assert audit["history"]["started_at"]
+        assert audit["history"]["finished_at"]
+        assert audit["history"]["token_source"] in {"provider", "mixed", "estimated"}
+        assert audit["history"]["manual_interventions"] >= 1
+        assert audit["history"]["validation_status"] == "unverified"
         assert audit["profile"]["memory_policy"] == {
             "enabled": True,
             "persist_important_facts": False,
@@ -756,7 +975,7 @@ def test_task_brief_clarification_persists_versions_and_resumes(
     app = configured_app(tmp_path)
     app.state.registry.register(FakeEchoTool())
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         provider = create_provider(client, provider_server)
         thread = client.post("/api/v1/threads", json={"title": "clarify"}).json()
         run_id = client.post(
@@ -828,7 +1047,7 @@ def test_plan_edit_approve_and_duplicate_request_are_idempotent(tmp_path, provid
     app = configured_app(tmp_path)
     app.state.registry.register(FakeEchoTool())
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         provider = create_provider(client, provider_server)
         thread = client.post(
             "/api/v1/threads", json={"title": "approval", "plan_mode": "approval"}
@@ -877,7 +1096,7 @@ def test_plan_edit_approve_and_duplicate_request_are_idempotent(tmp_path, provid
 def test_plan_rejection_creates_agent_replan_version(tmp_path, provider_server):
     app = configured_app(tmp_path)
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         provider = create_provider(client, provider_server)
         thread = client.post(
             "/api/v1/threads", json={"title": "reject", "plan_mode": "approval"}
@@ -905,7 +1124,7 @@ def test_plan_rejection_creates_agent_replan_version(tmp_path, provider_server):
 def test_waiting_plan_can_be_stopped_without_background_task(tmp_path, provider_server):
     app = configured_app(tmp_path)
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         provider = create_provider(client, provider_server)
         thread = client.post(
             "/api/v1/threads", json={"title": "stop wait", "plan_mode": "approval"}
@@ -927,7 +1146,7 @@ def test_unified_message_queues_active_run_guidance_once_and_keeps_timeline_orde
 ):
     app = configured_app(tmp_path)
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         thread = client.post("/api/v1/threads", json={"title": "统一追加"}).json()
         run = Run(thread_id=thread["id"])
         run.transition(RunStatus.RUNNING)
@@ -965,7 +1184,7 @@ def test_guidance_rejects_terminal_race_without_partial_timeline_record(
 
     app = configured_app(tmp_path)
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         thread = client.post("/api/v1/threads", json={"title": "终态竞态"}).json()
         run = Run(thread_id=thread["id"])
         run.transition(RunStatus.RUNNING)
@@ -1006,7 +1225,7 @@ def test_guidance_rejects_stop_requested_run_without_partial_timeline_record(
 
     app = configured_app(tmp_path)
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         thread = client.post("/api/v1/threads", json={"title": "停止中的指引"}).json()
         run = Run(thread_id=thread["id"])
         run.transition(RunStatus.RUNNING)
@@ -1030,7 +1249,7 @@ def test_pause_guidance_resume_is_idempotent_and_survives_restart(
     app = configured_app(tmp_path)
     app.state.registry.register(FakeEchoTool())
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         provider = create_provider(client, provider_server)
         thread = client.post("/api/v1/threads", json={"title": "run control"}).json()
         run_id = client.post(
@@ -1068,7 +1287,7 @@ def test_pause_guidance_resume_is_idempotent_and_survives_restart(
         assert control["guidance"][0]["consumed_at"] is not None
 
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         assert client.get(f"/api/v1/runs/{run_id}").json()["status"] == "paused"
         resume_request = {"request_id": str(uuid4())}
         first_resume = client.post(f"/api/v1/runs/{run_id}/resume", json=resume_request)
@@ -1086,7 +1305,7 @@ def test_pause_guidance_resume_is_idempotent_and_survives_restart(
 def test_competition_lock_stop_openapi_and_upload_policy(tmp_path):
     app = configured_app(tmp_path)
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         thread = client.post(
             "/api/v1/threads", json={"title": "比赛", "mode": "competition"}
         ).json()
@@ -1112,7 +1331,7 @@ def test_service_lifespan_resumes_active_run_from_checkpoint(tmp_path, provider_
     app = configured_app(tmp_path)
     app.state.registry.register(FakeEchoTool())
     with TestClient(app) as client:
-        client.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(client)
         provider = create_provider(client, provider_server)
         repository = app.state.repository
         thread = client.post("/api/v1/threads", json={"title": "restart"}).json()
@@ -1157,7 +1376,7 @@ def test_service_lifespan_resumes_active_run_from_checkpoint(tmp_path, provider_
         )
         repository.save_checkpoint(run.id, "execute_tool", state.model_dump(mode="json"))
     with TestClient(app) as restarted:
-        restarted.headers.update({"Authorization": "Bearer test-admin-token"})
+        open_local_session(restarted)
         assert wait_for_terminal(restarted, str(run.id))["status"] == "completed"
         events = restarted.get(f"/api/v1/runs/{run.id}/events").json()
         assert any("恢复" in event["summary"] for event in events)

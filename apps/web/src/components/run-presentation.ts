@@ -111,3 +111,36 @@ export function tokenUsageLabel(audit: RunAudit | null): string {
   if (reported) return `${tokens}（部分调用为本地估算）`;
   return `厂商未提供（本地预算估算 ${tokens}）`;
 }
+
+export function executionStatusLabel(status: string): string {
+  return {
+    queued: "排队中",
+    running: "运行中",
+    waiting_input: "等待补充",
+    waiting_clarification: "等待澄清",
+    waiting_approval: "等待计划确认",
+    paused: "已暂停",
+    completed: "执行完成",
+    failed: "执行失败",
+    stopped: "已停止",
+  }[status] ?? status;
+}
+
+export function validationStatusLabel(status: string): string {
+  return {
+    pending: "待验证",
+    unverified: "未验证",
+    partial: "部分验证",
+    validated: "验证通过",
+    failed: "验证失败",
+  }[status] ?? status;
+}
+
+export function evidenceLevelLabel(level: string): string {
+  return {
+    none: "无可验证证据",
+    model: "模型输出",
+    structured: "结构化校验",
+    external: "外部证据",
+  }[level] ?? level;
+}

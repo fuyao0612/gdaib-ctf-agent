@@ -35,6 +35,8 @@ class ProviderCallMetrics(BaseModel):
     total_tokens: int = Field(ge=0)
     cost: float = Field(ge=0)
     usage_reported: bool
+    input_price_per_million: float = Field(default=0, ge=0)
+    output_price_per_million: float = Field(default=0, ge=0)
 
 
 class ProviderError(RuntimeError):
@@ -596,6 +598,8 @@ class OpenAICompatibleProvider:
             )
             / 1_000_000,
             usage_reported=bool(usage["total_tokens"]),
+            input_price_per_million=self.input_price_per_million,
+            output_price_per_million=self.output_price_per_million,
         )
 
     @staticmethod

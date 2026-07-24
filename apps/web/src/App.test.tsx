@@ -36,6 +36,8 @@ function thread(id: string, title: string) {
     title,
     mode: "normal",
     interaction_mode: "chat",
+    provider_config_id: null,
+    provider_fallback_notice: null,
     agent_profile_id: null,
     agent_profile_version: null,
     plan_mode: "auto",
@@ -118,7 +120,7 @@ describe("App", () => {
       if (url.endsWith("/threads/t-chat/message") && init?.method === "POST") {
         const body = JSON.parse(String(init.body));
         expect(body.content).toBe("你好");
-        expect(body).not.toHaveProperty("provider_config_id");
+        expect(body.provider_config_id).toBeNull();
         completed = true;
         const user = { id: "u1", role: "user", content: "你好", artifact_ids: [], created_at: now };
         const assistant = { id: "a1", role: "assistant", content: "你好，很高兴见到你。", artifact_ids: [], created_at: now };
@@ -208,7 +210,7 @@ describe("App", () => {
       const url = String(input);
       if (url.endsWith("/setup/status")) return Response.json({ configured: true, checks: {}, version: "0.5.0" });
       if (url.endsWith("/admin/session")) return Response.json({ authenticated: true, csrf_token: "csrf-test" });
-      if (url.endsWith("/admin/settings/providers") || url.endsWith("/admin/settings/agent-profiles")) return Response.json([]);
+      if (url.endsWith("/providers") || url.endsWith("/agent-profiles")) return Response.json([]);
       if (url.endsWith("/admin/settings/agent")) return Response.json({});
       if (url.endsWith("/admin/settings/chat")) return Response.json(preferences);
       if (url.endsWith("/settings/chat")) {

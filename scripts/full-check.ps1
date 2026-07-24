@@ -5,7 +5,6 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$oldAdminToken = [Environment]::GetEnvironmentVariable('YUWANG_ADMIN_TOKEN', 'Process')
 $oldMasterKey = [Environment]::GetEnvironmentVariable('YUWANG_MASTER_KEY', 'Process')
 
 function New-RandomUrlSafeValue([int]$ByteCount) {
@@ -47,11 +46,6 @@ try {
     }
 
     Write-Stage '4/5 验证 Docker Compose 配置（使用临时高熵值，不需要真实 API Key）'
-    if ([string]::IsNullOrWhiteSpace($oldAdminToken)) {
-        [Environment]::SetEnvironmentVariable(
-            'YUWANG_ADMIN_TOKEN', (New-RandomUrlSafeValue 32), 'Process'
-        )
-    }
     if ([string]::IsNullOrWhiteSpace($oldMasterKey)) {
         [Environment]::SetEnvironmentVariable(
             'YUWANG_MASTER_KEY', (New-RandomUrlSafeValue 32), 'Process'
@@ -69,7 +63,6 @@ try {
 
     Write-Host "`n完整检查全部通过。" -ForegroundColor Green
 } finally {
-    [Environment]::SetEnvironmentVariable('YUWANG_ADMIN_TOKEN', $oldAdminToken, 'Process')
     [Environment]::SetEnvironmentVariable('YUWANG_MASTER_KEY', $oldMasterKey, 'Process')
     Pop-Location
 }

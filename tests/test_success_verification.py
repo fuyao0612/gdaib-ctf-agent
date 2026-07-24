@@ -54,6 +54,21 @@ def test_unverified_candidate_keeps_value_source_and_trust_label_in_final_reply(
     assert candidate.location in reply
 
 
+def test_legacy_verified_checkpoint_field_only_restores_completion_readiness():
+    state = AgentStateModel.model_validate(
+        {
+            "run_id": uuid4(),
+            "task": TaskSpec(body="legacy checkpoint").model_dump(mode="json"),
+            "verified": True,
+            "validation_status": "unverified",
+        }
+    )
+
+    assert state.completion_ready is True
+    assert state.validation_status == "unverified"
+    assert "verified" not in state.model_dump()
+
+
 def test_candidate_requires_matching_call_location_and_rule():
     observation = successful_observation()
     verifier = SuccessVerifier()

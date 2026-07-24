@@ -11,6 +11,7 @@ import type {
   MemoryRecord,
   ProviderConfig,
   ProviderConfigInput,
+  ProviderDeletionImpact,
   Report,
   Run,
   RunAudit,
@@ -20,6 +21,8 @@ import type {
   SetupStatus,
   Thread,
   ThreadDetail,
+  SkillDefinition,
+  SkillInput,
 } from "./types";
 
 const API = "/api/v1";
@@ -62,10 +65,10 @@ export const api = {
   setupStatus: () => request<SetupStatus>("/setup/status"),
   listThreads: () => request<Thread[]>("/threads"),
   listAgentProfiles: () => request<AgentProfileSummary[]>("/agent-profiles"),
-  createThread: (title: string) =>
+  createThread: (title: string, skillIds: string[] = []) =>
     request<Thread>("/threads", {
       method: "POST",
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, skill_ids: skillIds }),
     }),
   detail: (id: string) => request<ThreadDetail>(`/threads/${id}`),
   message: async (
@@ -75,6 +78,7 @@ export const api = {
       content: string;
       artifact_ids: string[];
       retry: boolean;
+      provider_config_id: string | null;
     },
     signal: AbortSignal,
     onEvent: (event: UnifiedMessageEvent) => void,
@@ -205,10 +209,9 @@ export const api = {
       >
     >("/provider-presets"),
 
-  createAdminSession: (token: string) =>
+  createAdminSession: () =>
     request<{ csrf_token: string; expires_at: number }>("/admin/session", {
       method: "POST",
-      body: JSON.stringify({ token }),
     }),
   adminSession: async () => {
     const value = await request<{
@@ -229,6 +232,9 @@ export const api = {
     value: {
       title?: string;
       archived?: boolean;
+      provider_config_id?: string;
+      skill_ids?: string[];
+      acknowledge_provider_fallback?: boolean;
     },
   ) =>
     request<Thread>(`/threads/${id}`, {
@@ -237,6 +243,28 @@ export const api = {
     }),
   deleteThread: (id: string) =>
     request<void>(`/threads/${id}`, { method: "DELETE" }),
+  listSkills: () => request<SkillDefinition[]>("/skills"),
+  adminSkills: (csrf: string) =>
+    request<SkillDefinition[]>("/admin/settings/skills", {
+      headers: adminHeaders(csrf),
+    }),
+  createSkill: (csrf: string, value: SkillInput) =>
+    request<SkillDefinition>("/admin/settings/skills", {
+      method: "POST",
+      headers: adminHeaders(csrf),
+      body: JSON.stringify(value),
+    }),
+  updateSkill: (csrf: string, id: string, value: SkillInput) =>
+    request<SkillDefinition>(`/admin/settings/skills/${id}`, {
+      method: "PUT",
+      headers: adminHeaders(csrf),
+      body: JSON.stringify(value),
+    }),
+  deleteSkill: (csrf: string, id: string) =>
+    request<void>(`/admin/settings/skills/${id}`, {
+      method: "DELETE",
+      headers: adminHeaders(csrf),
+    }),
   adminProviders: (csrf: string) =>
     request<ProviderConfig[]>("/admin/settings/providers", {
       headers: adminHeaders(csrf),
@@ -258,6 +286,11 @@ export const api = {
       method: "DELETE",
       headers: adminHeaders(csrf),
     }),
+  providerDeletionImpact: (csrf: string, id: string) =>
+    request<ProviderDeletionImpact>(
+      `/admin/settings/providers/${id}/deletion-impact`,
+      { headers: adminHeaders(csrf) },
+    ),
   testProvider: (csrf: string, id: string) =>
     request<{
       status: string;

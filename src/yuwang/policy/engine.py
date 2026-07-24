@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import re
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
@@ -27,12 +28,15 @@ class SecurityConfig(BaseModel):
 class PolicyDecision(BaseModel):
     allowed: bool
     reason: str
+    requires_approval: bool = False
 
 
 SECRET_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|token|password|secret)\s*[:=]\s*([^\s,;]+)"),
+    re.compile(r"(?i)(authorization)\s*:\s*bearer\s+([^\s,;]+)"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
 ]
+SENSITIVE_FIELD_NAMES = {"api_key", "token", "password", "secret", "authorization"}
 
 
 def redact(value: str) -> str:
@@ -45,6 +49,25 @@ def redact(value: str) -> str:
     return result
 
 
+def redact_data(value: Any) -> Any:
+    """递归脱敏事件、报告等公开结构，保留字段形状而不保留密钥。"""
+
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]"
+            if key.casefold() in SENSITIVE_FIELD_NAMES
+            else redact_data(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_data(item) for item in value)
+    return value
+
+
 class PolicyEngine:
     def __init__(self, config: SecurityConfig | None = None) -> None:
         self.config = config or SecurityConfig()
@@ -52,6 +75,11 @@ class PolicyEngine:
     def check_tool(
         self, task: TaskSpec, tool: ToolSpec, tool_input: dict[str, object]
     ) -> PolicyDecision:
+        if tool.risk == "high":
+            return PolicyDecision(
+                allowed=False,
+                reason="高风险工具默认拒绝，本阶段不允许自动执行",
+            )
         if tool.requires_network:
             raw_target = next(
                 (str(tool_input[key]) for key in ("url", "target", "host") if key in tool_input),
@@ -70,7 +98,13 @@ class PolicyEngine:
                 return PolicyDecision(allowed=False, reason="目标不在任务授权范围")
             if "localhost" in tool.allowed_target_types and not self.is_local_address(hostname):
                 return PolicyDecision(allowed=False, reason="工具仅允许本地测试目标")
-        return PolicyDecision(allowed=True, reason="工具与目标符合授权策略")
+        if tool.risk == "medium":
+            return PolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                reason="中风险工具需要用户确认后才能执行",
+            )
+        return PolicyDecision(allowed=True, reason="低风险工具与目标符合授权策略")
 
     def validate_upload(self, filename: str, size: int, existing_count: int) -> None:
         safe = Path(filename).name

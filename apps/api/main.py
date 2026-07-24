@@ -24,6 +24,7 @@ from apps.api.routes import (
     create_report_router,
     create_run_router,
     create_session_router,
+    create_skill_router,
     create_thread_router,
 )
 from yuwang import __version__
@@ -83,7 +84,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             try:
                 context.verify_session(
                     request,
-                    request.headers.get("Authorization"),
                     request.headers.get("X-CSRF-Token"),
                 )
             except HTTPException as exc:
@@ -116,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 路由装配顺序不改变路径契约；每个工厂都绑定当前应用自己的上下文。
     application.include_router(create_health_router(context))
     application.include_router(create_session_router(context))
+    application.include_router(create_skill_router(context))
     application.include_router(create_thread_router(context))
     application.include_router(create_message_router(context))
     application.include_router(create_chat_router(context))

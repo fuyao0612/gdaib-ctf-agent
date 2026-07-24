@@ -25,6 +25,16 @@ def test_policy_default_deny_and_local_allow():
     ).allowed
 
 
+def test_high_risk_tool_is_rejected_before_execution():
+    policy = PolicyEngine()
+    high_risk = FakeEchoTool().spec.model_copy(update={"risk": "high"})
+    decision = policy.check_tool(TaskSpec(body="只读任务"), high_risk, {})
+
+    assert not decision.allowed
+    assert not decision.requires_approval
+    assert "高风险" in decision.reason
+
+
 def test_redaction():
     value = redact("api_key=topsecret token:abc123 sk-1234567890ABCDE")
     assert "topsecret" not in value and "abc123" not in value and "sk-" not in value

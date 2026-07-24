@@ -25,7 +25,6 @@ class Settings(BaseModel):
         ).split(",")
     )
     max_request_bytes: int = 6 * 1024 * 1024
-    admin_token: str = os.getenv("YUWANG_ADMIN_TOKEN", "")
     master_key: str = os.getenv("YUWANG_MASTER_KEY", "")
     allow_insecure_local_provider: bool = (
         os.getenv("YUWANG_ALLOW_INSECURE_LOCAL_PROVIDER", "false").lower() == "true"

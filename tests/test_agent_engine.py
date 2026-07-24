@@ -5,7 +5,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from tests.fakes import FakeEchoTool, FakeModelProvider
+from tests.fakes import FakeEchoOutput, FakeEchoTool, FakeModelProvider
 from yuwang.agent import AgentEngine, AgentStateModel, BudgetExceeded
 from yuwang.agent.components import AgentComponents, default_components
 from yuwang.agent.engine import AgentDeclaredFailure
@@ -44,6 +44,18 @@ class SlowFakeModelProvider(FakeModelProvider):
     async def generate_structured(self, *args: Any, **kwargs: Any) -> Any:
         await asyncio.sleep(0.03)
         return await super().generate_structured(*args, **kwargs)
+
+
+class LargeOutputFakeEchoTool(FakeEchoTool):
+    async def execute(self, value):
+        del value
+        return FakeEchoOutput(echoed="x" * 9_000)
+
+
+class MediumRiskFakeEchoTool(FakeEchoTool):
+    @property
+    def spec(self) -> ToolSpec:
+        return super().spec.model_copy(update={"risk": "medium"})
 
 
 def build_engine(tmp_path, scenario="success", profile=None, components: AgentComponents | None = None):
@@ -95,6 +107,91 @@ async def test_complete_failure_replan_success_report(tmp_path):
     assert [item.checkpoint_sequence for item in checkpoints] == list(
         range(1, len(checkpoints) + 1)
     )
+
+
+@pytest.mark.asyncio
+async def test_large_tool_output_is_archived_and_checkpoint_keeps_only_reference(tmp_path):
+    repository = SQLiteRepository(tmp_path / "large-output.db")
+    registry = ToolRegistry()
+    registry.register(LargeOutputFakeEchoTool())
+    engine = AgentEngine(
+        repository,
+        FakeModelProvider(),
+        registry,
+        PolicyEngine(),
+        artifact_root=tmp_path / "artifacts",
+    )
+    thread = repository.save_thread(Thread(title="large output"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(
+        run_id=run.id,
+        task=TaskSpec(body="归档长工具输出"),
+        action=AgentAction(
+            kind="call_tool",
+            summary="生成长输出",
+            tool_name="test_echo",
+            tool_input={"text": "ignored"},
+        ),
+    )
+
+    raw = await engine.nodes.execute_tool(state.model_dump(mode="python"))
+    updated = AgentStateModel.model_validate(raw)
+    artifact = repository.list_artifacts(thread.id)[0]
+    checkpoint = repository.latest_checkpoint(run.id)
+
+    assert updated.observations[-1].output["artifact_id"] == str(artifact.id)
+    assert updated.observations[-1].output["content_in_artifact"] is True
+    assert artifact.kind == "tool_output"
+    assert (tmp_path / "artifacts" / artifact.storage_ref).read_text(encoding="utf-8").count("x") == 9_000
+    assert checkpoint and "x" * 9_000 not in str(checkpoint.state)
+    tool_call = repository.list_tool_calls(run.id)[0]
+    assert tool_call.artifact_ids == [artifact.id]
+
+
+@pytest.mark.asyncio
+async def test_medium_risk_tool_requires_explicit_matching_action_approval(tmp_path):
+    repository = SQLiteRepository(tmp_path / "medium-risk.db")
+    registry = ToolRegistry()
+    registry.register(MediumRiskFakeEchoTool())
+    engine = AgentEngine(
+        repository,
+        FakeModelProvider(),
+        registry,
+        PolicyEngine(),
+        artifact_root=tmp_path / "artifacts",
+    )
+    thread = repository.save_thread(Thread(title="medium risk"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(
+        run_id=run.id,
+        task=TaskSpec(body="调用受控工具"),
+        action=AgentAction(
+            kind="call_tool",
+            summary="请求中风险测试工具",
+            tool_name="test_echo",
+            tool_input={"text": "approved"},
+        ),
+    )
+
+    pending = AgentStateModel.model_validate(
+        await engine.nodes.policy_check(state.model_dump(mode="python"))
+    )
+    assert pending.pending_risk_approval_tool == "test_echo"
+    assert pending.pending_risk_approval_fingerprint
+    assert engine.nodes.route_policy(pending.model_dump(mode="python")) == "await_plan_approval"
+    assert repository.list_tool_calls(run.id) == []
+
+    approved = pending.model_copy(
+        update={
+            "approved_risk_action_fingerprint": pending.pending_risk_approval_fingerprint,
+            "pending_risk_approval_tool": None,
+            "pending_risk_approval_fingerprint": None,
+        }
+    )
+    allowed = AgentStateModel.model_validate(
+        await engine.nodes.policy_check(approved.model_dump(mode="python"))
+    )
+    assert engine.nodes.route_policy(allowed.model_dump(mode="python")) == "execute_tool"
 
 
 @pytest.mark.asyncio
@@ -222,8 +319,8 @@ async def test_provider_failure_is_safe_and_reported(tmp_path):
                     },
                 },
             ),
-            # Schema 仅校验结构，不能作为外部成功证据。
-            "unverified",
+            # Schema 校验是部分验证，不能作为外部成功证据。
+            "partial",
             "structured",
         ),
     ],
@@ -243,6 +340,80 @@ async def test_pure_model_completion_modes_keep_trust_distinct(
     assert report and report[1]["evidence_level"] == expected_level
     if scenario == "advisory":
         assert "未经外部验证" in report[0]
+
+
+@pytest.mark.asyncio
+async def test_completed_run_without_verifier_is_explicitly_unverified(tmp_path):
+    repository, engine = build_engine(tmp_path)
+    thread = repository.save_thread(Thread(title="no verifier"))
+    run = repository.save_run(Run(thread_id=thread.id))
+
+    await engine.run(run.id, TaskSpec(body="生成可审阅建议"))
+
+    finished = repository.get_run(run.id)
+    report = repository.get_report(run.id)
+    assert finished and finished.status == RunStatus.COMPLETED
+    assert finished.validation_status == "unverified"
+    assert report and report[1]["trust_notice"] == "结果未经外部验证"
+    assert "验证通过" not in report[0]
+    completed = next(
+        event for event in repository.list_events(run.id) if event.type == EventType.RUN_COMPLETED
+    )
+    assert completed.payload["execution_status"] == "completed"
+    assert completed.payload["validation_status"] == "unverified"
+
+
+@pytest.mark.asyncio
+async def test_failed_deterministic_validation_is_not_reported_as_pending(tmp_path):
+    repository, engine = build_engine(tmp_path)
+    thread = repository.save_thread(Thread(title="failed validation"))
+    run = repository.save_run(Run(thread_id=thread.id))
+
+    await engine.run(
+        run.id,
+        TaskSpec(body="生成需要验证的结果", verification_rules=[{"kind": "regex", "value": "never"}]),
+    )
+
+    finished = repository.get_run(run.id)
+    report = repository.get_report(run.id)
+    assert finished and finished.status == RunStatus.FAILED
+    assert finished.validation_status == "failed"
+    assert finished.evidence_level == "external"
+    assert report and report[1]["trust_notice"] == "验证失败，结果不能视为已验证成功"
+    failed = next(
+        event for event in repository.list_events(run.id) if event.type == EventType.RUN_FAILED
+    )
+    assert failed.payload["execution_status"] == "failed"
+    assert failed.payload["validation_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_structured_completion_is_partial_validation(tmp_path):
+    profile = profile_for(
+        completion_mode="structured",
+        validation_policy={
+            "require_external_evidence": False,
+            "json_schema": {
+                "type": "object",
+                "required": ["title", "priority"],
+                "properties": {
+                    "title": {"type": "string"},
+                    "priority": {"type": "integer"},
+                },
+            },
+        },
+    )
+    repository, engine = build_engine(tmp_path, "structured", profile)
+    thread = repository.save_thread(Thread(title="structured validation"))
+    run = repository.save_run(Run(thread_id=thread.id))
+
+    await engine.run(run.id, TaskSpec(body="生成结构化结果"))
+
+    finished = repository.get_run(run.id)
+    report = repository.get_report(run.id)
+    assert finished and finished.status == RunStatus.COMPLETED
+    assert finished.validation_status == "partial"
+    assert report and report[1]["trust_notice"] == "已完成部分校验，尚未完成外部验证"
 
 
 @pytest.mark.asyncio
@@ -534,6 +705,47 @@ async def test_engine_accounts_provider_reported_requests_and_tokens(tmp_path):
     assert (recorded.input_tokens, recorded.output_tokens) == (31, 7)
     assert recorded.metadata["usage_reported"] is True
     assert recorded.metadata["cost"] == pytest.approx(0.00009)
+
+
+@pytest.mark.asyncio
+async def test_engine_estimates_cost_when_provider_omits_usage(tmp_path):
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"summary":"plan","steps":["one"],"success_approach":"verify"}'
+                        }
+                    }
+                ]
+            },
+        )
+
+    repository = SQLiteRepository(tmp_path / "estimated-metering.db")
+    thread = repository.save_thread(Thread(title="estimated metering"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    provider = OpenAICompatibleProvider(
+        name="estimated",
+        base_url="https://provider.test/v1",
+        api_key="test-provider-key",
+        model="estimated-model",
+        input_price_per_million=2,
+        output_price_per_million=4,
+        structured_mode="json_object",
+        transport=httpx.MockTransport(handler),
+    )
+    engine = AgentEngine(repository, provider, ToolRegistry(), PolicyEngine())
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="estimate this call"))
+
+    await engine._model_call(state, AgentPlan, "estimated metering test")
+
+    recorded = repository.list_model_calls(run.id)[0]
+    assert recorded.metadata["usage_reported"] is False
+    assert recorded.metadata["cost_estimated"] is True
+    assert recorded.metadata["cost"] > 0
+    assert state.model_cost == recorded.metadata["cost"]
 
 
 @pytest.mark.asyncio

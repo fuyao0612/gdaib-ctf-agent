@@ -97,7 +97,12 @@ class AgentRunCoordinator:
         graph.add_conditional_edges(
             "policy_check",
             engine._route_policy,
-            {"replan": "replan", "execute_tool": "execute_tool", "fail": "fail"},
+            {
+                "replan": "replan",
+                "execute_tool": "execute_tool",
+                "await_plan_approval": "await_plan_approval",
+                "fail": "fail",
+            },
         )
         graph.add_edge("execute_tool", "observe")
         graph.add_conditional_edges(
@@ -212,16 +217,29 @@ class AgentRunCoordinator:
             await graph.ainvoke(initial.model_dump(mode="python"))
         except RunStopped as exc:
             run = engine.repository.get_run(run.id) or run
+            run = self._restore_validation_snapshot(run)
             run.transition(RunStatus.STOPPED, str(exc))
             engine.repository.save_run(run)
-            engine.events.emit(run.id, EventType.RUN_STOPPED, "运行已按请求安全停止")
+            engine.events.emit(
+                run.id,
+                EventType.RUN_STOPPED,
+                "运行已按请求安全停止",
+                self._terminal_payload(run),
+            )
         except RunPaused as exc:
             run = engine.repository.get_run(run.id) or run
+            run = self._restore_validation_snapshot(run)
             run.transition(RunStatus.PAUSED, str(exc))
             engine.repository.save_run(run)
-            engine.events.emit(run.id, EventType.RUN_PAUSED, "运行已在安全检查点暂停")
+            engine.events.emit(
+                run.id,
+                EventType.RUN_PAUSED,
+                "运行已在安全检查点暂停",
+                self._terminal_payload(run),
+            )
         except asyncio.CancelledError:
             run = engine.repository.get_run(run.id) or run
+            run = self._restore_validation_snapshot(run)
             if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
                 run.transition(RunStatus.STOPPED, "用户请求停止并取消进行中的模型调用")
                 engine.repository.save_run(run)
@@ -229,16 +247,18 @@ class AgentRunCoordinator:
                     run.id,
                     EventType.RUN_STOPPED,
                     "运行与进行中的模型请求已取消",
+                    self._terminal_payload(run),
                 )
         except Exception as exc:
             run = engine.repository.get_run(run.id) or run
+            run = self._restore_validation_snapshot(run)
             run.transition(RunStatus.FAILED, str(exc)[:500])
             engine.repository.save_run(run)
             engine.events.emit(
                 run.id,
                 EventType.RUN_FAILED,
                 "运行安全终止",
-                {"error": run.error},
+                self._terminal_payload(run, error=run.error),
             )
             events = engine.repository.list_events(run.id)
             markdown, data = engine.reporter.generate(run, task, events, {})
@@ -250,9 +270,15 @@ class AgentRunCoordinator:
         """恢复条件不安全时生成可查看的失败报告，而不是静默丢失运行。"""
 
         engine = self.engine
+        run = self._restore_validation_snapshot(run)
         run.transition(RunStatus.FAILED, reason)
         engine.repository.save_run(run)
-        engine.events.emit(run.id, EventType.RUN_FAILED, "恢复已安全终止", {"error": reason})
+        engine.events.emit(
+            run.id,
+            EventType.RUN_FAILED,
+            "恢复已安全终止",
+            self._terminal_payload(run, error=reason),
+        )
         markdown, data = engine.reporter.generate(
             run,
             task,
@@ -260,6 +286,28 @@ class AgentRunCoordinator:
             {},
         )
         engine.repository.save_report(run.id, markdown, data)
+
+    def _restore_validation_snapshot(self, run: Run) -> Run:
+        """异常收口前恢复最近检查点的验证结论，避免失败运行回退为 pending。"""
+
+        checkpoint = self.engine.repository.latest_checkpoint(run.id)
+        if checkpoint is None:
+            return run
+        state = AgentStateModel.model_validate(checkpoint.state)
+        run.validation_status = state.validation_status
+        run.evidence_level = state.evidence_level
+        return run
+
+    @staticmethod
+    def _terminal_payload(run: Run, **details: Any) -> dict[str, Any]:
+        """终态事件始终同时携带执行、验证和证据三个独立维度。"""
+
+        return {
+            "execution_status": str(run.status),
+            "validation_status": run.validation_status,
+            "evidence_level": run.evidence_level,
+            **details,
+        }
 
     def resume_target(self, node: str, state: AgentStateModel) -> str:
         """把“已完成节点”映射为下一安全节点，避免重放已发生副作用。"""

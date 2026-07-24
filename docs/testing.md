@@ -27,21 +27,38 @@ python scripts/check_production_surface.py
 
 ### 真实 Provider 验收
 
-真实厂商冒烟测试默认不执行：没有设置 `YUWANG_RUN_REAL_PROVIDER_TEST=1` 时，pytest 会报告
-“未显式启用真实 Provider 冒烟测试”；启用后仍缺少地址、密钥或模型时，会报告“未配置真实
-Provider 环境变量”。这两种情况都是**跳过/未执行**，不是通过，也不应在 PR 中写成真实厂商
-验收通过。只有明确准备隔离测试账户后才运行：
+真实厂商兼容性矩阵默认不执行：没有设置 `YUWANG_RUN_REAL_PROVIDER_TEST=1` 时，四类用例都会
+报告“未显式启用真实 Provider 验收”；启用后没有配置某一类密钥时，该类会明确报告跳过。这两种
+情况都是**跳过/未执行**，不是通过，也不应在 PR 中写成真实厂商验收通过。
+
+每个已配置的厂商用例都会创建加密 Provider 配置，依次执行连接测试、普通聊天、结构化意图判断、
+流式输出和不调用工具的 Agent Run。公共协议与中文化错误分类仍由隔离单元/集成测试覆盖；真实
+服务不应为了测试主动制造鉴权、限流或超时错误。以下示例只启用 DeepSeek，其他三类会显示跳过：
 
 ```powershell
 $env:YUWANG_RUN_REAL_PROVIDER_TEST='1'
-$env:YUWANG_REAL_PROVIDER_BASE_URL='https://approved.example/v1'
-$env:YUWANG_REAL_PROVIDER_API_KEY='仅当前进程使用的测试密钥'
-$env:YUWANG_REAL_PROVIDER_MODEL='approved-model'
+$env:YUWANG_REAL_DEEPSEEK_API_KEY='仅当前进程使用的测试密钥'
+# 可按隔离账号覆盖官方预设地址和模型；未设置时使用项目中对应 Provider 预设。
+$env:YUWANG_REAL_DEEPSEEK_BASE_URL='https://api.deepseek.com'
+$env:YUWANG_REAL_DEEPSEEK_MODEL='your-approved-model'
 pytest -m real_provider tests/test_real_provider_smoke.py
 ```
 
-该测试只验证一次真实连接，不记录或打印完整密钥。普通聊天、意图分派和结构化 Agent 调用的
-Provider 错误仍应由常规单元/集成测试覆盖；真实密钥不得写入 `.env.example`、快照、日志或 PR。
+四类环境变量前缀分别为 `YUWANG_REAL_DEEPSEEK`、`YUWANG_REAL_QWEN`、
+`YUWANG_REAL_GLM` 与 `YUWANG_REAL_CUSTOM`。前三类只要求 `<前缀>_API_KEY`，可选
+`_BASE_URL` 和 `_MODEL`；自定义 OpenAI 兼容接口还必须明确提供 `_BASE_URL` 与 `_MODEL`。
+该测试不会记录或打印完整密钥，真实密钥不得写入 `.env.example`、快照、日志或 PR。
+
+### 非 CTF 评测基线
+
+`yuwang.evaluation.BUILTIN_EVALUATION_CASES` 提供 36 条声明式非 CTF 用例，覆盖普通聊天、
+意图判断、多步任务、用户纠偏、长上下文、附件、暂停/继续/停止、模型切换、Provider 生命周期、
+错误、验证语义、Prompt Injection、刷新/重启恢复、Skills、权限分级和运行历史。用例是可审计的
+输入与断言契约，不包含预写模型回答、可执行代码或测试替身；`tests/test_evaluation_cases.py` 会检查
+覆盖面和安全边界。
+
+未来执行这些用例时必须沿用正式消息与 Run 路径并调用用户配置的真实 Provider。没有可用 API Key
+时应标记为未执行或跳过，不能用本地固定答案替代通过结果。
 
 ## 前端与浏览器
 

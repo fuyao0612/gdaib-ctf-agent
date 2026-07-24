@@ -49,6 +49,7 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                 CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS reports(run_id TEXT PRIMARY KEY, markdown TEXT NOT NULL, json_data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS provider_configs(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS run_tasks(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS run_checkpoints(run_id TEXT NOT NULL, checkpoint_sequence INTEGER NOT NULL, node TEXT NOT NULL, state_schema_version TEXT NOT NULL, elapsed_seconds REAL NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(run_id,checkpoint_sequence));
@@ -65,12 +66,14 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                 CREATE TABLE IF NOT EXISTS run_guidance(run_id TEXT NOT NULL, sequence INTEGER NOT NULL, request_id TEXT NOT NULL, data TEXT NOT NULL, consumed_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY(run_id,sequence), UNIQUE(run_id,request_id));
                 CREATE TABLE IF NOT EXISTS run_pause_requests(run_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, requested_at TEXT NOT NULL, consumed_at TEXT);
                 CREATE TABLE IF NOT EXISTS chat_requests(request_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, status TEXT NOT NULL, user_message_id TEXT NOT NULL, assistant_message_id TEXT, error TEXT, created_at TEXT NOT NULL);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (8);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (7);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (4);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (9);
                 """
             )
             rows = db.execute("SELECT id,data FROM threads").fetchall()
@@ -78,10 +81,18 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                 data = json.loads(row["data"])
                 if "interaction_mode" not in data:
                     data["interaction_mode"] = "agent"
-                    db.execute(
-                        "UPDATE threads SET data=? WHERE id=?",
-                        (json.dumps(data, ensure_ascii=False), row["id"]),
-                    )
+                # 旧 Thread 没有对话级 Provider 选择时保持可读；首次读取会按当时的
+                # 全局默认安全补齐，避免升级把历史会话错误绑定到任意 Provider。
+                if "provider_config_id" not in data:
+                    data["provider_config_id"] = None
+                if "provider_fallback_notice" not in data:
+                    data["provider_fallback_notice"] = None
+                if "skill_ids" not in data:
+                    data["skill_ids"] = []
+                db.execute(
+                    "UPDATE threads SET data=? WHERE id=?",
+                    (json.dumps(data, ensure_ascii=False), row["id"]),
+                )
             db.execute(
                 "UPDATE chat_requests SET status='failed',error=? WHERE status='running'",
                 ("服务重启中断生成，请重试",),
@@ -129,6 +140,21 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteControlS
                 "SELECT data FROM runs WHERE thread_id=? ORDER BY created_at", (str(thread_id),)
             ).fetchall()
         return [self._load(Run, row["data"]) for row in rows]
+
+    def list_active_runs_by_provider_id(self, provider_id: UUID | str) -> list[Run]:
+        """删除 Provider 前仅检查仍可能实际调用它的活动 Run。"""
+
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM runs WHERE status IN "
+                "('queued','running','waiting_input','waiting_clarification',"
+                "'waiting_approval','paused')"
+            ).fetchall()
+        return [
+            run
+            for row in rows
+            if (run := self._load(Run, row["data"])).provider_config_id == UUID(str(provider_id))
+        ]
 
     def request_stop(
         self, run_id: UUID | str, *, request_id: UUID | str | None = None

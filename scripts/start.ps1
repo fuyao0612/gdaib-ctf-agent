@@ -63,7 +63,7 @@ function Read-DotEnv {
         $parts = $line -split '=', 2
         if ($parts.Count -eq 2) { $values[$parts[0].Trim()] = $parts[1].Trim() }
     }
-    foreach ($name in 'YUWANG_ADMIN_TOKEN','YUWANG_MASTER_KEY') {
+    foreach ($name in 'YUWANG_MASTER_KEY') {
         if (-not $values.ContainsKey($name) -or
             [string]::IsNullOrWhiteSpace($values[$name]) -or
             $values[$name].StartsWith('<')) {

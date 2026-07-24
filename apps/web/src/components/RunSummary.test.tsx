@@ -2,7 +2,11 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { Event, Report, Run, RunAudit, RunStatus } from "../types";
 import { ResultCard, RunProgress } from "./RunSummary";
-import { presentPhases, tokenUsageLabel } from "./run-presentation";
+import {
+  presentPhases,
+  tokenUsageLabel,
+  validationStatusLabel,
+} from "./run-presentation";
 
 const started = "2026-07-14T00:00:00Z";
 
@@ -157,5 +161,26 @@ describe("统一任务结果卡片", () => {
     expect(screen.getAllByText(new RegExp(expected)).length).toBeGreaterThan(0);
     if (status === "completed")
       expect(screen.getByTestId("result-conclusion")).toHaveTextContent("已验证答案");
+  });
+
+  it.each([
+    ["unverified", "回答已完成（未外部验证）", "模型生成，未经外部验证"],
+    ["partial", "回答已完成（部分验证）", "已完成结构化校验，未完成外部验证"],
+    ["failed", "回答完成，但验证失败", "验证失败"],
+  ] as const)("明确展示 %s 结论", (validationStatus, title, notice) => {
+    const run = {
+      ...makeRun("completed"),
+      validation_status: validationStatus,
+      evidence_level: validationStatus === "partial" ? ("structured" as const) : ("model" as const),
+    };
+    render(
+      <ResultCard run={run} events={events} audit={audit} report={report} messages={[]} />,
+    );
+    expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
+    expect(screen.getByText(notice)).toBeInTheDocument();
+  });
+
+  it("将部分验证作为独立状态标签", () => {
+    expect(validationStatusLabel("partial")).toBe("部分验证");
   });
 });

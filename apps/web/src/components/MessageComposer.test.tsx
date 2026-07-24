@@ -1,7 +1,32 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { Run, RunStatus } from "../types";
+import type { ProviderConfig, Run, RunStatus } from "../types";
 import MessageComposer from "./MessageComposer";
+
+const provider: ProviderConfig = {
+  id: "provider-1",
+  name: "测试模型",
+  preset: "custom",
+  base_url: "https://provider.test/v1",
+  model: "test-model",
+  enabled: true,
+  is_default: true,
+  fallback_order: 0,
+  timeout_seconds: 30,
+  max_retries: 0,
+  structured_mode: "json_object",
+  input_price_per_million: 0,
+  output_price_per_million: 0,
+  resolved_structured_mode: "json_object",
+  fallback_on: [],
+  has_api_key: true,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  connection_status: "ok",
+  last_tested_at: null,
+  last_test_error: null,
+  actual_model: "test-model",
+};
 
 function run(status: RunStatus): Run {
   return {
@@ -28,10 +53,13 @@ function renderComposer(status: RunStatus) {
       activeRun={run(status)}
       message="补充范围"
       pendingArtifacts={[]}
+      providers={[provider]}
+      providerConfigId={provider.id}
       uploading={false}
       chatGenerating={false}
       chatCanRetry={false}
       onMessageChange={onMessageChange}
+      onProviderChange={vi.fn()}
       onUpload={vi.fn()}
       onSend={onSend}
       onStop={vi.fn()}
@@ -43,6 +71,36 @@ function renderComposer(status: RunStatus) {
 }
 
 describe("统一消息输入框", () => {
+  it("显示会话级已启用模型，并在切换时回传 Provider ID", () => {
+    const onProviderChange = vi.fn();
+    render(
+      <MessageComposer
+        activeRun={null}
+        message=""
+        pendingArtifacts={[]}
+        providers={[provider]}
+        providerConfigId={provider.id}
+        uploading={false}
+        chatGenerating={false}
+        chatCanRetry={false}
+        onMessageChange={vi.fn()}
+        onProviderChange={onProviderChange}
+        onUpload={vi.fn()}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onRetry={vi.fn()}
+        onChatRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("当前对话模型")).toHaveValue(provider.id);
+    expect(screen.getByRole("option", { name: /测试模型 · test-model（可用）/ })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("当前对话模型"), {
+      target: { value: provider.id },
+    });
+    expect(onProviderChange).toHaveBeenCalledWith(provider.id);
+  });
+
   it("运行中保持可编辑，并将发送语义标为追加指引", () => {
     const { onMessageChange, onSend } = renderComposer("running");
     const input = screen.getByLabelText("消息");
@@ -80,10 +138,13 @@ describe("统一消息输入框", () => {
         activeRun={run("running")}
         message="等附件完成后发送"
         pendingArtifacts={[]}
+        providers={[provider]}
+        providerConfigId={provider.id}
         uploading
         chatGenerating={false}
         chatCanRetry={false}
         onMessageChange={vi.fn()}
+        onProviderChange={vi.fn()}
         onUpload={vi.fn()}
         onSend={onSend}
         onStop={vi.fn()}
@@ -106,10 +167,13 @@ describe("统一消息输入框", () => {
         activeRun={run("running")}
         message=""
         pendingArtifacts={[]}
+        providers={[provider]}
+        providerConfigId={provider.id}
         uploading={false}
         chatGenerating
         chatCanRetry={false}
         onMessageChange={vi.fn()}
+        onProviderChange={vi.fn()}
         onUpload={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}
@@ -129,10 +193,13 @@ describe("统一消息输入框", () => {
         activeRun={stopPending}
         message=""
         pendingArtifacts={[]}
+        providers={[provider]}
+        providerConfigId={provider.id}
         uploading={false}
         chatGenerating={false}
         chatCanRetry
         onMessageChange={vi.fn()}
+        onProviderChange={vi.fn()}
         onUpload={vi.fn()}
         onSend={vi.fn()}
         onStop={vi.fn()}

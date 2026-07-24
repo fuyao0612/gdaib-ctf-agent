@@ -35,9 +35,9 @@ Linux/macOS：
 ./scripts/first-setup.sh --start
 ```
 
-脚本只在 `.env` 不存在时生成高熵管理员令牌和 Fernet 主密钥，绝不覆盖已有文件，也不会把密钥打印到日志。管理员本人可在服务器本机打开 `.env`，读取 `YUWANG_ADMIN_TOKEN` 后粘贴到登录框；不要把它发送到聊天、工单或截图中。`.env` 权限应仅限服务账户，并与数据备份分开离线保管。首次打开 `http://127.0.0.1:8080` 会进入配置向导：管理员登录、添加 Provider、执行真实连接测试、确认默认 Agent，然后开始对话。Provider API Key 只在设置中心提交，并以主密钥加密后持久化。
 
-Windows 上可运行 `notepad .env`，只复制 `YUWANG_ADMIN_TOKEN=` 等号后的完整值。若页面提示“管理员令牌不正确”，先确认没有复制变量名、引号或首尾空格；若刚手动修改 `.env`，执行 `docker compose up -d --force-recreate api` 让 API 读取新环境变量。不要在终端历史中打印令牌。
+
+脚本只在 `.env` 不存在时生成 Fernet 主密钥，绝不覆盖已有文件，也不会把密钥打印到日志。首次打开 `http://127.0.0.1:8080` 时，设置中心会自动建立仅限本机的短生命周期会话；随后添加 Provider、执行真实连接测试、确认默认 Agent，即可开始对话。Provider API Key 只在设置中心提交，并以主密钥加密后持久化。本机工作台不得直接暴露到公网；公网部署必须由反向代理或外部身份层保护。
 
 国内模型可直接选择 DeepSeek、阿里云百炼/千问或智谱 GLM 预设，核对控制台提供的 API Key 与模型名后执行“连接测试”。若使用其他 OpenAI 兼容服务，选择“自定义”，填写该服务的 HTTPS Base URL 和模型名；只有明确启用本机协议测试时才允许 HTTP localhost。
 

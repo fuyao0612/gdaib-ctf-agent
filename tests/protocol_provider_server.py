@@ -57,18 +57,30 @@ class Handler(BaseHTTPRequestHandler):
         if schema_name == "connectionprobe" or '"status":"ok"' in prompt:
             return {"status": "ok"}
         context = json.loads(prompt)
+        if schema_name == "messageintent" or "user_message_untrusted" in context:
+            message = str(context.get("user_message_untrusted", ""))
+            if message in {"你好", "我想准备发布说明。"} or "不要执行" in message or "只说明" in message:
+                return {"kind": "chat", "clarification_question": None}
+            if "帮我处理一下" in message:
+                return {
+                    "kind": "clarify",
+                    "clarification_question": "请补充目标和预期交付物。",
+                }
+            return {"kind": "run", "clarification_question": None}
         if schema_name == "taskbriefdraft" or "生成公开 Task Brief" in context.get(
             "purpose", ""
         ):
-            task = context.get("untrusted_task", "").lower()
+            user_input = context["untrusted_user_input"]
+            constraints = context["trusted_execution_constraints"]
+            task = user_input["task"].lower()
             needs_clarification = (
-                "clarify-first" in task and not context.get("supplemental_inputs")
+                "clarify-first" in task and not user_input["supplemental_inputs"]
             )
             return {
                 "goal": "Complete the authorized task with an auditable result.",
-                "authorized_scope": context.get("authorized_targets", []),
-                "constraints": context.get("constraints", []),
-                "success_criteria": context.get("success_conditions", []),
+                "authorized_scope": constraints["authorized_targets"],
+                "constraints": constraints["constraints"],
+                "success_criteria": constraints["success_conditions"],
                 "expected_output": "A concise auditable result.",
                 "known_information": ["The original request is preserved."],
                 "assumptions": [],
@@ -78,12 +90,13 @@ class Handler(BaseHTTPRequestHandler):
                     ["Please clarify the intended audience."] if needs_clarification else []
                 ),
             }
-        if "slow" in context.get("untrusted_task", "").lower():
+        user_input = context["untrusted_user_input"]
+        if "slow" in user_input["task"].lower():
             time.sleep(1.2)
         purpose = context.get("purpose", "")
         if schema_name == "agentplan" or any(word in purpose for word in ("计划", "规划")):
-            task = context.get("untrusted_task", "").lower()
-            guidance = context.get("supplemental_inputs", [])
+            task = user_input["task"].lower()
+            guidance = user_input["supplemental_inputs"]
             return {
                 "summary": (
                     "超长事件内容用于验证工作台在连续中文、路径和摘要混排时仍会正确换行。" * 8
@@ -110,10 +123,10 @@ class Handler(BaseHTTPRequestHandler):
             }
         if schema_name == "importantfacts":
             return {"facts": ["用户偏好分阶段、可回滚的实施方案"]}
-        observations = context.get("observations_untrusted", context.get("observations", []))
-        task = context.get("untrusted_task", "").lower()
+        observations = context["untrusted_tool_content"]
+        task = user_input["task"].lower()
         if "human-input" in task:
-            if not context.get("supplemental_inputs"):
+            if not user_input["supplemental_inputs"]:
                 return {"kind": "request_input", "summary": "Please provide the missing scope."}
             return {
                 "kind": "finish",
@@ -129,9 +142,7 @@ class Handler(BaseHTTPRequestHandler):
         if "hard-fail" in task:
             return {"kind": "fail", "summary": "测试要求明确失败"}
         if not observations:
-            attachments = context.get(
-                "attachments_untrusted", context.get("attachments", [])
-            )
+            attachments = context["untrusted_attachment_content"]
             if not attachments:
                 return {
                     "kind": "finish",

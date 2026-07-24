@@ -40,7 +40,7 @@ from yuwang.domain.models import (
     TaskSpec,
 )
 from yuwang.events import EventService
-from yuwang.model_providers import ModelProvider, ProviderError
+from yuwang.model_providers import ModelProvider, ProviderCallMetrics, ProviderError
 from yuwang.policy import PolicyEngine
 from yuwang.settings import AgentProfileInput, AgentProfileVersion
 from yuwang.tooling import ToolExecutor, ToolRegistry
@@ -72,10 +72,8 @@ class AgentEngine:
             **AgentProfileInput(name="默认安全 Agent").model_dump(),
             version=1,
         )
-        self.components = components or default_components(
-            repository,
-            artifact_root or Path("data/artifacts"),
-        )
+        self.artifact_root = (artifact_root or Path("data/artifacts")).resolve()
+        self.components = components or default_components(repository, self.artifact_root)
         self.context_builder = self.components.context_builder
         self.planner = self.components.planner
         self.action_selector = self.components.action_selector
@@ -242,9 +240,10 @@ class AgentEngine:
                 if metrics and metrics.usage_reported
                 else estimated_input_tokens
             )
+            cost = self._model_cost(metrics, input_tokens, 0)
             state.model_calls += request_count
             state.tokens += input_tokens
-            state.model_cost += metrics.cost if metrics else 0
+            state.model_cost += cost
             self.repository.save_model_call(
                 ModelCall(
                     run_id=state.run_id,
@@ -268,7 +267,8 @@ class AgentEngine:
                         "request_count": request_count,
                         "retry_count": metrics.retry_count if metrics else 0,
                         "usage_reported": metrics.usage_reported if metrics else False,
-                        "cost": metrics.cost if metrics else 0,
+                        "cost": cost,
+                        "cost_estimated": not bool(metrics and metrics.usage_reported),
                     },
                 )
             )
@@ -285,9 +285,10 @@ class AgentEngine:
             if metrics and metrics.usage_reported
             else max(1, len(result.model_dump_json()) // 4)
         )
+        cost = self._model_cost(metrics, input_tokens, output_tokens)
         state.model_calls += request_count
         state.tokens += input_tokens + output_tokens
-        state.model_cost += metrics.cost if metrics else 0
+        state.model_cost += cost
         self.repository.save_model_call(
             ModelCall(
                 run_id=state.run_id,
@@ -313,11 +314,27 @@ class AgentEngine:
                     "total_tokens": (
                         metrics.total_tokens if metrics else input_tokens + output_tokens
                     ),
-                    "cost": metrics.cost if metrics else 0,
+                    "cost": cost,
+                    "cost_estimated": not bool(metrics and metrics.usage_reported),
                 },
             )
         )
         return result
+
+    @staticmethod
+    def _model_cost(
+        metrics: ProviderCallMetrics | None, input_tokens: int, output_tokens: int
+    ) -> float:
+        """厂商未返回 usage 时按已配置单价和本地 Token 估算，不伪装成账单。"""
+
+        if metrics and metrics.usage_reported:
+            return metrics.cost
+        if not metrics:
+            return 0
+        return (
+            input_tokens * metrics.input_price_per_million
+            + output_tokens * metrics.output_price_per_million
+        ) / 1_000_000
 
     # 以下薄委托保留旧测试和扩展点，同时让实际节点实现集中在 nodes.py。
     async def _ingest(self, raw: GraphState) -> GraphState:

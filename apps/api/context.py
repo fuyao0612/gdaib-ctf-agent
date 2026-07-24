@@ -40,6 +40,7 @@ from yuwang.settings import (
     ProviderConfig,
     SecretCipher,
     SettingsService,
+    SkillService,
 )
 from yuwang.settings.models import ProviderPreset, resolve_structured_mode
 from yuwang.storage import SQLiteRepository
@@ -55,11 +56,12 @@ class ApiContext:
         config.artifact_root.mkdir(parents=True, exist_ok=True)
         self.repository = SQLiteRepository(config.database_path)
         self.profile_service = AgentProfileService(self.repository)
+        self.skill_service = SkillService(self.repository)
         self.profile_service.ensure_default(self.repository.get_agent_defaults().budget)
         self.policy = PolicyEngine(SecurityConfig())
         self.registry: ToolRegistry = create_reference_registry(config.artifact_root)
         self.tasks: dict[UUID, asyncio.Task[None]] = {}
-        # 会话只用于单实例自托管工作台；重启即失效，避免把管理员令牌存进浏览器。
+        # 会话只用于单实例自托管工作台；重启即失效，浏览器仅保存 HttpOnly Cookie。
         self.admin_sessions: dict[str, tuple[float, str]] = {}
 
     def cleanup_callback(self, run_id: UUID) -> Callable[[asyncio.Task[None]], None]:
@@ -88,16 +90,10 @@ class ApiContext:
     def verify_session(
         self,
         request: Request,
-        authorization: str | None = None,
         csrf_token: str | None = None,
-    ) -> tuple[float, str] | None:
-        """验证管理员 Bearer 令牌或 HttpOnly 会话，并保护写请求免受 CSRF。"""
+    ) -> tuple[float, str]:
+        """验证本机管理会话，并保护写请求免受 CSRF。"""
 
-        if not self.config.admin_token:
-            raise HTTPException(503, "管理员鉴权未配置")
-        scheme, _, token = (authorization or "").partition(" ")
-        if scheme.lower() == "bearer" and secrets.compare_digest(token, self.config.admin_token):
-            return None
         session_id = request.cookies.get("yuwang_admin_session", "")
         session = self.admin_sessions.get(session_id)
         if not session or session[0] <= time.time():
@@ -112,12 +108,11 @@ class ApiContext:
     def require_admin(
         self,
         request: Request,
-        authorization: Annotated[str | None, Header()] = None,
         csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     ) -> None:
         """FastAPI 依赖入口；管理路由显式声明该安全边界。"""
 
-        self.verify_session(request, authorization, csrf_token)
+        self.verify_session(request, csrf_token)
 
     def build_provider_chain(self, provider_configs: list[ProviderConfig]) -> ProviderChain:
         """从已固化配置构造真实 Provider 链，恢复时也走同一条路径。"""
@@ -152,6 +147,39 @@ class ApiContext:
         configs = self.get_settings_service().resolve_chain(provider_config_id, fallback_ids)
         return configs, self.build_provider_chain(configs)
 
+    def default_thread_provider_id(self) -> UUID | None:
+        """解析新会话的全局默认模型，避免 ChatDefaults 改变会话级选择语义。"""
+
+        service = self.get_settings_service()
+        try:
+            return service.resolve_chain()[0].id
+        except ValueError:
+            return None
+
+    def reconcile_thread_provider(self, thread: Thread) -> Thread:
+        """将已停用或已删除的会话选择安全回退，并保存一次性用户提示。"""
+
+        try:
+            service = self.get_settings_service()
+        except HTTPException:
+            return thread
+        selected = None
+        if thread.provider_config_id:
+            try:
+                selected = service.get_provider(thread.provider_config_id)
+            except KeyError:
+                selected = None
+        if selected and selected.enabled:
+            return thread
+        fallback_id = self.default_thread_provider_id()
+        if not fallback_id or fallback_id == thread.provider_config_id:
+            return thread
+        if thread.provider_config_id:
+            thread.provider_fallback_notice = "原选择的模型不可用，已回退到全局默认模型。"
+        thread.provider_config_id = fallback_id
+        self.repository.save_thread(thread)
+        return thread
+
     def resolve_thread_profile(self, thread: Thread) -> AgentProfileVersion:
         """旧 Thread 首次运行时绑定当前默认版本，之后始终使用该不可变版本。"""
 
@@ -169,7 +197,7 @@ class ApiContext:
         thread = self.repository.get_thread(thread_id)
         if not thread:
             raise HTTPException(404, "对话不存在")
-        return thread
+        return self.reconcile_thread_provider(thread)
 
     def require_run(self, run_id: UUID) -> Run:
         run = self.repository.get_run(run_id)
@@ -273,6 +301,7 @@ class ApiContext:
             success_conditions=create.success_conditions,
             verification_rules=verification_rules,
             budget=profile.budget,
+            skills=self.skill_service.snapshots_for(thread.skill_ids),
         )
 
     async def start_run(
@@ -293,13 +322,16 @@ class ApiContext:
         self.repository.save_thread(thread)
         profile = self.resolve_thread_profile(thread)
         try:
-            selected_id = body.provider_config_id or profile.default_provider_id
+            selected_id = body.provider_config_id or thread.provider_config_id or profile.default_provider_id
             fallback_ids = profile.fallback_provider_ids if profile.default_provider_id else None
             provider_configs, provider = self.resolve_provider_chain(selected_id, fallback_ids)
             selected = provider_configs[0]
         except (ValueError, KeyError) as exc:
             raise HTTPException(409, str(exc)) from exc
-        task = self.build_task(thread, body, profile, origin_message=origin_message)
+        try:
+            task = self.build_task(thread, body, profile, origin_message=origin_message)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
         run = Run(
             thread_id=thread.id,
             provider=selected.name,
@@ -412,7 +444,7 @@ class ApiContext:
         return {
             "database": database_ok,
             "master_key": master_key_ok,
-            "admin": bool(self.config.admin_token),
+            "admin": True,
             "provider": provider_ok,
             "agent": agent_ok,
         }

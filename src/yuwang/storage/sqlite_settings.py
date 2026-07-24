@@ -2,14 +2,58 @@
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from yuwang.settings.models import AgentDefaults, ChatDefaults, ProviderConfig
 from yuwang.settings.profiles import AgentProfileVersion
+from yuwang.settings.skills import SkillDefinition
 from yuwang.storage.sqlite_common import SQLiteStore
 
 
 class SQLiteSettingsStore(SQLiteStore):
+    def save_skill(self, value: SkillDefinition) -> SkillDefinition:
+        with self._lock, self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO skills VALUES(?,?,?)",
+                (str(value.id), value.model_dump_json(), value.created_at.isoformat()),
+            )
+        return value
+
+    def get_skill(self, skill_id: UUID | str) -> SkillDefinition | None:
+        with self.connect() as db:
+            row = db.execute("SELECT data FROM skills WHERE id=?", (str(skill_id),)).fetchone()
+        return SkillDefinition.model_validate_json(row["data"]) if row else None
+
+    def list_skills(self) -> list[SkillDefinition]:
+        with self.connect() as db:
+            rows = db.execute("SELECT data FROM skills ORDER BY created_at").fetchall()
+        return [SkillDefinition.model_validate_json(row["data"]) for row in rows]
+
+    def delete_skill_with_thread_cleanup(self, skill_id: UUID) -> int:
+        """删除设置后同步清理 Thread 选择；历史 Run 继续使用 TaskSpec 快照。"""
+
+        affected = 0
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute("SELECT id,data FROM threads").fetchall()
+            for row in rows:
+                data = json.loads(row["data"])
+                selected = data.get("skill_ids", [])
+                remaining = [item for item in selected if item != str(skill_id)]
+                if len(remaining) == len(selected):
+                    continue
+                data["skill_ids"] = remaining
+                db.execute(
+                    "UPDATE threads SET data=? WHERE id=?",
+                    (json.dumps(data, ensure_ascii=False), row["id"]),
+                )
+                affected += 1
+            cursor = db.execute("DELETE FROM skills WHERE id=?", (str(skill_id),))
+            if cursor.rowcount == 0:
+                raise KeyError("Skill 不存在")
+        return affected
+
     def save_provider_config(self, value: ProviderConfig) -> ProviderConfig:
         with self._lock, self.connect() as db:
             db.execute(
@@ -46,6 +90,36 @@ class SQLiteSettingsStore(SQLiteStore):
             cursor = db.execute("DELETE FROM provider_configs WHERE id=?", (str(provider_id),))
             if cursor.rowcount == 0:
                 raise KeyError("Provider 配置不存在")
+
+    def delete_provider_with_thread_fallback(
+        self,
+        provider_id: UUID,
+        fallback_provider_id: UUID | None,
+        notice: str,
+    ) -> int:
+        """事务内回退会话选择并删除 Provider，避免留下引用已删除配置的 Thread。"""
+
+        affected = 0
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute("SELECT id,data FROM threads").fetchall()
+            for row in rows:
+                data = json.loads(row["data"])
+                if data.get("provider_config_id") != str(provider_id):
+                    continue
+                data["provider_config_id"] = (
+                    str(fallback_provider_id) if fallback_provider_id else None
+                )
+                data["provider_fallback_notice"] = notice
+                db.execute(
+                    "UPDATE threads SET data=? WHERE id=?",
+                    (json.dumps(data, ensure_ascii=False), row["id"]),
+                )
+                affected += 1
+            cursor = db.execute("DELETE FROM provider_configs WHERE id=?", (str(provider_id),))
+            if cursor.rowcount == 0:
+                raise KeyError("Provider 配置不存在")
+        return affected
 
     def get_agent_defaults(self) -> AgentDefaults:
         with self.connect() as db:

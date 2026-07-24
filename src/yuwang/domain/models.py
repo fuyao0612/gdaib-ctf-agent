@@ -41,6 +41,10 @@ class RunStatus(StrEnum):
     STOPPED = "stopped"
 
 
+ValidationStatus = Literal["pending", "unverified", "partial", "validated", "failed"]
+EvidenceLevel = Literal["none", "model", "structured", "external"]
+
+
 ACTIVE_RUN_STATUSES = {
     RunStatus.QUEUED,
     RunStatus.RUNNING,
@@ -82,6 +86,9 @@ class EventType(StrEnum):
     PLAN_EDITED = "plan_edited"
     PLAN_APPROVED = "plan_approved"
     PLAN_REJECTED = "plan_rejected"
+    RISK_APPROVAL_REQUESTED = "risk_approval_requested"
+    RISK_APPROVED = "risk_approved"
+    RISK_REJECTED = "risk_rejected"
     GUIDANCE_QUEUED = "guidance_queued"
     GUIDANCE_APPLIED = "guidance_applied"
     GUIDANCE_SKIPPED = "guidance_skipped"
@@ -107,6 +114,13 @@ class Thread(DomainModel):
     mode: ThreadMode = ThreadMode.NORMAL
     # 旧数据缺少该字段时继续按 Agent 任务恢复；新建会话由 API 显式默认成 chat。
     interaction_mode: InteractionMode = InteractionMode.AGENT
+    # 对话级模型选择独立于全局默认值。Run 启动时再把实际 Provider 固化为快照，
+    # 因此用户切换这里的值绝不会改变已经运行中的任务。
+    provider_config_id: UUID | None = None
+    # 已失效的会话选择被安全回退时保留一次性提示，前端确认展示后会清空它。
+    provider_fallback_notice: str | None = None
+    # 对话只保存当前选择；真正运行时会把 Skill 内容复制进不可变 TaskSpec 快照。
+    skill_ids: list[UUID] = Field(default_factory=list, max_length=20)
     agent_profile_id: UUID | None = None
     agent_profile_version: int | None = Field(default=None, ge=1)
     plan_mode: Literal["auto", "approval"] = "auto"
@@ -140,8 +154,9 @@ class Run(DomainModel):
     stop_request_id: UUID | None = None
     error: str | None = None
     completion_mode: str = "evidence"
-    validation_status: Literal["pending", "unverified", "validated", "failed"] = "pending"
-    evidence_level: Literal["none", "model", "structured", "external"] = "none"
+    # status 描述执行生命周期；验证结论与证据强度必须独立展示，不能由完成状态推断。
+    validation_status: ValidationStatus = "pending"
+    evidence_level: EvidenceLevel = "none"
     created_at: datetime = Field(default_factory=utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -223,6 +238,18 @@ class Artifact(DomainModel):
         return value
 
 
+class SkillSnapshot(BaseModel):
+    """一次 Run 使用的声明式 Skill 快照，不包含代码或可执行载荷。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    skill_id: UUID
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1000)
+    prompt: str = Field(min_length=1, max_length=10_000)
+    steps: list[str] = Field(default_factory=list, max_length=30)
+    checklist: list[str] = Field(default_factory=list, max_length=30)
+
+
 class TaskSpec(DomainModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True, frozen=True)
     body: str = Field(min_length=1, max_length=100_000)
@@ -237,6 +264,8 @@ class TaskSpec(DomainModel):
     budget: Budget = Field(default_factory=Budget)
     success_conditions: list[str] = Field(default_factory=lambda: ["reference_tool_succeeded"])
     verification_rules: list[VerificationRule] = Field(default_factory=list)
+    # 运行开始后 Skill 不再跟随设置中心修改，恢复与审计均使用这里的快照。
+    skills: list[SkillSnapshot] = Field(default_factory=list, max_length=20)
 
 
 class CallStatus(StrEnum):
@@ -286,7 +315,7 @@ class RunCheckpoint(DomainModel):
     run_id: UUID
     checkpoint_sequence: int = Field(ge=1)
     node: str
-    state_schema_version: str = "2.0"
+    state_schema_version: str = "3.0"
     state: dict[str, Any]
     elapsed_seconds: float = Field(ge=0)
     created_at: datetime = Field(default_factory=utcnow)

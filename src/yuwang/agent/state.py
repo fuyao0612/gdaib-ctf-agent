@@ -9,10 +9,17 @@ from __future__ import annotations
 from typing import Any, TypedDict
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yuwang.control import TaskBrief
-from yuwang.domain.models import AgentAction, AgentPlan, Observation, TaskSpec
+from yuwang.domain.models import (
+    AgentAction,
+    AgentPlan,
+    EvidenceLevel,
+    Observation,
+    TaskSpec,
+    ValidationStatus,
+)
 
 
 class BudgetExceeded(RuntimeError):
@@ -46,6 +53,11 @@ class AgentStateModel(BaseModel):
     elapsed_seconds: float = Field(default=0, ge=0)
     task_brief: TaskBrief | None = None
     plan_approved: bool = False
+    # 仅在中风险工具尚未获得用户确认时填充，恢复后不能绕过该检查点。
+    pending_risk_approval_tool: str | None = None
+    pending_risk_approval_fingerprint: str | None = None
+    # 只允许一次用户明确确认过的同一动作继续；工具名或参数变化会产生新指纹。
+    approved_risk_action_fingerprint: str | None = None
     plan: AgentPlan | None = None
     action: AgentAction | None = None
     observations: list[Observation] = Field(default_factory=list)
@@ -54,10 +66,12 @@ class AgentStateModel(BaseModel):
     context_anchor: str | None = None
     no_progress_count: int = 0
     replan_count: int = 0
-    verified: bool = False
+    # 只控制图是否可以进入收尾，绝不表示验证已通过。旧检查点中的 verified
+    # 在 model_validator 中迁移到这里，避免恢复后混淆执行与验证语义。
+    completion_ready: bool = False
     verification_summary: str = "尚未验证"
-    validation_status: str = "pending"
-    evidence_level: str = "none"
+    validation_status: ValidationStatus = "pending"
+    evidence_level: EvidenceLevel = "none"
     supplemental_inputs: list[str] = Field(default_factory=list)
     supplemental_artifact_ids: list[UUID] = Field(default_factory=list)
     guidance_replan_required: bool = False
@@ -71,6 +85,19 @@ class AgentStateModel(BaseModel):
     structured_output: dict[str, Any] | None = None
     tool_schemas: list[dict[str, Any]] = Field(default_factory=list)
     remaining_budget: dict[str, float | int] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_verified(cls, value: Any) -> Any:
+        """读取旧检查点时仅迁移流程标记，不把它解释为验证结果。"""
+
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        legacy_verified = data.pop("verified", None)
+        if "completion_ready" not in data and legacy_verified is not None:
+            data["completion_ready"] = bool(legacy_verified)
+        return data
 
 
 class GraphState(TypedDict, total=False):
@@ -87,6 +114,9 @@ class GraphState(TypedDict, total=False):
     elapsed_seconds: float
     task_brief: dict[str, Any] | None
     plan_approved: bool
+    pending_risk_approval_tool: str | None
+    pending_risk_approval_fingerprint: str | None
+    approved_risk_action_fingerprint: str | None
     plan: dict[str, Any] | None
     action: dict[str, Any] | None
     observations: list[dict[str, Any]]
@@ -95,7 +125,7 @@ class GraphState(TypedDict, total=False):
     context_anchor: str | None
     no_progress_count: int
     replan_count: int
-    verified: bool
+    completion_ready: bool
     verification_summary: str
     validation_status: str
     evidence_level: str

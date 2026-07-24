@@ -50,6 +50,7 @@ function finalAnswer(run: Run, report: Report | null, messages: Message[]): stri
 
 function verifiedLabel(run: Run): string {
   if (run.validation_status === "validated") return "已通过配置的验证";
+  if (run.validation_status === "partial") return "已完成结构化校验，未完成外部验证";
   if (run.validation_status === "unverified") return "模型生成，未经外部验证";
   if (run.validation_status === "failed") return "验证失败";
   return "尚未完成验证";
@@ -57,6 +58,7 @@ function verifiedLabel(run: Run): string {
 
 function completedTitle(run: Run): string {
   if (run.validation_status === "validated") return "任务已验证成功";
+  if (run.validation_status === "partial") return "回答已完成（部分验证）";
   if (run.validation_status === "unverified") return "回答已完成（未外部验证）";
   if (run.validation_status === "failed") return "回答完成，但验证失败";
   return "任务已完成，验证状态待确认";

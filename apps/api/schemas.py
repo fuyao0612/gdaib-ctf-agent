@@ -21,12 +21,17 @@ class ThreadCreate(BaseModel):
     agent_profile_id: UUID | None = None
     plan_mode: Literal["auto", "approval"] = "auto"
     interaction_mode: InteractionMode = InteractionMode.CHAT
+    provider_config_id: UUID | None = None
+    skill_ids: list[UUID] = Field(default_factory=list, max_length=20)
 
 
 class ThreadUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=160)
     archived: bool | None = None
     interaction_mode: InteractionMode | None = None
+    provider_config_id: UUID | None = None
+    acknowledge_provider_fallback: bool = False
+    skill_ids: list[UUID] | None = Field(default=None, max_length=20)
 
 
 class MessageCreate(BaseModel):
@@ -98,10 +103,6 @@ class GuidanceSubmit(ControlRequest):
 
 class MemoryToggle(BaseModel):
     enabled: bool
-
-
-class AdminLogin(BaseModel):
-    token: str = Field(min_length=1, max_length=4096)
 
 
 class ProfileCopy(BaseModel):

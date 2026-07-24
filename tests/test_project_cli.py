@@ -84,7 +84,7 @@ def test_doctor_is_read_only_and_never_prints_secrets() -> None:
     result = run_cli("doctor")
     output = result.stdout + result.stderr
     values = read_env_values()
-    for name in ("YUWANG_ADMIN_TOKEN", "YUWANG_MASTER_KEY"):
+    for name in ("YUWANG_MASTER_KEY",):
         value = values.get(name, "")
         if value:
             assert value not in output

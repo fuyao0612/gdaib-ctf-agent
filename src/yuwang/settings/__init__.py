@@ -17,6 +17,7 @@ from .profiles import (
 )
 from .security import SecretCipher
 from .service import SettingsService
+from .skills import SkillDefinition, SkillInput, SkillService
 
 __all__ = [
     "AgentDefaults",
@@ -32,4 +33,7 @@ __all__ = [
     "SafeTemplateRenderer",
     "SecretCipher",
     "SettingsService",
+    "SkillDefinition",
+    "SkillInput",
+    "SkillService",
 ]

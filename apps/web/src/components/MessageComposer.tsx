@@ -1,19 +1,25 @@
 /** 统一输入区：文本和附件始终走同一消息入口，状态只改变服务端解释方式。 */
-import type { Artifact, Run } from "../types";
+import type { ReactNode } from "react";
+import type { Artifact, ProviderConfig, Run } from "../types";
+import ProviderSelector from "./ProviderSelector";
 
 interface Props {
   activeRun: Run | null;
   message: string;
   pendingArtifacts: Artifact[];
+  providers: ProviderConfig[];
+  providerConfigId: string | null;
   uploading: boolean;
   chatGenerating: boolean;
   chatCanRetry: boolean;
   onMessageChange: (value: string) => void;
+  onProviderChange: (providerId: string) => void;
   onUpload: (file?: File) => void;
   onSend: () => void;
   onStop: () => void;
   onRetry: () => void;
   onChatRetry: () => void;
+  children?: ReactNode;
 }
 
 function inputCopy(run: Run | null) {
@@ -89,6 +95,13 @@ export default function MessageComposer(props: Props) {
           附件正在上传，完成后会出现在下方列表并随下一条消息发送。
         </p>
       )}
+      <ProviderSelector
+        providers={props.providers}
+        value={props.providerConfigId}
+        disabled={props.uploading}
+        onChange={props.onProviderChange}
+      />
+      {props.children}
       <div className="attachments">
         {props.pendingArtifacts.map((file) => (
           <span key={file.id}>
