@@ -278,7 +278,18 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         )
         assert client.get(f"/api/v1/artifacts/{artifact['id']}/download").content == b"evidence"
         assert len(client.get("/api/v1/providers").json()) == 1
-        assert len(client.get("/api/v1/tools").json()) == 3
+        tool_ids = {item["id"] for item in client.get("/api/v1/tools").json()}
+        assert {
+            "builtin.file_metadata",
+            "builtin.localhost_http_probe",
+            "builtin.test_echo",
+            "ctf.encoding_decode",
+            "ctf.file_inspect",
+            "ctf.strings_extract",
+            "ctf.archive_extract",
+            "ctf.flag_candidate_verify",
+            "ctf.classical_cipher_analyze",
+        } <= tool_ids
     with TestClient(app) as reopened:
         open_local_session(reopened)
         detail = reopened.get(f"/api/v1/threads/{thread['id']}").json()

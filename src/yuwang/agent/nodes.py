@@ -347,6 +347,13 @@ class WorkflowNodes:
         )
         artifact_ids = [UUID(value) for value in result.artifact_ids]
         artifact_ids.extend(generated_artifact_ids)
+        for artifact_id in result.artifact_ids:
+            engine.events.emit(
+                state.run_id,
+                EventType.ARTIFACT_CREATED,
+                "工具已生成派生 Artifact",
+                {"artifact_id": artifact_id, "call_id": str(call_id)},
+            )
         engine.repository.save_tool_call(
             ToolCall(
                 id=call_id,
@@ -380,6 +387,26 @@ class WorkflowNodes:
         else:
             state.no_progress_count = 0
         state.observations.append(observation)
+        # Flag 格式检查只会产生“候选”证据，不会把格式匹配误报成赛题平台验证成功。
+        candidate = result.structured_output.get("candidate")
+        validation = result.structured_output.get("validation_status")
+        if (
+            result.success
+            and tool.spec.id == "ctf.flag_candidate_verify"
+            and isinstance(candidate, str)
+            and isinstance(validation, str)
+        ):
+            engine.repository.save_evidence(
+                EvidenceRecord(
+                    run_id=state.run_id,
+                    candidate=candidate,
+                    source_call_id=call_id,
+                    location="/candidate",
+                    verified=False,
+                    verification_summary="候选 Flag，尚未经过赛题平台验证",
+                    rule_kind="flag_format",
+                )
+            )
         engine.events.emit(
             state.run_id,
             EventType.TOOL_FINISHED,

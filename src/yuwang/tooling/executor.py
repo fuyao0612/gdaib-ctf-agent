@@ -6,6 +6,7 @@ import asyncio
 import time
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from jsonschema import ValidationError as JsonSchemaValidationError  # type: ignore[import-untyped]
 from jsonschema import validate as validate_json_schema
@@ -73,10 +74,12 @@ class ToolExecutor:
             validate_json_schema(instance=request.arguments, schema=spec.input_schema)
             value = tool.input_model.model_validate(request.arguments)
             output = await asyncio.wait_for(
-                tool.execute(value), timeout=timeout or spec.timeout_seconds
+                tool.execute_with_request(value, request),
+                timeout=timeout or spec.timeout_seconds,
             )
             structured_output = output.model_dump(mode="json")
             validate_json_schema(instance=structured_output, schema=spec.output_schema)
+            artifact_ids = self._artifact_ids(structured_output)
             finished_at = _now()
             return ToolCallResult(
                 call_id=request.call_id,
@@ -84,6 +87,7 @@ class ToolExecutor:
                 status="succeeded",
                 summary=f"{spec.display_name} 执行成功",
                 structured_output=structured_output,
+                artifact_ids=artifact_ids,
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 started_at=started_at,
                 finished_at=finished_at,
@@ -126,6 +130,18 @@ class ToolExecutor:
                 started_at=started_at,
                 started=started,
             )
+
+    @staticmethod
+    def _artifact_ids(output: dict[str, Any]) -> list[str]:
+        """只接受 UUID 形式的显式 Artifact 引用，避免插件伪造任意路径。"""
+
+        values = output.get("artifact_ids", [])
+        if values is None:
+            return []
+        if not isinstance(values, list):
+            raise ValueError("工具 artifact_ids 必须是数组")
+        parsed = [str(UUID(str(value))) for value in values]
+        return list(dict.fromkeys(parsed))
 
     @staticmethod
     def _failure(

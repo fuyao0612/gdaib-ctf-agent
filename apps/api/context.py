@@ -46,6 +46,7 @@ from yuwang.settings import (
 from yuwang.settings.models import ProviderPreset, resolve_structured_mode
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import create_reference_registry
+from yuwang.tooling.ctf import register_ctf_tools
 from yuwang.tooling.mcp import McpService
 from yuwang.tooling.mcp.client import McpClient
 from yuwang.tooling.sdk import ToolRegistry
@@ -63,6 +64,7 @@ class ApiContext:
         self.profile_service.ensure_default(self.repository.get_agent_defaults().budget)
         self.policy = PolicyEngine(SecurityConfig())
         self.registry: ToolRegistry = create_reference_registry(config.artifact_root)
+        register_ctf_tools(self.registry, self.repository, config.artifact_root)
         self.mcp_client = McpClient(
             allowed_commands={self._normalized_mcp_command(value) for value in config.mcp_stdio_allowed_commands},
             allow_insecure_local=config.allow_insecure_local_mcp,
