@@ -473,8 +473,19 @@ class OpenAICompatibleProvider:
                         try:
                             item = json.loads(data)
                             usage = self._parse_usage(item.get("usage")) or usage
-                            delta = item["choices"][0].get("delta", {}).get("content", "")
-                        except (KeyError, TypeError, ValueError) as exc:
+                            choices = item.get("choices")
+                            # 一些 OpenAI 兼容服务会在流结束前发送只携带 usage 的
+                            # 尾包（choices 为空数组）。这不是回复失败，直接保留
+                            # 用量并继续等待 [DONE]，不能对空数组取下标。
+                            if choices == []:
+                                continue
+                            if not isinstance(choices, list) or not choices:
+                                raise ValueError("choices is missing")
+                            first_choice = choices[0]
+                            if not isinstance(first_choice, dict):
+                                raise TypeError("choice is not an object")
+                            delta = first_choice.get("delta", {}).get("content", "")
+                        except (KeyError, TypeError, ValueError, IndexError) as exc:
                             raise ProviderError(
                                 ProviderErrorCategory.INVALID_OUTPUT,
                                 "模型流式响应格式不兼容",

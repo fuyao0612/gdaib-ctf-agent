@@ -140,6 +140,35 @@ async def test_free_text_provider_never_forces_json_and_reads_standard_stream():
 
 
 @pytest.mark.asyncio
+async def test_free_text_stream_accepts_usage_only_terminal_event():
+    """兼容部分服务在 [DONE] 前发送的 choices 为空的用量尾包。"""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        stream = (
+            'data: {"choices":[{"delta":{"content":"回复完成"}}]}\n\n'
+            'data: {"choices":[],"usage":{"prompt_tokens":2,'
+            '"completion_tokens":2,"total_tokens":4}}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(
+            200,
+            content=stream.encode(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    provider = provider_with_transport(httpx.MockTransport(handler))
+    chunks = [
+        chunk
+        async for chunk in provider.stream_text(
+            [{"role": "user", "content": "你好"}], system_prompt="直接回答"
+        )
+    ]
+
+    assert "".join(chunks) == "回复完成"
+    assert provider.last_call_metrics and provider.last_call_metrics.total_tokens == 4
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "status,category,retryable",
     [(401, "auth", False), (403, "auth", False), (400, "service", False)],

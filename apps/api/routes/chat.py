@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -15,6 +16,8 @@ from yuwang.chat import build_chat_messages, encode_chat_event, local_thread_tit
 from yuwang.domain.models import ACTIVE_RUN_STATUSES, InteractionMode, utcnow
 from yuwang.model_providers import ProviderError
 from yuwang.settings import ChatDefaults
+
+logger = logging.getLogger(__name__)
 
 
 def append_attachment_context(
@@ -132,6 +135,9 @@ def prepare_chat_stream(
             repository.fail_chat_request(body.request_id, "用户停止生成或连接中断")
             raise
         except Exception:
+            # 除 ProviderError 外的异常也必须留下服务端堆栈；客户端只显示安全的
+            # 通用提示，避免把内部实现或敏感配置暴露到对话界面。
+            logger.exception("聊天流处理失败，request_id=%s", body.request_id)
             repository.fail_chat_request(body.request_id, "聊天服务处理失败")
             yield encode_chat_event(
                 "reply_failed", {"message": "回复生成失败，请稍后重试", "retryable": True}
