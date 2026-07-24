@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0",
+  "package_name": "yuwang-tool-template",
+  "entry_point": "template_tool:create_tool",
+  "min_platform_version": "0.5.0",
+  "description": "御网智元 Python 工具包模板，不重复维护 ToolSpec 元数据。"
+}

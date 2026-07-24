@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0",
+  "package_name": "yuwang-ctf-reference",
+  "reference_only": true,
+  "min_platform_version": "0.5.0",
+  "description": "首批内置 CTF Artifact 工具的安全实现参考，不提供可执行上传或独立外部入口。"
+}

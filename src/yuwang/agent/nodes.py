@@ -35,7 +35,7 @@ from yuwang.domain.models import (
     ToolCall,
     ValidationStatus,
 )
-from yuwang.tooling import ToolCallRequest
+from yuwang.tooling import ToolCallRequest, ToolProgress
 
 if TYPE_CHECKING:
     from yuwang.agent.engine import AgentEngine
@@ -333,9 +333,22 @@ class WorkflowNodes:
             f"开始调用 {state.action.tool_name}",
             {"call_id": str(call_id), "tool": state.action.tool_name},
         )
+        async def report_progress(progress: ToolProgress) -> None:
+            engine.events.emit(
+                state.run_id,
+                EventType.TOOL_PROGRESS,
+                progress.message,
+                {
+                    "call_id": str(progress.call_id),
+                    "percent": progress.percent,
+                    "reported_at": progress.reported_at.isoformat(),
+                },
+            )
+
         result = await engine.executor.execute_call(
             request,
             state.task.budget.step_timeout_seconds,
+            progress_reporter=report_progress,
         )
         if not result.success:
             state.tool_failures += 1

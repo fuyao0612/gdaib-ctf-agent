@@ -52,6 +52,20 @@ def test_artifact_never_exposes_absolute_path():
         )
 
 
+@pytest.mark.parametrize("storage_ref", ["../outside.blob", "thread/../outside.blob", "thread//x.blob"])
+def test_artifact_rejects_path_traversal(storage_ref: str):
+    with pytest.raises(ValidationError):
+        Artifact(
+            thread_id=uuid4(),
+            filename="x.txt",
+            kind="upload",
+            sha256="a" * 64,
+            size=1,
+            mime_type="text/plain",
+            storage_ref=storage_ref,
+        )
+
+
 def test_run_transitions_reject_illegal_changes():
     run = Run(thread_id=uuid4())
     run.transition(RunStatus.RUNNING)

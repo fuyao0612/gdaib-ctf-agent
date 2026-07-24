@@ -54,6 +54,12 @@ class LargeOutputFakeEchoTool(FakeEchoTool):
         return FakeEchoOutput(echoed="x" * 9_000)
 
 
+class ProgressFakeEchoTool(FakeEchoTool):
+    async def execute(self, value):
+        await self.report_progress(50, "正在处理测试工具")
+        return await super().execute(value)
+
+
 class MediumRiskFakeEchoTool(FakeEchoTool):
     @property
     def spec(self) -> ToolSpec:
@@ -220,6 +226,35 @@ async def test_large_tool_output_is_archived_and_checkpoint_keeps_only_reference
     assert checkpoint and "x" * 9_000 not in str(checkpoint.state)
     tool_call = repository.list_tool_calls(run.id)[0]
     assert tool_call.artifact_ids == [artifact.id]
+
+
+@pytest.mark.asyncio
+async def test_tool_progress_is_persisted_as_an_event(tmp_path):
+    repository = SQLiteRepository(tmp_path / "tool-progress.db")
+    registry = ToolRegistry()
+    registry.register(ProgressFakeEchoTool())
+    engine = AgentEngine(repository, FakeModelProvider(), registry, PolicyEngine())
+    thread = repository.save_thread(Thread(title="tool progress"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(
+        run_id=run.id,
+        task=TaskSpec(body="记录工具进度"),
+        action=AgentAction(
+            kind="call_tool",
+            summary="执行带进度的测试工具",
+            tool_name="test_echo",
+            tool_input={"text": "verified"},
+        ),
+    )
+
+    await engine.nodes.execute_tool(state.model_dump(mode="python"))
+
+    progress = [
+        event for event in repository.list_events(run.id) if event.type == EventType.TOOL_PROGRESS
+    ]
+    assert len(progress) == 1
+    assert progress[0].summary == "正在处理测试工具"
+    assert progress[0].payload["percent"] == 50
 
 
 @pytest.mark.asyncio

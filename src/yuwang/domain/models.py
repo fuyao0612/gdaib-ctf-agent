@@ -72,6 +72,7 @@ class EventType(StrEnum):
     PLAN_UPDATED = "plan_updated"
     POLICY_CHECKED = "policy_checked"
     TOOL_STARTED = "tool_started"
+    TOOL_PROGRESS = "tool_progress"
     TOOL_FINISHED = "tool_finished"
     REPLANNED = "replanned"
     WARNING = "warning"
@@ -248,7 +249,13 @@ class Artifact(DomainModel):
     @field_validator("storage_ref")
     @classmethod
     def reject_absolute_storage_ref(cls, value: str) -> str:
-        if value.startswith(("/", "\\")) or ":\\" in value or ":/" in value:
+        normalized = value.replace("\\", "/")
+        if (
+            value.startswith(("/", "\\"))
+            or ":\\" in value
+            or ":/" in value
+            or any(part in {"", ".", ".."} for part in normalized.split("/"))
+        ):
             raise ValueError("storage_ref must be an opaque relative reference")
         return value
 

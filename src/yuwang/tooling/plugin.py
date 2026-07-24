@@ -8,6 +8,7 @@ from typing import Generic, TypeVar
 from pydantic import BaseModel
 
 from .contracts import ToolCallRequest, ToolSpec
+from .progress import report_progress
 
 I = TypeVar("I", bound=BaseModel)
 O = TypeVar("O", bound=BaseModel)
@@ -26,6 +27,11 @@ class ToolPlugin(ABC, Generic[I, O]):
 
     async def shutdown(self) -> None:
         return None
+
+    async def report_progress(self, percent: float, message: str) -> None:
+        """报告本次调用的结构化进度；未提供观察者时不会影响工具执行。"""
+
+        await report_progress(percent, message)
 
     async def execute_with_request(
         self, value: I, request: ToolCallRequest | None

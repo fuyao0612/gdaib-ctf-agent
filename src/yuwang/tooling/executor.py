@@ -13,6 +13,7 @@ from jsonschema import validate as validate_json_schema
 from pydantic import ValidationError
 
 from .contracts import ToolCallError, ToolCallRequest, ToolCallResult
+from .progress import ProgressReporter, bind_progress, reset_progress
 from .registry import ToolRegistry
 
 
@@ -62,10 +63,15 @@ class ToolExecutor:
         return await self.execute_call(request, timeout=timeout)
 
     async def execute_call(
-        self, request: ToolCallRequest, timeout: float | None = None
+        self,
+        request: ToolCallRequest,
+        timeout: float | None = None,
+        *,
+        progress_reporter: ProgressReporter | None = None,
     ) -> ToolCallResult:
         started_at = _now()
         started = time.perf_counter()
+        progress_tokens = bind_progress(request.call_id, progress_reporter)
         try:
             tool = self.registry.get(request.tool_id)
             spec = tool.spec
@@ -130,6 +136,8 @@ class ToolExecutor:
                 started_at=started_at,
                 started=started,
             )
+        finally:
+            reset_progress(progress_tokens)
 
     @staticmethod
     def _artifact_ids(output: dict[str, Any]) -> list[str]:
