@@ -6,6 +6,8 @@ export type SettingsMode = "beginner" | "advanced";
 export type ToolSourceType = "builtin" | "python_plugin" | "mcp";
 export type ToolRisk = "low" | "medium" | "high";
 export type ToolHealthStatus = "healthy" | "degraded" | "unavailable" | "disabled";
+export type ProfileToolSelectionMode = "all" | "selected";
+export type ThreadToolSelectionMode = "inherit" | "selected";
 export interface ToolSpec {
   id: string;
   namespace: string;
@@ -29,6 +31,8 @@ export interface ToolSpec {
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
   config_schema: Record<string, unknown>;
+  min_platform_version: string;
+  max_platform_version: string | null;
   supports_cancellation: boolean;
   supports_progress: boolean;
   enabled: boolean;
@@ -82,6 +86,8 @@ export interface Thread {
   provider_config_id: string | null;
   provider_fallback_notice: string | null;
   skill_ids?: string[];
+  tool_selection_mode: ThreadToolSelectionMode;
+  tool_ids: string[];
   agent_profile_id: string | null;
   agent_profile_version: number | null;
   plan_mode: PlanMode;
@@ -350,6 +356,8 @@ export interface AgentProfileInput {
   run_mode: Mode;
   default_provider_id: string | null;
   fallback_provider_ids: string[];
+  tool_selection_mode: ProfileToolSelectionMode;
+  tool_ids: string[];
   user_prompt_template: string;
   planning_strategy: "dynamic" | "direct" | "hybrid";
   budget: AgentDefaults["budget"];

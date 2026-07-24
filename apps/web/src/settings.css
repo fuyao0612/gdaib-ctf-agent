@@ -455,6 +455,36 @@
   border-radius: 10px;
 }
 
+.tool-choice-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.tool-choice-list label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.tool-choice-list span,
+.tool-choice-list small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-choice-list small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .profile-center legend {
   padding: 0 5px;
   color: #4f6687;

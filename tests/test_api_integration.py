@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from apps.api.main import Settings, create_app
-from apps.api.schemas import MessageCreate
+from apps.api.schemas import MessageCreate, RunCreate
 from tests.fakes import FakeEchoTool
 from yuwang.agent import AgentStateModel
 from yuwang.domain.models import AgentAction, AgentPlan, Observation, Run, RunStatus, TaskSpec
@@ -821,6 +821,50 @@ def test_mcp_admin_routes_expose_allowlist_and_deletion_impact(tmp_path):
         assert impact.json()["active_run_count"] == 0
         assert impact.json()["historical_snapshot_count"] == 0
         assert client.delete(f"/api/v1/admin/settings/mcp-servers/{server.id}").status_code == 204
+
+
+def test_profile_and_thread_tool_selection_filter_run_snapshot(tmp_path):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        headers = open_local_session(client)
+        default = client.get("/api/v1/admin/settings/agent-profiles", headers=headers).json()[0]
+        profile_input = {
+            key: value
+            for key, value in default.items()
+            if key not in {"profile_id", "version", "schema_version", "created_at"}
+        }
+        profile_input.update(
+            {"tool_selection_mode": "selected", "tool_ids": ["ctf.file_inspect"]}
+        )
+        updated_profile = client.put(
+            f"/api/v1/admin/settings/agent-profiles/{default['profile_id']}",
+            headers=headers,
+            json=profile_input,
+        )
+        assert updated_profile.status_code == 200, updated_profile.text
+        thread = client.post("/api/v1/threads", json={"title": "受限工具对话"}).json()
+        allowed = client.patch(
+            f"/api/v1/threads/{thread['id']}",
+            json={"tool_selection_mode": "selected", "tool_ids": ["ctf.file_inspect"]},
+        )
+        assert allowed.status_code == 200
+        denied = client.patch(
+            f"/api/v1/threads/{thread['id']}",
+            json={"tool_selection_mode": "selected", "tool_ids": ["ctf.encoding_decode"]},
+        )
+        assert denied.status_code == 409
+        assert "Agent Profile" in denied.json()["error"]["message"]
+
+        message = client.post(
+            f"/api/v1/threads/{thread['id']}/messages", json={"content": "检查附件"}
+        ).json()
+        context = app.state.context
+        stored_thread = context.require_thread(thread["id"])
+        profile = context.resolve_thread_profile(stored_thread)
+        origin = app.state.repository.get_message(message["id"])
+        assert origin is not None
+        task = context.build_task(stored_thread, RunCreate(), profile, origin_message=origin)
+        assert [item.tool_id for item in task.tool_snapshots] == ["ctf.file_inspect"]
 
 
 def test_agent_profile_api_versions_preview_export_and_thread_snapshot(tmp_path):

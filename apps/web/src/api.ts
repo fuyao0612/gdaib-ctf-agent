@@ -239,6 +239,8 @@ export const api = {
       archived?: boolean;
       provider_config_id?: string;
       skill_ids?: string[];
+      tool_selection_mode?: "inherit" | "selected";
+      tool_ids?: string[];
       acknowledge_provider_fallback?: boolean;
     },
   ) =>

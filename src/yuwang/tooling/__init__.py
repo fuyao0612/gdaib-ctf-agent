@@ -12,6 +12,7 @@ from .contracts import (
 from .executor import ToolExecutor
 from .plugin import ToolPlugin
 from .registry import ToolRegistry
+from .selection import select_tool_specs, validate_tool_ids
 
 __all__ = [
     "ToolCallError",
@@ -24,4 +25,6 @@ __all__ = [
     "ToolRegistry",
     "ToolSpec",
     "create_reference_registry",
+    "select_tool_specs",
+    "validate_tool_ids",
 ]

@@ -29,6 +29,10 @@ class InteractionMode(StrEnum):
     AGENT = "agent"
 
 
+ToolSelectionMode = Literal["all", "selected"]
+ThreadToolSelectionMode = Literal["inherit", "selected"]
+
+
 class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -121,12 +125,23 @@ class Thread(DomainModel):
     provider_fallback_notice: str | None = None
     # 对话只保存当前选择；真正运行时会把 Skill 内容复制进不可变 TaskSpec 快照。
     skill_ids: list[UUID] = Field(default_factory=list, max_length=20)
+    # Profile 可以给出默认白名单；Thread 只允许继承或进一步缩小，绝不自行扩权。
+    tool_selection_mode: ThreadToolSelectionMode = "inherit"
+    tool_ids: list[str] = Field(default_factory=list, max_length=100)
     agent_profile_id: UUID | None = None
     agent_profile_version: int | None = Field(default=None, ge=1)
     plan_mode: Literal["auto", "approval"] = "auto"
     archived: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+    @model_validator(mode="after")
+    def normalize_tool_selection(self) -> Thread:
+        if len(self.tool_ids) != len(set(self.tool_ids)):
+            raise ValueError("工具 ID 不能重复")
+        if self.tool_selection_mode == "inherit":
+            self.tool_ids = []
+        return self
 
 
 class Message(DomainModel):

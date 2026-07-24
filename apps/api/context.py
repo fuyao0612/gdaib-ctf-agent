@@ -45,7 +45,7 @@ from yuwang.settings import (
 )
 from yuwang.settings.models import ProviderPreset, resolve_structured_mode
 from yuwang.storage import SQLiteRepository
-from yuwang.tooling import create_reference_registry
+from yuwang.tooling import ToolSpec, create_reference_registry, select_tool_specs, validate_tool_ids
 from yuwang.tooling.ctf import register_ctf_tools
 from yuwang.tooling.mcp import McpService
 from yuwang.tooling.mcp.client import McpClient
@@ -214,6 +214,39 @@ class ApiContext:
         self.repository.save_thread(thread)
         return profile
 
+    def validate_tool_ids(self, tool_ids: list[str]) -> list[str]:
+        return validate_tool_ids(tool_ids, self.registry.names())
+
+    def validate_profile_tool_selection(self, profile: AgentProfileVersion) -> None:
+        if profile.tool_selection_mode == "selected":
+            self.validate_tool_ids(profile.tool_ids)
+
+    def validate_thread_tool_selection(
+        self,
+        profile: AgentProfileVersion,
+        mode: str,
+        tool_ids: list[str],
+    ) -> list[str]:
+        if mode == "inherit":
+            return []
+        selected = self.validate_tool_ids(tool_ids)
+        if profile.tool_selection_mode == "selected":
+            not_allowed = sorted(set(selected) - set(profile.tool_ids))
+            if not_allowed:
+                raise ValueError("Thread 只能选择 Agent Profile 已允许的工具")
+        return selected
+
+    def selected_tool_specs(
+        self, thread: Thread, profile: AgentProfileVersion
+    ) -> list[ToolSpec]:
+        return select_tool_specs(
+            self.registry.specs(),
+            profile_mode=profile.tool_selection_mode,
+            profile_tool_ids=profile.tool_ids,
+            thread_mode=thread.tool_selection_mode,
+            thread_tool_ids=thread.tool_ids,
+        )
+
     def require_thread(self, thread_id: UUID) -> Thread:
         thread = self.repository.get_thread(thread_id)
         if not thread:
@@ -339,7 +372,7 @@ class ApiContext:
                 supports_cancellation=spec.supports_cancellation,
                 supports_progress=spec.supports_progress,
             )
-            for spec in self.registry.specs()
+            for spec in self.selected_tool_specs(thread, profile)
         ]
         return TaskSpec(
             body=origin_message.content,

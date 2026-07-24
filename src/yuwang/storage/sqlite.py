@@ -92,6 +92,10 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteMcpStore
                     data["provider_fallback_notice"] = None
                 if "skill_ids" not in data:
                     data["skill_ids"] = []
+                if "tool_selection_mode" not in data:
+                    data["tool_selection_mode"] = "inherit"
+                if "tool_ids" not in data:
+                    data["tool_ids"] = []
                 db.execute(
                     "UPDATE threads SET data=? WHERE id=?",
                     (json.dumps(data, ensure_ascii=False), row["id"]),
