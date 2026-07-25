@@ -33,3 +33,11 @@ class CharacterCountTool(ToolPlugin[CountInput, CountOutput]):
 在组装层调用 `registry.register(CharacterCountTool())`，无需修改 Agent 状态机。外部包也可声明 `yuwang.tools` entry point，再由组装层显式调用 `registry.discover()`；发现范围不会扫描任意模块。必须添加契约测试：Spec JSON Schema 可序列化、输入拒绝额外字段、标准化结果、异常隔离、超时和策略默认拒绝。不得接受 Shell 命令；网络工具必须由 `PolicyEngine` 校验明确授权目标。
 
 参考实现位于 `src/yuwang/tooling/sdk.py`：`file_metadata` 和 `localhost_http_probe`。测试专用工具仅放在 `tests/`，不会注册到生产运行时或复制进生产镜像。
+
+`localhost_http_probe` 可用于用户明确授权的本机 CTF 服务。它只能执行一次只读 `GET`，仅接受
+`http://localhost` 或 `http://127.0.0.1` 且必须匹配当前 Run 的授权目标；禁用代理和重定向，并限制
+响应大小与超时。它只返回文本/JSON 摘要、白名单响应头、HTML 中已声明的同源链接及 `robots.txt` 的
+声明路径，不会枚举路径、猜测认证或提交表单。若公开说明明确给出 CTF 请求头，调用者可传入一个
+`X-CTF-*` 头；不得传入 Cookie、Authorization 或任意自定义请求头。文本响应会成为当前 Run 的
+`http_evidence` Artifact，后续 `encoding_decode` 可通过 `artifact_id` 和受限 `json_pointer` 解码 JSON
+字符串字段，`flag_candidate_verify` 仍只输出候选 Flag 的格式与证据来源结论。

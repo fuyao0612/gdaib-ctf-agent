@@ -10,7 +10,7 @@ from typing import Literal
 from urllib.parse import unquote
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from yuwang.tooling.contracts import ToolCallRequest, ToolSpec
 
@@ -26,6 +26,16 @@ class EncodingDecodeInput(BaseModel):
     artifact_id: UUID
     encoding: EncodingType = "auto"
     max_layers: int = Field(default=2, ge=1, le=3)
+    json_pointer: str | None = Field(default=None, max_length=512)
+
+    @field_validator("json_pointer")
+    @classmethod
+    def restrict_json_pointer(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.startswith("/") or ".." in value.split("/"):
+            raise ValueError("JSON 指针必须以 / 开头且不能包含路径穿越")
+        return value
 
 
 class DecodedCandidate(BaseModel):
@@ -59,7 +69,7 @@ class EncodingDecodeTool(CtfArtifactTool[EncodingDecodeInput, EncodingDecodeOutp
             scenarios=["ctf", "crypto", "forensics"],
             permissions=["artifact:read", "artifact:create"],
             timeout_seconds=10,
-            error_codes=["artifact_not_found", "invalid_encoding", "decode_limit"],
+            error_codes=["artifact_not_found", "invalid_encoding", "invalid_json_pointer", "decode_limit"],
             input_schema=self.input_model.model_json_schema(),
             output_schema=self.output_model.model_json_schema(),
             artifact_types=["decoded_text"],
@@ -70,6 +80,8 @@ class EncodingDecodeTool(CtfArtifactTool[EncodingDecodeInput, EncodingDecodeOutp
     ) -> EncodingDecodeOutput:
         artifact, content = self.artifacts.read(value.artifact_id, request, max_bytes=256 * 1024)
         text = content.decode("utf-8", errors="replace")
+        if value.json_pointer:
+            text = self._json_string_at_pointer(text, value.json_pointer)
         results: list[DecodedCandidate] = []
         artifact_ids: list[UUID] = []
         queue: list[tuple[str, list[EncodingType], float]] = [(text, [], 1.0)]
@@ -118,6 +130,28 @@ class EncodingDecodeTool(CtfArtifactTool[EncodingDecodeInput, EncodingDecodeOutp
             artifact_ids=artifact_ids,
             input_truncated=len(content) == 256 * 1024,
         )
+
+    @staticmethod
+    def _json_string_at_pointer(content: str, pointer: str) -> str:
+        """只从当前 Artifact 的 JSON 标量字段取值，仍不接受任意宿主机路径。"""
+
+        import json
+
+        try:
+            value: object = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Artifact 不是可解析的 JSON，不能使用 json_pointer") from exc
+        for segment in pointer.lstrip("/").split("/"):
+            key = segment.replace("~1", "/").replace("~0", "~")
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            elif isinstance(value, list) and key.isdigit() and int(key) < len(value):
+                value = value[int(key)]
+            else:
+                raise ValueError("JSON 指针未找到字符串字段")
+        if not isinstance(value, str):
+            raise ValueError("JSON 指针必须指向字符串字段")
+        return value
 
     @staticmethod
     def _detect(value: str) -> list[EncodingType]:

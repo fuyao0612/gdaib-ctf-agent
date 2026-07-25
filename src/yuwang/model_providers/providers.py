@@ -125,30 +125,33 @@ class ProviderChain:
         attempt: int = 1,
         request_budget: int | None = None,
     ) -> T:
-        del request_budget
         last_error: ProviderError | None = None
-        remaining_retries = self.retry_budget
+        remaining_requests = max(
+            1, request_budget if request_budget is not None else self.retry_budget + 1
+        )
         aggregate_requests = 0
-        aggregate_retries = 0
         aggregate_duration = 0
         for provider in self.providers:
+            if remaining_requests <= 0:
+                break
             try:
                 result = await provider.generate_structured(
                     prompt,
                     output_type,
                     timeout=timeout,
                     attempt=attempt,
-                    request_budget=remaining_retries + 1,
+                    request_budget=remaining_requests,
                 )
                 metrics = getattr(provider, "last_call_metrics", None)
+                request_count = metrics.request_count if metrics else 1
+                aggregate_requests += request_count
+                aggregate_duration += metrics.duration_ms if metrics else 0
+                remaining_requests = max(0, remaining_requests - max(1, request_count))
                 if metrics:
-                    aggregate_requests += metrics.request_count
-                    aggregate_retries += metrics.retry_count
-                    aggregate_duration += metrics.duration_ms
                     self.last_call_metrics = metrics.model_copy(
                         update={
                             "request_count": aggregate_requests,
-                            "retry_count": aggregate_retries,
+                            "retry_count": max(0, aggregate_requests - 1),
                             "duration_ms": aggregate_duration,
                         }
                     )
@@ -156,11 +159,10 @@ class ProviderChain:
             except ProviderError as exc:
                 last_error = exc
                 metrics = exc.metrics or getattr(provider, "last_call_metrics", None)
-                if metrics:
-                    aggregate_requests += metrics.request_count
-                    aggregate_retries += metrics.retry_count
-                    aggregate_duration += metrics.duration_ms
-                    remaining_retries = max(0, remaining_retries - metrics.retry_count)
+                request_count = metrics.request_count if metrics else 1
+                aggregate_requests += request_count
+                aggregate_duration += metrics.duration_ms if metrics else 0
+                remaining_requests = max(0, remaining_requests - max(1, request_count))
                 fallback_on = set(getattr(provider, "fallback_on", []))
                 if exc.category.value not in fallback_on:
                     break
@@ -180,7 +182,7 @@ class ProviderChain:
             metrics = base.model_copy(
                 update={
                     "request_count": aggregate_requests,
-                    "retry_count": aggregate_retries,
+                    "retry_count": max(0, aggregate_requests - 1),
                     "duration_ms": aggregate_duration,
                 }
             )
@@ -205,12 +207,14 @@ class ProviderChain:
                 "当前 Provider 未配置原生 Function Calling，请在设置中心选择 native 模式",
             )
         last_error: ProviderError | None = None
-        del request_budget
-        remaining_retries = self.retry_budget
+        remaining_requests = max(
+            1, request_budget if request_budget is not None else self.retry_budget + 1
+        )
         aggregate_requests = 0
-        aggregate_retries = 0
         aggregate_duration = 0
         for provider in self.providers:
+            if remaining_requests <= 0:
+                break
             if str(getattr(provider, "tool_call_mode", "structured")) != "native":
                 continue
             try:
@@ -218,17 +222,18 @@ class ProviderChain:
                     prompt,
                     catalog,
                     timeout=timeout,
-                    request_budget=remaining_retries + 1,
+                    request_budget=remaining_requests,
                 )
                 metrics = getattr(provider, "last_call_metrics", None)
+                request_count = metrics.request_count if metrics else 1
+                aggregate_requests += request_count
+                aggregate_duration += metrics.duration_ms if metrics else 0
+                remaining_requests = max(0, remaining_requests - max(1, request_count))
                 if metrics:
-                    aggregate_requests += metrics.request_count
-                    aggregate_retries += metrics.retry_count
-                    aggregate_duration += metrics.duration_ms
                     self.last_call_metrics = metrics.model_copy(
                         update={
                             "request_count": aggregate_requests,
-                            "retry_count": aggregate_retries,
+                            "retry_count": max(0, aggregate_requests - 1),
                             "duration_ms": aggregate_duration,
                         }
                     )
@@ -236,11 +241,10 @@ class ProviderChain:
             except ProviderError as exc:
                 last_error = exc
                 metrics = exc.metrics or getattr(provider, "last_call_metrics", None)
-                if metrics:
-                    aggregate_requests += metrics.request_count
-                    aggregate_retries += metrics.retry_count
-                    aggregate_duration += metrics.duration_ms
-                    remaining_retries = max(0, remaining_retries - metrics.retry_count)
+                request_count = metrics.request_count if metrics else 1
+                aggregate_requests += request_count
+                aggregate_duration += metrics.duration_ms if metrics else 0
+                remaining_requests = max(0, remaining_requests - max(1, request_count))
                 if exc.category.value not in set(getattr(provider, "fallback_on", [])):
                     break
         if last_error:
@@ -259,7 +263,7 @@ class ProviderChain:
             metrics = base.model_copy(
                 update={
                     "request_count": aggregate_requests,
-                    "retry_count": aggregate_retries,
+                    "retry_count": max(0, aggregate_requests - 1),
                     "duration_ms": aggregate_duration,
                 }
             )

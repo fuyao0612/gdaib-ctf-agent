@@ -33,6 +33,23 @@ function reportArray(report: Report | null, key: string): string[] {
   return Array.isArray(value) ? value.map(String) : [];
 }
 
+function nonEmpty(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function failureAnalysisSummary(report: Report | null, events: Event[]): string | null {
+  const reportAnalysis = report?.data.failure_analysis;
+  if (reportAnalysis && typeof reportAnalysis === "object") {
+    const summary = nonEmpty((reportAnalysis as Record<string, unknown>).summary);
+    if (summary) return summary;
+  }
+  const failedEvent = [...events].reverse().find((event) => event.type === "run_failed");
+  const eventAnalysis = failedEvent?.payload.failure_analysis;
+  if (eventAnalysis && typeof eventAnalysis === "object")
+    return nonEmpty((eventAnalysis as Record<string, unknown>).summary);
+  return null;
+}
+
 function finalAnswer(run: Run, report: Report | null, messages: Message[]): string {
   const explicit = report?.data.final_answer;
   if (typeof explicit === "string" && explicit.trim()) return explicit;
@@ -145,8 +162,10 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
   const auditEvidence = (audit?.evidence ?? []).map((item) => item.verification_summary);
   const evidenceSummary = [...evidence, ...auditEvidence].slice(0, 3);
   const answer = finalAnswer(run, report, messages);
+  const failureSummary = failureAnalysisSummary(report, events);
   const reason =
-    run.error ??
+    (run.status === "failed" ? failureSummary : null) ??
+    nonEmpty(run.error) ??
     [...events].reverse().find((event) => event.type === `run_${run.status}`)?.summary ??
     (run.status === "completed" ? "已完成全部阶段" : "等待继续运行");
 
@@ -163,11 +182,17 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
           <p>{conciseAnswer(answer)}</p>
         </section>
       )}
+      {run.status === "failed" && (
+        <section className="result-conclusion" data-testid="failure-analysis">
+          <strong>失败复盘</strong>
+          <p>{conciseAnswer(reason)}</p>
+        </section>
+      )}
       <details className="full-report">
         <summary>展开结论、证据与任务报告</summary>
         <div className="result-answer">
-          <strong>结论</strong>
-          <pre>{answer}</pre>
+          <strong>{run.status === "failed" ? "失败复盘" : "结论"}</strong>
+          <pre>{run.status === "failed" ? reason : answer}</pre>
         </div>
         <dl className="result-details">
           <div><dt>证据摘要</dt><dd>{evidenceSummary.length ? evidenceSummary.join("；") : "暂无可展示证据"}</dd></div>

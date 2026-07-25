@@ -307,8 +307,8 @@ async def test_native_provider_chain_aggregates_fallback_metrics_and_retry_budge
         ProviderCallMetrics(
             provider="failed-native",
             model="failed-native-model",
-            request_count=2,
-            retry_count=1,
+            request_count=1,
+            retry_count=0,
             duration_ms=30,
             input_tokens=0,
             output_tokens=0,
@@ -343,7 +343,7 @@ async def test_native_provider_chain_aggregates_fallback_metrics_and_retry_budge
     assert failed.request_budgets == [2]
     assert succeeded.request_budgets == [1]
     assert chain.last_call_metrics
-    assert chain.last_call_metrics.request_count == 3
+    assert chain.last_call_metrics.request_count == 2
     assert chain.last_call_metrics.retry_count == 1
     assert chain.last_call_metrics.duration_ms == 50
 
@@ -390,9 +390,11 @@ async def test_native_provider_chain_attaches_aggregated_metrics_to_last_error()
         )
 
     assert caught.value.metrics
-    assert caught.value.metrics.request_count == 3
+    assert caught.value.metrics.request_count == 2
     assert caught.value.metrics.retry_count == 1
-    assert caught.value.metrics.duration_ms == 50
+    assert caught.value.metrics.duration_ms == 30
+    assert first.request_budgets == [2]
+    assert second.request_budgets == []
 
 
 def test_provider_rejects_empty_key():

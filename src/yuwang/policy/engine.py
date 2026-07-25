@@ -91,9 +91,8 @@ class PolicyEngine:
                 return PolicyDecision(allowed=False, reason="网络工具缺少有效目标")
             if not task.authorized_targets:
                 return PolicyDecision(allowed=False, reason="任务未声明网络授权目标")
-            if (
-                hostname not in task.authorized_targets
-                and raw_target not in task.authorized_targets
+            if not self._is_authorized_network_target(
+                hostname, parsed.port, raw_target, task.authorized_targets
             ):
                 return PolicyDecision(allowed=False, reason="目标不在任务授权范围")
             if "localhost" in tool.allowed_target_types and not self.is_local_address(hostname):
@@ -105,6 +104,27 @@ class PolicyEngine:
                 reason="中风险工具需要用户确认后才能执行",
             )
         return PolicyDecision(allowed=True, reason="低风险工具与目标符合授权策略")
+
+    @staticmethod
+    def _is_authorized_network_target(
+        hostname: str, port: int | None, raw_target: str, authorized_targets: list[str]
+    ) -> bool:
+        """兼容旧的主机白名单，并支持 Run 固化的完整本机 URL 授权范围。"""
+
+        for target in authorized_targets:
+            if target == hostname or target == raw_target:
+                return True
+            parsed_target = urlparse(target if "://" in target else f"//{target}")
+            try:
+                target_port = parsed_target.port
+            except ValueError:
+                continue
+            if (
+                parsed_target.hostname == hostname
+                and (target_port is None or target_port == port)
+            ):
+                return True
+        return False
 
     def validate_upload(self, filename: str, size: int, existing_count: int) -> None:
         safe = Path(filename).name

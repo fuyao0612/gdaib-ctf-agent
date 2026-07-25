@@ -55,6 +55,12 @@ class ReportGenerator:
         plan_steps = plan_data.get("steps", []) if isinstance(plan_data, dict) else []
         validation_status = str(metrics.get("validation_status", run.validation_status))
         evidence_level = str(metrics.get("evidence_level", run.evidence_level))
+        failure_analysis = metrics.get("failure_analysis")
+        if not isinstance(failure_analysis, dict):
+            failure_analysis = None
+        failure_summary = (
+            str(failure_analysis.get("summary", "")).strip() if failure_analysis else ""
+        )
         data = {
             "schema_version": "1.0",
             "run_id": str(run.id),
@@ -72,7 +78,7 @@ class ReportGenerator:
             "structured_output": metrics.get("structured_output"),
             "result": metrics.get("verification") or completion_summary(validation_status)
             if str(run.status) == "completed"
-            else (run.error or "运行未完成"),
+            else (failure_summary or run.error or "运行未完成"),
             "plan": plan_steps,
             "adjustments": replans,
             "evidence": evidence,
@@ -86,6 +92,7 @@ class ReportGenerator:
             },
             "duration_ms": metrics.get("duration_ms", 0),
             "errors": [run.error] if run.error else [],
+            "failure_analysis": failure_analysis,
             "policy_checks": policy,
         }
         sanitized_data = redact_data(data)
@@ -108,6 +115,33 @@ class ReportGenerator:
                 "## 执行摘要",
                 data["result"],
                 *([str(data["final_answer"])] if data["final_answer"] else []),
+                *(
+                    [
+                        "",
+                        "## 失败复盘",
+                        str(data["failure_analysis"].get("summary", "")),
+                        "",
+                        "### 可能原因",
+                        *(
+                            [
+                                f"- {item}"
+                                for item in data["failure_analysis"].get("causes", [])
+                            ]
+                            or ["- 未提供额外原因"]
+                        ),
+                        "",
+                        "### 建议下一步",
+                        *(
+                            [
+                                f"- {item}"
+                                for item in data["failure_analysis"].get("next_steps", [])
+                            ]
+                            or ["- 根据运行审计调整后重试"]
+                        ),
+                    ]
+                    if data.get("failure_analysis")
+                    else []
+                ),
                 "",
                 "## 计划与调整",
                 *([f"- {item}" for item in data["plan"]] or ["- 未生成计划"]),
