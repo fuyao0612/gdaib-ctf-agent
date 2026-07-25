@@ -4,11 +4,19 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from yuwang.domain.models import AgentPlan, DomainModel, utcnow
+from yuwang.domain.models import (
+    AgentAction,
+    AgentPlan,
+    DomainModel,
+    EvidenceCandidate,
+    Observation,
+    utcnow,
+)
 
 
 class TaskBriefSource(StrEnum):
@@ -69,6 +77,91 @@ class TaskBrief(DomainModel):
         if self.needs_clarification and not self.clarification_questions:
             raise ValueError("需要澄清时必须提供至少一个公开问题")
         return self
+
+
+class AgentPlanDraft(BaseModel):
+    """模型仅生成稳定的计划骨架，完整计划字段由服务端确定性补齐。"""
+
+    model_config = ConfigDict(extra="forbid")
+    summary: str = Field(min_length=1, max_length=500)
+    steps: list[str] = Field(min_length=1, max_length=30)
+
+    def to_agent_plan(self) -> AgentPlan:
+        """保持计划展示完整，但不把安全执行决策交给模型的自由文本。"""
+
+        success_approach = "使用当前 Run 快照中已启用且经策略允许的工具收集证据，并按任务规则核对结果。"
+        return AgentPlan(
+            summary=self.summary,
+            steps=self.steps,
+            success_approach=success_approach,
+            risks=["工具、目标范围和参数仍须通过 Run 快照与 PolicyEngine 校验。"],
+        )
+
+
+class AgentActionDraft(BaseModel):
+    """模型只提供动作展示字段，候选证据引用由服务端绑定真实观察记录。"""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["call_tool", "replan", "finish", "fail", "request_input"]
+    summary: str = Field(min_length=1, max_length=10_000)
+    tool_name: str | None = Field(default=None, min_length=1, max_length=500)
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+    candidate: str | dict[str, Any] | None = None
+    updated_plan: list[str] = Field(default_factory=list, max_length=30)
+    answer: str | None = Field(default=None, max_length=100_000)
+    structured_output: dict[str, Any] | None = None
+
+    def to_agent_action(self, observations: list[Observation]) -> AgentAction:
+        value = self.candidate if isinstance(self.candidate, str) else (
+            self.candidate.get("value") if isinstance(self.candidate, dict) else None
+        )
+        candidate = self._bind_candidate(value, observations) if isinstance(value, str) else None
+        if candidate is None and self.kind == "finish":
+            candidate = self._latest_verified_flag_candidate(observations)
+        return AgentAction(
+            kind=self.kind,
+            summary=self.summary,
+            tool_name=self.tool_name,
+            tool_input=self.tool_input,
+            candidate=candidate,
+            updated_plan=self.updated_plan,
+            answer=self.answer,
+            structured_output=self.structured_output,
+        )
+
+    @staticmethod
+    def _bind_candidate(value: str, observations: list[Observation]) -> EvidenceCandidate | None:
+        for observation in reversed(observations):
+            if not observation.success:
+                continue
+            for key, item in observation.output.items():
+                if str(item) == value:
+                    return EvidenceCandidate(
+                        value=value,
+                        source_call_id=observation.call_id,
+                        location=f"/{str(key).replace('~', '~0').replace('/', '~1')}",
+                    )
+        return None
+
+    @staticmethod
+    def _latest_verified_flag_candidate(
+        observations: list[Observation],
+    ) -> EvidenceCandidate | None:
+        """收尾遗漏候选字段时，只复用刚由专用工具产生的真实格式验证证据。"""
+
+        for observation in reversed(observations):
+            if (
+                observation.success
+                and observation.tool_name == "ctf.flag_candidate_verify"
+                and observation.output.get("validation_status") == "format_matched"
+                and isinstance(observation.output.get("candidate"), str)
+            ):
+                return EvidenceCandidate(
+                    value=observation.output["candidate"],
+                    source_call_id=observation.call_id,
+                    location="/candidate",
+                )
+        return None
 
 
 class PlanRevision(DomainModel):

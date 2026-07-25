@@ -111,7 +111,6 @@ def provider_server():
                         {
                             "summary": "协议服务生成的计划",
                             "steps": ["调用测试工具", "验证候选"],
-                            "success_approach": "使用确定性规则验证工具证据",
                         }
                     )
                 else:

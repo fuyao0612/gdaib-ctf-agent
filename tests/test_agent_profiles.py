@@ -60,6 +60,21 @@ def test_profile_versions_copy_rollback_default_and_immutable_snapshot(tmp_path)
         repository.save_run_agent_profile(run_id, rolled_back)
 
 
+def test_default_profile_upgrades_only_platform_legacy_token_budget(tmp_path):
+    repository = SQLiteRepository(tmp_path / "legacy-default.db")
+    service = AgentProfileService(repository)
+    legacy = service.ensure_default(Budget(max_steps=20, max_model_calls=8, max_tokens=8_000))
+
+    upgraded = service.ensure_default()
+
+    assert upgraded.profile_id == legacy.profile_id
+    assert upgraded.version == legacy.version + 1
+    assert upgraded.budget.max_tokens == 72_000
+    assert upgraded.budget.max_model_calls == 12
+    assert upgraded.budget.max_steps == 40
+    assert service.ensure_default().version == upgraded.version
+
+
 def test_profile_export_import_is_secretless_and_template_safe(tmp_path):
     first_repository = SQLiteRepository(tmp_path / "first.db")
     service = AgentProfileService(first_repository)

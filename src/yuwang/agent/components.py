@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from yuwang.agent.repository import AgentRepository
 from yuwang.agent.verification import SuccessVerifier, VerificationResult
-from yuwang.control import TaskBrief
+from yuwang.control import AgentActionDraft, AgentPlanDraft, TaskBrief
 from yuwang.domain.models import (
     AgentAction,
     AgentPlan,
@@ -49,7 +49,10 @@ class AgentRuntimeState(Protocol):
     remaining_budget: dict[str, float | int]
 
 
-StructuredInvoker = Callable[[AgentRuntimeState, type[T], str], Awaitable[T]]
+class StructuredInvoker(Protocol):
+    def __call__(
+        self, state: AgentRuntimeState, output_type: type[T], purpose: str
+    ) -> Awaitable[T]: ...
 
 
 class ContextBuildResult(BaseModel):
@@ -72,13 +75,13 @@ class ContextBuilder(Protocol):
 
 class Planner(Protocol):
     async def plan(
-        self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentPlan]
+        self, state: AgentRuntimeState, invoke: StructuredInvoker
     ) -> AgentPlan: ...
 
 
 class ActionSelector(Protocol):
     async def select(
-        self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentAction]
+        self, state: AgentRuntimeState, invoke: StructuredInvoker
     ) -> AgentAction: ...
 
 
@@ -111,24 +114,26 @@ class WorkflowNode(Protocol):
 
 class DefaultPlanner:
     async def plan(
-        self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentPlan]
+        self, state: AgentRuntimeState, invoke: StructuredInvoker
     ) -> AgentPlan:
-        return await invoke(
+        draft = await invoke(
             state,
-            AgentPlan,
-            "根据 Task Brief 生成动态计划；每个步骤必须给出预期结果和验证方式，并说明风险与依赖",
+            AgentPlanDraft,
+            "根据 Task Brief 生成动态计划骨架；只输出 summary 和非空 steps，步骤必须在授权范围内。",
         )
+        return draft.to_agent_plan()
 
 
 class DefaultActionSelector:
     async def select(
-        self, state: AgentRuntimeState, invoke: StructuredInvoker[AgentAction]
+        self, state: AgentRuntimeState, invoke: StructuredInvoker
     ) -> AgentAction:
-        return await invoke(
+        draft = await invoke(
             state,
-            AgentAction,
+            AgentActionDraft,
             "选择下一动作：call_tool、replan、finish、fail 或 request_input",
         )
+        return draft.to_agent_action(state.observations)
 
 
 class DefaultContextBuilder:

@@ -21,6 +21,20 @@ def test_event_sequence_persistence_and_resume(tmp_path):
     assert [event.sequence for event in reopened.list_events(run.id, after=1)] == [2]
 
 
+def test_event_summary_is_redacted_and_bounded(tmp_path):
+    repository = SQLiteRepository(tmp_path / "bounded-event.db")
+    thread = repository.save_thread(Thread(title="bounded event"))
+    run = repository.save_run(Run(thread_id=thread.id))
+
+    event = EventService(repository).emit(
+        run.id,
+        EventType.STATUS_UPDATE,
+        "x" * 600,
+    )
+
+    assert len(event.summary) == 500
+
+
 def test_rejects_out_of_order_and_concurrent_active_runs(tmp_path):
     repository = SQLiteRepository(tmp_path / "test.db")
     thread = repository.save_thread(Thread(title="exclusive"))

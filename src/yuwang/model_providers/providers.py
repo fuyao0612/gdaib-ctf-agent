@@ -709,13 +709,54 @@ class OpenAICompatibleProvider:
             if not isinstance(content, str):
                 raise TypeError("content is not text")
             usage = self._parse_usage(body.get("usage"))
-            return output_type.model_validate_json(content), usage
+            return output_type.model_validate(self._structured_content(content)), usage
         except ProviderError:
             raise
         except (KeyError, TypeError, ValueError, ValidationError) as exc:
             raise ProviderError(
-                ProviderErrorCategory.INVALID_OUTPUT, "模型未返回符合配置的结构化 JSON"
+                ProviderErrorCategory.INVALID_OUTPUT,
+                f"模型返回的 JSON 未通过 {output_type.__name__} 协议校验",
+                True,
             ) from exc
+
+    @staticmethod
+    def _structured_content(content: str) -> dict[str, Any]:
+        """兼容模型的展示包装，但最终只交给严格 Schema 校验的 JSON 对象。"""
+
+        normalized = content.strip().lstrip("\ufeff")
+        if normalized.startswith("```") and normalized.endswith("```"):
+            first_newline = normalized.find("\n")
+            if first_newline != -1:
+                normalized = normalized[first_newline + 1 : -3].strip()
+        if normalized.startswith("<think>"):
+            closing = normalized.find("</think>")
+            if closing != -1:
+                normalized = normalized[closing + len("</think>") :].strip()
+
+        decoder = json.JSONDecoder()
+        try:
+            value = json.loads(normalized)
+        except json.JSONDecodeError:
+            # 兼容“说明文字 + 单个 JSON 对象”的 OpenAI 兼容服务；只接受完整的
+            # 单个对象，绝不把对象外文本或其他字段带入 Agent 状态。
+            start = normalized.find("{")
+            if start < 0:
+                raise ValueError("模型响应不包含 JSON 对象") from None
+            try:
+                value, end = decoder.raw_decode(normalized[start:])
+            except json.JSONDecodeError as exc:
+                raise ValueError("模型响应中的 JSON 对象无效") from exc
+            suffix = normalized[start + end :].strip()
+            if suffix and suffix not in {"```", "</think>"}:
+                raise ValueError("模型响应包含多个或未闭合的 JSON 内容") from None
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError("模型返回的 JSON 字符串不包含对象") from exc
+        if not isinstance(value, dict):
+            raise ValueError("模型返回的结构化结果必须是 JSON 对象")
+        return value
 
     async def _request_native_tool_selection(
         self, prompt: str, catalog: FunctionToolCatalog, timeout: float

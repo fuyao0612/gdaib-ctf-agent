@@ -104,10 +104,10 @@ class EventType(StrEnum):
 
 class Budget(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    max_steps: int = Field(20, ge=1, le=100)
-    max_model_calls: int = Field(8, ge=1, le=50)
+    max_steps: int = Field(40, ge=1, le=100)
+    max_model_calls: int = Field(12, ge=1, le=50)
     max_tool_calls: int = Field(8, ge=1, le=50)
-    max_tokens: int = Field(8000, ge=1, le=200_000)
+    max_tokens: int = Field(72_000, ge=1, le=200_000)
     max_model_cost: float = Field(10.0, ge=0, le=100_000)
     max_duration_seconds: float = Field(120, gt=0, le=3600)
     step_timeout_seconds: float = Field(60, gt=0, le=300)

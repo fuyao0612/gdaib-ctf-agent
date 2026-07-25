@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from yuwang.model_providers import ProviderError
 from yuwang.policy import redact
 
+FAILURE_SUMMARY_DETAIL_LIMIT = 800
+
 
 class FailureAnalysisDraft(BaseModel):
     """模型只返回用户可见的复盘要点，绝不请求或保存隐藏推理。"""
@@ -43,7 +45,7 @@ def deterministic_failure_analysis(error: BaseException | str) -> FailureAnalysi
             "service": "模型服务暂时不可用",
         }
         summary = descriptions.get(category, "模型服务调用失败")
-        detail = redact(message) if message else "Provider 未返回详细错误"
+        detail = _failure_detail(message, "Provider 未返回详细错误")
         next_steps = {
             "auth": ["检查 Provider API Key、服务地址和模型名称后重试"],
             "rate_limit": ["稍后重试，或降低并发与调用预算"],
@@ -64,12 +66,19 @@ def deterministic_failure_analysis(error: BaseException | str) -> FailureAnalysi
             next_steps=["检查 Provider 连通性与模型负载，必要时适当提高步骤超时后重试"],
         )
 
-    detail = redact(message) if message else f"{error_type} 未返回错误详情"
+    detail = _failure_detail(message, f"{error_type} 未返回错误详情")
     return FailureAnalysis(
         summary=f"运行已安全终止：{detail}",
         causes=[f"异常类型：{error_type}"],
         next_steps=["根据运行审计中的失败节点修正任务信息或配置后重试"],
     )
+
+
+def _failure_detail(message: str, fallback: str) -> str:
+    """异常文本可能来自第三方校验器，限制长度以保证失败复盘总能持久化。"""
+
+    detail = redact(message) if message else fallback
+    return detail[:FAILURE_SUMMARY_DETAIL_LIMIT]
 
 
 def allows_model_failure_analysis(error: BaseException | str) -> bool:

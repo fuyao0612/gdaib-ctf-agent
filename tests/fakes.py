@@ -7,8 +7,8 @@ from typing import TypeVar
 from pydantic import BaseModel, Field, ValidationError
 
 from yuwang.agent.failure_analysis import FailureAnalysisDraft
-from yuwang.control import TaskBriefDraft
-from yuwang.domain.models import AgentAction, AgentPlan, ImportantFacts
+from yuwang.control import AgentPlanDraft, TaskBriefDraft
+from yuwang.domain.models import AgentAction, ImportantFacts
 from yuwang.model_providers import ProviderError
 from yuwang.model_providers.providers import ProviderErrorCategory
 from yuwang.tooling.sdk import ToolPlugin, ToolSpec
@@ -51,13 +51,12 @@ class FakeModelProvider:
                 raise ProviderError(
                     ProviderErrorCategory.INVALID_OUTPUT, "invalid structured output", True
                 ) from exc
-        if output_type is AgentPlan:
+        if output_type is AgentPlanDraft:
             return output_type.model_validate(
-                AgentPlan(
-                    summary="基于测试工具生成计划",
-                    steps=["执行测试工具", "核对候选证据", "提交验证"],
-                    success_approach="从工具输出提取候选并交由确定性验证器",
-                ).model_dump()
+                {
+                    "summary": "基于测试工具生成计划",
+                    "steps": ["执行测试工具", "核对候选证据", "提交验证"],
+                }
             )
         if output_type is TaskBriefDraft:
             context = json.loads(prompt)

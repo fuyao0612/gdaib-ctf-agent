@@ -8,6 +8,8 @@ from uuid import UUID
 from yuwang.domain.models import Event, EventType
 from yuwang.policy import redact, redact_data
 
+EVENT_SUMMARY_LIMIT = 500
+
 
 class EventService:
     """事件写入边界：先递归脱敏，再交给仓储分配严格递增序号。"""
@@ -24,7 +26,9 @@ class EventService:
     ) -> Event:
         """输入公开摘要和载荷，输出已持久化、可安全推送给浏览器的 `Event`。"""
 
-        clean_summary = redact(summary)
+        # 模型和第三方工具的公开摘要不能突破事件契约，否则审计写入失败会反过来
+        # 中断已完成的工作流。完整工具内容仍由 Artifact 和结构化载荷承载。
+        clean_summary = redact(summary)[:EVENT_SUMMARY_LIMIT]
         clean_payload = redact_data(payload or {})
         return cast(
             Event,

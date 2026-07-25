@@ -289,6 +289,33 @@ async def test_provider_invalid_output_and_refusal_are_classified():
 
 
 @pytest.mark.asyncio
+async def test_provider_normalizes_wrapped_json_and_retries_invalid_structured_output():
+    responses = iter(
+        [
+            httpx.Response(200, json={"choices": [{"message": {"content": "not-json"}}]}),
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "```json\n{\"kind\":\"finish\",\"summary\":\"ok\"}\n```"
+                            }
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+    provider = provider_with_transport(httpx.MockTransport(lambda _: next(responses)), retries=1)
+
+    action = await provider.generate_structured("task", AgentAction)
+
+    assert action.kind == "finish"
+    assert provider.last_call_metrics and provider.last_call_metrics.request_count == 2
+
+
+@pytest.mark.asyncio
 async def test_provider_chain_falls_back_only_for_configured_categories():
     chain = ProviderChain(
         [FakeModelProvider("service"), FakeModelProvider("success")], retry_budget=1
