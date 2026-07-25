@@ -746,6 +746,16 @@ textarea:disabled {
   box-shadow: 0 5px 22px rgb(39 51 68 / 8%);
 }
 
+.authorized-target {
+  display: block;
+  min-height: 38px;
+  padding: 9px 12px;
+  color: var(--text);
+  border: 1px solid #d7dce3;
+  border-radius: 6px;
+  background: #fff;
+}
+
 .composer-actions {
   min-width: 0;
   display: flex;

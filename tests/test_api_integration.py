@@ -417,6 +417,7 @@ def test_unified_message_entry_chooses_free_text_or_controlled_run(
             json={
                 "request_id": str(uuid4()),
                 "content": "完成这道授权 CTF 题，并验证并报告结果",
+                "authorized_targets": ["http://127.0.0.1:8088/"],
             },
         )
         assert task.status_code == 200
@@ -426,6 +427,7 @@ def test_unified_message_entry_chooses_free_text_or_controlled_run(
         assert detail["messages"][-1]["role"] == "user"
         task_spec = app.state.repository.get_run_task(UUID(detail["runs"][0]["id"]))
         assert task_spec and task_spec.verification_rules == []
+        assert task_spec.authorized_targets == ["http://127.0.0.1:8088/"]
 
 
 def test_semantic_intent_handles_natural_negated_ambiguous_and_contextual_messages(

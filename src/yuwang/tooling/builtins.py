@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import mimetypes
+import os
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Protocol
@@ -310,11 +311,26 @@ class LocalhostHTTPProbeTool(ToolPlugin[ProbeInput, ProbeOutput]):
 
     @staticmethod
     def _loopback_request_url(raw_url: str, parsed: ParseResult) -> str:
-        """localhost 在连接前改为字面回环地址，避免环境 DNS 或代理扩大目标范围。"""
+        """固定回环解析；容器部署可经固定宿主机网关访问用户已授权的本机靶场。"""
 
-        if parsed.hostname != "localhost":
-            return raw_url
-        netloc = "127.0.0.1" + (f":{parsed.port}" if parsed.port is not None else "")
+        gateway = os.environ.get("YUWANG_LOCAL_CTF_HOST_GATEWAY", "").strip()
+        if gateway:
+            parsed_gateway = urlparse(gateway)
+            if (
+                parsed_gateway.scheme != "http"
+                or parsed_gateway.hostname != "host.docker.internal"
+                or parsed_gateway.username
+                or parsed_gateway.password
+                or parsed_gateway.path not in {"", "/"}
+                or parsed_gateway.query
+                or parsed_gateway.fragment
+                or parsed_gateway.port is not None
+            ):
+                raise ValueError("本机 CTF 宿主机网关配置无效")
+            hostname = parsed_gateway.hostname
+        else:
+            hostname = "127.0.0.1"
+        netloc = hostname + (f":{parsed.port}" if parsed.port is not None else "")
         return parsed._replace(netloc=netloc).geturl()
 
     @classmethod

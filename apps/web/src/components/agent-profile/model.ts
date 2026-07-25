@@ -45,7 +45,7 @@ export function createEmptyProfile(): AgentProfileInput {
       max_tokens: 8000,
       max_model_cost: 10,
       max_duration_seconds: 120,
-      step_timeout_seconds: 15,
+      step_timeout_seconds: 60,
     },
     context_policy: {
       recent_message_limit: 20,

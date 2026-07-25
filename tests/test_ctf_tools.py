@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread as WorkerThread
+from urllib.parse import urlparse
 from uuid import UUID
 
 import pytest
@@ -17,6 +18,7 @@ import pytest
 from yuwang.domain.models import Artifact, Run, Thread
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolCallRequest, ToolExecutor, ToolRegistry, create_reference_registry
+from yuwang.tooling.builtins import LocalhostHTTPProbeTool
 from yuwang.tooling.ctf import register_ctf_tools
 
 
@@ -44,6 +46,20 @@ def setup_tool_context(tmp_path: Path, content: bytes, filename: str = "challeng
     registry = ToolRegistry()
     register_ctf_tools(registry, repository, root)
     return repository, root, thread, artifact, run, ToolExecutor(registry)
+
+
+def test_localhost_probe_uses_only_the_fixed_docker_host_gateway(monkeypatch) -> None:
+    raw_url = "http://127.0.0.1:8088/robots.txt"
+    parsed = urlparse(raw_url)
+    monkeypatch.setenv("YUWANG_LOCAL_CTF_HOST_GATEWAY", "http://host.docker.internal")
+
+    assert LocalhostHTTPProbeTool._loopback_request_url(raw_url, parsed) == (
+        "http://host.docker.internal:8088/robots.txt"
+    )
+
+    monkeypatch.setenv("YUWANG_LOCAL_CTF_HOST_GATEWAY", "http://127.0.0.1")
+    with pytest.raises(ValueError, match="宿主机网关配置无效"):
+        LocalhostHTTPProbeTool._loopback_request_url(raw_url, parsed)
 
 
 async def invoke(executor: ToolExecutor, run: Run, tool: str, arguments: dict[str, object]):

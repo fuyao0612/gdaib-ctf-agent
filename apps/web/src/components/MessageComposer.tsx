@@ -6,6 +6,7 @@ import ProviderSelector from "./ProviderSelector";
 interface Props {
   activeRun: Run | null;
   message: string;
+  authorizedTarget: string;
   pendingArtifacts: Artifact[];
   providers: ProviderConfig[];
   providerConfigId: string | null;
@@ -13,6 +14,7 @@ interface Props {
   chatGenerating: boolean;
   chatCanRetry: boolean;
   onMessageChange: (value: string) => void;
+  onAuthorizedTargetChange: (value: string) => void;
   onProviderChange: (providerId: string) => void;
   onUpload: (file?: File) => void;
   onSend: () => void;
@@ -102,6 +104,17 @@ export default function MessageComposer(props: Props) {
         onChange={props.onProviderChange}
       />
       {props.children}
+      {!taskIsActive && (
+        <input
+          aria-label="本次运行授权目标"
+          className="authorized-target"
+          type="url"
+          value={props.authorizedTarget}
+          onChange={(event) => props.onAuthorizedTargetChange(event.target.value)}
+          disabled={props.uploading || props.chatGenerating}
+          placeholder="本次运行授权目标（可选）"
+        />
+      )}
       <div className="attachments">
         {props.pendingArtifacts.map((file) => (
           <span key={file.id}>

@@ -84,6 +84,7 @@ export const api = {
       artifact_ids: string[];
       retry: boolean;
       provider_config_id: string | null;
+      authorized_targets: string[];
     },
     signal: AbortSignal,
     onEvent: (event: UnifiedMessageEvent) => void,
