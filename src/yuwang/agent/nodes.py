@@ -261,7 +261,47 @@ class WorkflowNodes:
         state = engine._state(raw)
         if not state.action or state.action.kind != "call_tool" or not state.action.tool_name:
             raise AgentDeclaredFailure("工具动作缺少必要字段")
-        tool = engine.registry.get(state.action.tool_name)
+        tool_id = engine.run_tool_id(state.task, state.action.tool_name)
+        if tool_id is None:
+            reason = "工具不在本次 Run 的允许快照中，已拒绝执行"
+            engine.events.emit(
+                state.run_id,
+                EventType.POLICY_CHECKED,
+                reason,
+                {"allowed": False, "tool": state.action.tool_name, "reason": "run_tool_snapshot"},
+            )
+            state.observations.append(
+                Observation(
+                    call_id=uuid4(),
+                    tool_name=state.action.tool_name,
+                    success=False,
+                    summary="Run 工具快照拒绝工具动作",
+                    error=reason,
+                )
+            )
+            state.action = AgentAction(kind="replan", summary="工具快照拒绝后重新规划")
+            return engine._result("policy_check", state)
+        try:
+            tool = engine.registry.get(tool_id)
+        except KeyError:
+            reason = "Run 工具快照中的工具当前不可用，已拒绝执行"
+            engine.events.emit(
+                state.run_id,
+                EventType.POLICY_CHECKED,
+                reason,
+                {"allowed": False, "tool": state.action.tool_name, "reason": "tool_unavailable"},
+            )
+            state.observations.append(
+                Observation(
+                    call_id=uuid4(),
+                    tool_name=state.action.tool_name,
+                    success=False,
+                    summary="Run 工具快照中的工具不可用",
+                    error=reason,
+                )
+            )
+            state.action = AgentAction(kind="replan", summary="工具不可用后重新规划")
+            return engine._result("policy_check", state)
         decision = engine.policy.check_tool(state.task, tool.spec, state.action.tool_input)
         engine.events.emit(
             state.run_id,
@@ -300,9 +340,15 @@ class WorkflowNodes:
         state = engine._state(raw)
         if not state.action or not state.action.tool_name:
             raise AgentDeclaredFailure("没有可执行工具动作")
+        tool_id = engine.run_tool_id(state.task, state.action.tool_name)
+        if tool_id is None:
+            raise AgentDeclaredFailure("工具不在本次 Run 的允许快照中，拒绝执行")
+        try:
+            tool = engine.registry.get(tool_id)
+        except KeyError as exc:
+            raise AgentDeclaredFailure("Run 工具快照中的工具当前不可用，拒绝执行") from exc
         state.tool_calls += 1
         call_id = uuid4()
-        tool = engine.registry.get(state.action.tool_name)
         request = ToolCallRequest(
             call_id=call_id,
             run_id=state.run_id,

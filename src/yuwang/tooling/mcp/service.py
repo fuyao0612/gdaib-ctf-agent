@@ -36,6 +36,19 @@ class McpService:
     def list_servers(self) -> list[McpServerView]:
         return [value.public_view() for value in self.repository.list_mcp_servers()]
 
+    async def restore_enabled(self, registry: ToolRegistry) -> None:
+        """启动期恢复已启用服务；单个服务失败不得阻断其他工具注册。"""
+
+        for config in self.repository.list_mcp_servers():
+            if not config.enabled:
+                registry.unregister_source(f"mcp:{config.id}")
+                continue
+            try:
+                await self.refresh(config.id, registry)
+            except ValueError:
+                # refresh 已持久化不可用状态与脱敏错误，启动过程继续恢复其他服务。
+                continue
+
     def get(self, server_id: UUID) -> McpServerConfig:
         value = self.repository.get_mcp_server(server_id)
         if not value:

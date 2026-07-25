@@ -321,6 +321,18 @@ class TaskSpec(DomainModel):
     # 与 Provider/Profile 一样，工具定义也在运行开始时冻结。旧 Run 缺少该字段时
     # 保持可恢复，并仅在明确兼容路径中读取当前显式注册工具。
     tool_snapshots: list[ToolSnapshot] = Field(default_factory=list, max_length=100)
+    # 序列化检查点会补齐默认字段，不能用字段是否存在区分历史 Run 与空白名单。
+    tool_snapshot_frozen: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def mark_explicit_tool_snapshot(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        if "tool_snapshots" in data and "tool_snapshot_frozen" not in data:
+            data["tool_snapshot_frozen"] = True
+        return data
 
 
 class CallStatus(StrEnum):

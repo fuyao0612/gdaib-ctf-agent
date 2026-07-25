@@ -538,6 +538,11 @@ class ApiContext:
     async def lifespan(self, _: FastAPI) -> AsyncIterator[None]:
         """启动时恢复可安全恢复的 Run，退出时取消仍在执行的协程。"""
 
+        try:
+            await self.get_mcp_service().restore_enabled(self.registry)
+        except HTTPException:
+            # 未配置主密钥时不能解密 MCP 凭据，但不能影响内置工具和应用启动。
+            pass
         for thread in self.repository.list_threads():
             for stale in self.repository.list_runs(thread.id):
                 if stale.status not in {RunStatus.QUEUED, RunStatus.RUNNING}:

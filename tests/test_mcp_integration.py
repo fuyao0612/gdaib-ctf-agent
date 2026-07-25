@@ -65,6 +65,33 @@ async def test_stdio_mcp_discovers_and_executes_through_the_tool_registry(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_enabled_mcp_is_restored_into_a_fresh_registry(tmp_path) -> None:
+    repository = SQLiteRepository(tmp_path / "mcp-restore.db")
+    cipher = SecretCipher(Fernet.generate_key().decode())
+    service = McpService(
+        repository,
+        cipher,
+        McpClient(allowed_commands=allowed_python()),
+    )
+    server = service.create(
+        McpServerInput(
+            name="重启恢复测试服务",
+            transport="stdio",
+            command=sys.executable,
+            args=["-m", "tests.mcp_test_server"],
+        )
+    )
+    restored_registry = ToolRegistry()
+
+    await service.restore_enabled(restored_registry)
+
+    tool_id = f"mcp.{server.id}.echo"
+    result = await ToolExecutor(restored_registry).execute(tool_id, {"text": "restored"})
+    assert result.success, result.error
+    assert repository.get_mcp_server(server.id).health_status == "healthy"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_mcp_discovers_and_executes(tmp_path) -> None:
     port = unused_local_port()
     process = await asyncio.create_subprocess_exec(
