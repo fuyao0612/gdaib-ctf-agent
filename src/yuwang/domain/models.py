@@ -29,6 +29,10 @@ class InteractionMode(StrEnum):
     AGENT = "agent"
 
 
+ToolSelectionMode = Literal["all", "selected"]
+ThreadToolSelectionMode = Literal["inherit", "selected"]
+
+
 class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -68,6 +72,7 @@ class EventType(StrEnum):
     PLAN_UPDATED = "plan_updated"
     POLICY_CHECKED = "policy_checked"
     TOOL_STARTED = "tool_started"
+    TOOL_PROGRESS = "tool_progress"
     TOOL_FINISHED = "tool_finished"
     REPLANNED = "replanned"
     WARNING = "warning"
@@ -121,12 +126,23 @@ class Thread(DomainModel):
     provider_fallback_notice: str | None = None
     # 对话只保存当前选择；真正运行时会把 Skill 内容复制进不可变 TaskSpec 快照。
     skill_ids: list[UUID] = Field(default_factory=list, max_length=20)
+    # Profile 可以给出默认白名单；Thread 只允许继承或进一步缩小，绝不自行扩权。
+    tool_selection_mode: ThreadToolSelectionMode = "inherit"
+    tool_ids: list[str] = Field(default_factory=list, max_length=100)
     agent_profile_id: UUID | None = None
     agent_profile_version: int | None = Field(default=None, ge=1)
     plan_mode: Literal["auto", "approval"] = "auto"
     archived: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+    @model_validator(mode="after")
+    def normalize_tool_selection(self) -> Thread:
+        if len(self.tool_ids) != len(set(self.tool_ids)):
+            raise ValueError("工具 ID 不能重复")
+        if self.tool_selection_mode == "inherit":
+            self.tool_ids = []
+        return self
 
 
 class Message(DomainModel):
@@ -233,7 +249,13 @@ class Artifact(DomainModel):
     @field_validator("storage_ref")
     @classmethod
     def reject_absolute_storage_ref(cls, value: str) -> str:
-        if value.startswith(("/", "\\")) or ":\\" in value or ":/" in value:
+        normalized = value.replace("\\", "/")
+        if (
+            value.startswith(("/", "\\"))
+            or ":\\" in value
+            or ":/" in value
+            or any(part in {"", ".", ".."} for part in normalized.split("/"))
+        ):
             raise ValueError("storage_ref must be an opaque relative reference")
         return value
 
@@ -248,6 +270,36 @@ class SkillSnapshot(BaseModel):
     prompt: str = Field(min_length=1, max_length=10_000)
     steps: list[str] = Field(default_factory=list, max_length=30)
     checklist: list[str] = Field(default_factory=list, max_length=30)
+
+
+class ToolSnapshot(BaseModel):
+    """Run 开始时固化的工具协议快照，不随注册表或设置中心变化。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tool_id: str = Field(min_length=1, max_length=240)
+    namespace: str = Field(min_length=1, max_length=160)
+    name: str = Field(min_length=1, max_length=120)
+    display_name: str = Field(min_length=1, max_length=160)
+    version: str = Field(min_length=1, max_length=80)
+    source_type: Literal["builtin", "python_plugin", "mcp"]
+    source: str = Field(min_length=1, max_length=300)
+    description: str = Field(min_length=1, max_length=2_000)
+    capabilities: list[str] = Field(default_factory=list)
+    scenarios: list[str] = Field(default_factory=list)
+    risk: Literal["low", "medium", "high"]
+    permissions: list[str] = Field(default_factory=list)
+    requires_network: bool
+    allowed_target_types: list[str] = Field(default_factory=list)
+    timeout_seconds: float = Field(gt=0, le=120)
+    error_codes: list[str] = Field(default_factory=list)
+    idempotent: bool
+    artifact_types: list[str] = Field(default_factory=list)
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+    config_schema: dict[str, Any] = Field(default_factory=dict)
+    supports_cancellation: bool = False
+    supports_progress: bool = False
 
 
 class TaskSpec(DomainModel):
@@ -266,6 +318,9 @@ class TaskSpec(DomainModel):
     verification_rules: list[VerificationRule] = Field(default_factory=list)
     # 运行开始后 Skill 不再跟随设置中心修改，恢复与审计均使用这里的快照。
     skills: list[SkillSnapshot] = Field(default_factory=list, max_length=20)
+    # 与 Provider/Profile 一样，工具定义也在运行开始时冻结。旧 Run 缺少该字段时
+    # 保持可恢复，并仅在明确兼容路径中读取当前显式注册工具。
+    tool_snapshots: list[ToolSnapshot] = Field(default_factory=list, max_length=100)
 
 
 class CallStatus(StrEnum):
@@ -291,6 +346,11 @@ class ToolCall(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     run_id: UUID
     tool_name: str
+    tool_id: str | None = None
+    tool_version: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    target_scope: list[str] = Field(default_factory=list)
+    approval_fingerprint: str | None = None
     input_summary: str
     result_summary: str | None = None
     duration_ms: int = Field(ge=0)

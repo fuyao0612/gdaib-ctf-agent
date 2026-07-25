@@ -5,6 +5,7 @@ import AgentProfileCenter from "./components/AgentProfileCenter";
 import ProviderSettings from "./components/ProviderSettings";
 import SkillSettings from "./components/SkillSettings";
 import SetupProgress from "./components/SetupProgress";
+import ToolExtensionsCenter from "./components/ToolExtensionsCenter";
 import { useAdminSession } from "./hooks/useAdminSession";
 import type {
   AgentDefaults,
@@ -177,6 +178,13 @@ export default function SettingsCenter({
                 onNotice={setNotice}
                 onError={setError}
                 mode={mode}
+              />
+              <ToolExtensionsCenter
+                csrf={session.csrf}
+                mode={mode}
+                onChanged={syncPublicState}
+                onNotice={setNotice}
+                onError={setError}
               />
               {chatDefaults && (
                 <section>

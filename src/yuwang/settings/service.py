@@ -22,7 +22,9 @@ from yuwang.settings.security import SecretCipher
 class SettingsRepository(Protocol):
     def list_provider_configs(self) -> list[ProviderConfig]: ...
     def get_provider_config(self, provider_id: UUID) -> ProviderConfig | None: ...
-    def save_provider_config(self, value: ProviderConfig) -> ProviderConfig: ...
+    def save_provider_config(
+        self, value: ProviderConfig, *, set_default: bool = False
+    ) -> ProviderConfig: ...
     def set_default_provider(self, provider_id: UUID) -> None: ...
     def delete_provider_config(self, provider_id: UUID) -> None: ...
     def delete_provider_with_thread_fallback(
@@ -82,17 +84,18 @@ class SettingsService:
             input_price_per_million=value.input_price_per_million,
             output_price_per_million=value.output_price_per_million,
             structured_mode=value.structured_mode,
+            tool_call_mode=value.tool_call_mode,
             fallback_on=value.fallback_on,
         )
-        self.repository.save_provider_config(config)
-        if config.is_default:
-            self.repository.set_default_provider(config.id)
+        self.repository.save_provider_config(config, set_default=config.is_default)
         return self.get_provider(config.id).public_view()
 
     def update_provider(self, provider_id: UUID, value: ProviderConfigInput) -> ProviderConfigView:
         current = self.get_provider(provider_id)
         if current.is_default and not value.enabled:
             raise ValueError("默认 Provider 不能直接停用，请先切换默认项")
+        if current.is_default and not value.is_default:
+            raise ValueError("不能取消唯一默认 Provider，请先选择新的默认项")
         current.name = value.name
         resolve_structured_mode(value.preset, value.structured_mode)
         current.preset = value.preset
@@ -108,11 +111,10 @@ class SettingsService:
         current.input_price_per_million = value.input_price_per_million
         current.output_price_per_million = value.output_price_per_million
         current.structured_mode = value.structured_mode
+        current.tool_call_mode = value.tool_call_mode
         current.fallback_on = value.fallback_on
         current.updated_at = utcnow().isoformat()
-        self.repository.save_provider_config(current)
-        if current.is_default:
-            self.repository.set_default_provider(current.id)
+        self.repository.save_provider_config(current, set_default=current.is_default)
         return self.get_provider(current.id).public_view()
 
     def provider_deletion_impact(self, provider_id: UUID) -> dict[str, object]:
@@ -212,22 +214,22 @@ class SettingsService:
             selected = next((value for value in providers if value.id == selected_id), None)
             if not selected:
                 raise ValueError("所选 Provider 不存在或未启用")
-            rest = [value for value in providers if value.id != selected_id]
-            if fallback_ids is not None:
-                positions = {value: index for index, value in enumerate(fallback_ids)}
-                rest = [value for value in rest if value.id in positions]
-                rest.sort(key=lambda value: positions[value.id])
-                return [selected, *rest]
-            return [selected, *sorted(rest, key=self._fallback_key)]
+            if not fallback_ids:
+                return [selected]
+            positions = {value: index for index, value in enumerate(fallback_ids)}
+            fallbacks = [
+                value
+                for value in providers
+                if value.id != selected_id and value.id in positions
+            ]
+            fallbacks.sort(key=lambda value: positions[value.id])
+            return [selected, *fallbacks]
         default = next((value for value in providers if value.is_default), None)
         if not default:
             raise ValueError("需要配置模型：请在设置中心启用并选择默认 Provider")
-        rest = [value for value in providers if value.id != default.id]
-        return [default, *sorted(rest, key=self._fallback_key)]
-
-    @staticmethod
-    def _fallback_key(value: ProviderConfig) -> tuple[int, str]:
-        return (value.fallback_order if value.fallback_order is not None else 999, value.name)
+        # 没有选中的 Profile Provider 时，不能把全局 fallback_order 推断成备用链。
+        # 只有 Agent Profile 显式传入 fallback_provider_ids 才能发起多 Provider 调用。
+        return [default]
 
     def get_agent_defaults(self) -> AgentDefaults:
         return self.repository.get_agent_defaults()

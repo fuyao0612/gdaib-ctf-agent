@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from yuwang.domain.models import Budget, ThreadMode, VerificationRule, utcnow
+from yuwang.tooling.selection import ProfileToolSelectionMode
 from yuwang.verification_rules import validate_verification_rule
 
 PROFILE_SCHEMA_VERSION = "1.0"
@@ -121,6 +122,8 @@ class AgentProfileInput(BaseModel):
     run_mode: ThreadMode = ThreadMode.NORMAL
     default_provider_id: UUID | None = None
     fallback_provider_ids: list[UUID] = Field(default_factory=list, max_length=20)
+    tool_selection_mode: ProfileToolSelectionMode = "all"
+    tool_ids: list[str] = Field(default_factory=list, max_length=100)
     user_prompt_template: str = Field(
         default="请处理以下任务：{task}", min_length=1, max_length=20_000
     )
@@ -154,6 +157,10 @@ class AgentProfileInput(BaseModel):
             raise ValueError("默认 Provider 不能同时出现在备用链")
         if self.fallback_provider_ids and not self.default_provider_id:
             raise ValueError("配置备用 Provider 前必须先选择默认 Provider")
+        if len(self.tool_ids) != len(set(self.tool_ids)):
+            raise ValueError("工具 ID 不能重复")
+        if self.tool_selection_mode == "all" and self.tool_ids:
+            raise ValueError("全量工具模式不能同时保存工具白名单")
         if self.planning_strategy == "direct":
             if self.workflow.preset != "direct":
                 raise ValueError("直接策略必须使用‘直接回答’工作流")

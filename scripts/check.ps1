@@ -13,6 +13,7 @@ function Invoke-Checked([string]$Name, [scriptblock]$Action) {
 
 Invoke-Checked 'Ruff' { ruff check . }
 Invoke-Checked 'mypy' { mypy }
+Invoke-Checked '工具契约' { python scripts/check_tool_contracts.py }
 # 某些受管 Windows 环境不允许枚举系统 pytest 临时目录。把测试临时文件限制在
 # 工作区的已忽略目录内，既不触碰用户的系统临时文件，也让统一质量入口可重复运行。
 Invoke-Checked 'pytest' { pytest --basetemp $pytestBaseTemp -o "cache_dir=$pytestBaseTemp\cache" }

@@ -19,6 +19,7 @@ from apps.api.routes import (
     create_agent_profile_router,
     create_chat_router,
     create_health_router,
+    create_mcp_server_router,
     create_message_router,
     create_provider_router,
     create_report_router,
@@ -124,6 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(create_report_router(context))
     application.include_router(create_agent_profile_router(context))
     application.include_router(create_provider_router(context))
+    application.include_router(create_mcp_server_router(context))
     return application
 
 

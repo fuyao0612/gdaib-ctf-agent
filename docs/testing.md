@@ -51,7 +51,7 @@ pytest -m real_provider tests/test_real_provider_smoke.py
 
 ### 非 CTF 评测基线
 
-`yuwang.evaluation.BUILTIN_EVALUATION_CASES` 提供 36 条声明式非 CTF 用例，覆盖普通聊天、
+`yuwang.evaluation.BUILTIN_EVALUATION_CASES` 提供 39 条声明式非 CTF 用例，覆盖普通聊天、
 意图判断、多步任务、用户纠偏、长上下文、附件、暂停/继续/停止、模型切换、Provider 生命周期、
 错误、验证语义、Prompt Injection、刷新/重启恢复、Skills、权限分级和运行历史。用例是可审计的
 输入与断言契约，不包含预写模型回答、可执行代码或测试替身；`tests/test_evaluation_cases.py` 会检查
@@ -83,6 +83,17 @@ Playwright 启动隔离 FastAPI、SQLite 和独立 OpenAI 兼容协议测试服�
 1920×1080、2048×1152，并真实断言滚轮改变 `conversation.scrollTop`、最后消息和输入框可达、
 workspace 不超出视口且页面无横向溢出。协议服务只位于 `tests/`，不会进入生产镜像，也不能作为
 真实厂商测试证据。
+
+`yuwang.evaluation.EvaluationRunner` 现已通过正式的 `SQLiteRepository`、`Thread`、`Message`、
+`Run`、`Event`、Agent Profile 与 ToolSnapshot 路径执行任务型用例，并把可客观检查的声明式断言映射为
+运行状态、事件和快照结果。事件时间线是本项目的可审计运行记录；评测不会伪造模型回答或工具成功。
+
+运行器不会内置 Provider。生产调用方必须显式注入已配置的真实 Provider，并传入对应的加密
+`ProviderConfig` 以固化 Provider 快照；没有可用 API Key 或未注入 Provider 时，每条用例都明确标记为
+`skipped`，绝不标记为通过。`tests/` 可以显式注入隔离的
+`FakeModelProvider`，仅用于证明执行器经过真实的 Agent/SQLite 持久化通路，不构成真实 Provider 验收。
+当前最小运行器只执行需要 Agent Run 的任务型用例；普通聊天和多 Provider fallback 用例会明确跳过，
+直至相应正式入口具备可重复、低成本的真实 Provider 验收配置。
 
 ## Windows 启动安全验收
 

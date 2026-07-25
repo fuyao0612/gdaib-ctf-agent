@@ -87,7 +87,7 @@ def test_provider_crud_default_fallback_and_key_never_in_view_or_database_plaint
         )
     )
     chain = service.resolve_chain()
-    assert [item.id for item in chain] == [first.id, second.id]
+    assert [item.id for item in chain] == [first.id]
     with pytest.raises(ValueError, match="默认 Provider"):
         service.delete_provider(first.id)
 
@@ -108,6 +108,48 @@ def test_provider_crud_default_fallback_and_key_never_in_view_or_database_plaint
     assert service.decrypt_api_key(second.id) == "second-secret-key"
     service.delete_provider(first.id)
     assert len(service.list_providers()) == 1
+
+
+def test_provider_fallback_requires_explicit_profile_chain_and_default_cannot_be_unset(tmp_path):
+    repository = SQLiteRepository(tmp_path / "settings.db")
+    service = SettingsService(repository, SecretCipher(Fernet.generate_key().decode()))
+    first = service.create_provider(input_config(name="当前模型", api_key="first-secret"))
+    second = service.create_provider(
+        input_config(name="未配置备用", api_key="second-secret", is_default=False)
+    )
+    third = service.create_provider(
+        input_config(name="第二备用", api_key="third-secret", is_default=False)
+    )
+
+    assert [item.id for item in service.resolve_chain(first.id)] == [first.id]
+    assert [item.id for item in service.resolve_chain(first.id, [])] == [first.id]
+    assert [item.id for item in service.resolve_chain(first.id, [third.id, second.id])] == [
+        first.id,
+        third.id,
+        second.id,
+    ]
+    with pytest.raises(ValueError, match="不能取消唯一默认"):
+        service.update_provider(
+            first.id,
+            input_config(name="当前模型", api_key=None, is_default=False),
+        )
+
+    service.update_provider(
+        second.id,
+        input_config(name="新默认", api_key=None, is_default=True),
+    )
+    providers = service.list_providers()
+    assert [item.id for item in providers if item.is_default] == [second.id]
+
+
+def test_creating_provider_preserves_explicit_tool_call_mode(tmp_path):
+    repository = SQLiteRepository(tmp_path / "settings.db")
+    service = SettingsService(repository, SecretCipher(Fernet.generate_key().decode()))
+
+    created = service.create_provider(input_config(tool_call_mode="native"))
+
+    assert created.tool_call_mode == "native"
+    assert service.get_provider(created.id).tool_call_mode == "native"
 
 
 def test_agent_defaults_persist(tmp_path):

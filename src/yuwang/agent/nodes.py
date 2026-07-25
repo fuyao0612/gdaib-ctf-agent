@@ -35,6 +35,7 @@ from yuwang.domain.models import (
     ToolCall,
     ValidationStatus,
 )
+from yuwang.tooling import ToolCallRequest, ToolProgress
 
 if TYPE_CHECKING:
     from yuwang.agent.engine import AgentEngine
@@ -232,7 +233,7 @@ class WorkflowNodes:
     async def select_action(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
-        action = await engine.action_selector.select(state, cast(Any, engine._model_call))
+        action = await engine.select_action(state)
         state.action = AgentAction.model_validate(action)
         fingerprint = engine._fingerprint(state.action)
         repeats = state.action_fingerprints.count(fingerprint)
@@ -301,11 +302,26 @@ class WorkflowNodes:
             raise AgentDeclaredFailure("没有可执行工具动作")
         state.tool_calls += 1
         call_id = uuid4()
+        tool = engine.registry.get(state.action.tool_name)
+        request = ToolCallRequest(
+            call_id=call_id,
+            run_id=state.run_id,
+            tool_id=tool.spec.id,
+            tool_version=tool.spec.version,
+            arguments=state.action.tool_input,
+            target_scope=state.task.authorized_targets,
+            approval_fingerprint=state.approved_risk_action_fingerprint,
+        )
         engine.repository.save_tool_call(
             ToolCall(
                 id=call_id,
                 run_id=state.run_id,
                 tool_name=state.action.tool_name,
+                tool_id=request.tool_id,
+                tool_version=request.tool_version,
+                arguments=request.arguments,
+                target_scope=request.target_scope,
+                approval_fingerprint=request.approval_fingerprint,
                 input_summary=state.action.summary,
                 duration_ms=0,
                 status=CallStatus.STARTED,
@@ -317,10 +333,22 @@ class WorkflowNodes:
             f"开始调用 {state.action.tool_name}",
             {"call_id": str(call_id), "tool": state.action.tool_name},
         )
-        result = await engine.executor.execute(
-            state.action.tool_name,
-            state.action.tool_input,
+        async def report_progress(progress: ToolProgress) -> None:
+            engine.events.emit(
+                state.run_id,
+                EventType.TOOL_PROGRESS,
+                progress.message,
+                {
+                    "call_id": str(progress.call_id),
+                    "percent": progress.percent,
+                    "reported_at": progress.reported_at.isoformat(),
+                },
+            )
+
+        result = await engine.executor.execute_call(
+            request,
             state.task.budget.step_timeout_seconds,
+            progress_reporter=report_progress,
         )
         if not result.success:
             state.tool_failures += 1
@@ -332,11 +360,23 @@ class WorkflowNodes:
         )
         artifact_ids = [UUID(value) for value in result.artifact_ids]
         artifact_ids.extend(generated_artifact_ids)
+        for artifact_id in result.artifact_ids:
+            engine.events.emit(
+                state.run_id,
+                EventType.ARTIFACT_CREATED,
+                "工具已生成派生 Artifact",
+                {"artifact_id": artifact_id, "call_id": str(call_id)},
+            )
         engine.repository.save_tool_call(
             ToolCall(
                 id=call_id,
                 run_id=state.run_id,
                 tool_name=state.action.tool_name,
+                tool_id=result.executed_tool_id,
+                tool_version=result.executed_tool_version,
+                arguments=request.arguments,
+                target_scope=request.target_scope,
+                approval_fingerprint=request.approval_fingerprint,
                 input_summary=state.action.summary,
                 result_summary=result.summary,
                 duration_ms=result.duration_ms,
@@ -360,6 +400,26 @@ class WorkflowNodes:
         else:
             state.no_progress_count = 0
         state.observations.append(observation)
+        # Flag 格式检查只会产生“候选”证据，不会把格式匹配误报成赛题平台验证成功。
+        candidate = result.structured_output.get("candidate")
+        validation = result.structured_output.get("validation_status")
+        if (
+            result.success
+            and tool.spec.id == "ctf.flag_candidate_verify"
+            and isinstance(candidate, str)
+            and isinstance(validation, str)
+        ):
+            engine.repository.save_evidence(
+                EvidenceRecord(
+                    run_id=state.run_id,
+                    candidate=candidate,
+                    source_call_id=call_id,
+                    location="/candidate",
+                    verified=False,
+                    verification_summary="候选 Flag，尚未经过赛题平台验证",
+                    rule_kind="flag_format",
+                )
+            )
         engine.events.emit(
             state.run_id,
             EventType.TOOL_FINISHED,

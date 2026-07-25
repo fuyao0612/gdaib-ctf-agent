@@ -20,6 +20,7 @@ class ProviderPreset(StrEnum):
 
 
 StructuredMode = Literal["auto", "json_schema", "json_object", "prompt_json"]
+ToolCallMode = Literal["structured", "native", "disabled"]
 FallbackCategory = Literal["rate_limit", "timeout", "invalid_output", "service"]
 DEFAULT_FALLBACK_CATEGORIES: list[FallbackCategory] = ["rate_limit", "timeout", "service"]
 
@@ -105,6 +106,8 @@ class ProviderConfigInput(BaseModel):
     input_price_per_million: float = Field(default=0, ge=0, le=1_000_000)
     output_price_per_million: float = Field(default=0, ge=0, le=1_000_000)
     structured_mode: StructuredMode = "auto"
+    # 工具调用方式是明确配置，不会因单次请求失败自动降级或切换。
+    tool_call_mode: ToolCallMode = "structured"
     fallback_on: list[FallbackCategory] = Field(
         default_factory=lambda: list(DEFAULT_FALLBACK_CATEGORIES), max_length=4
     )
@@ -136,6 +139,7 @@ class ProviderConfig(BaseModel):
     input_price_per_million: float = 0
     output_price_per_million: float = 0
     structured_mode: StructuredMode = "auto"
+    tool_call_mode: ToolCallMode = "structured"
     fallback_on: list[FallbackCategory] = Field(
         default_factory=lambda: list(DEFAULT_FALLBACK_CATEGORIES)
     )
@@ -161,6 +165,7 @@ class ProviderConfig(BaseModel):
             input_price_per_million=self.input_price_per_million,
             output_price_per_million=self.output_price_per_million,
             structured_mode=self.structured_mode,
+            tool_call_mode=self.tool_call_mode,
             resolved_structured_mode=resolve_structured_mode(self.preset, self.structured_mode),
             fallback_on=self.fallback_on,
             has_api_key=bool(self.encrypted_api_key),
@@ -188,6 +193,7 @@ class ProviderConfigView(BaseModel):
     input_price_per_million: float
     output_price_per_million: float
     structured_mode: StructuredMode
+    tool_call_mode: ToolCallMode
     resolved_structured_mode: str
     fallback_on: list[FallbackCategory]
     has_api_key: bool

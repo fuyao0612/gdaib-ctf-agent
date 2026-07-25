@@ -49,6 +49,7 @@ export default function ProviderList({
                 ? ` · ${new Date(provider.last_tested_at).toLocaleString()}`
                 : ""}
             </small>
+            <small>工具调用：{provider.tool_call_mode}</small>
           </div>
           <div className="provider-flags">
             <span>{provider.has_api_key ? "密钥已保存" : "缺少密钥"}</span>

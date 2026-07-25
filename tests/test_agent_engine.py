@@ -24,12 +24,14 @@ from yuwang.domain.models import (
     TaskSpec,
     Thread,
     ToolCall,
+    ToolSnapshot,
 )
 from yuwang.model_providers import OpenAICompatibleProvider
 from yuwang.policy import PolicyEngine
 from yuwang.settings import AgentProfileInput, AgentProfileVersion
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolRegistry, ToolSpec
+from yuwang.tooling.adapters.function_calling import NativeToolSelection, ToolInvocation
 
 
 class NonIdempotentFakeEchoTool(FakeEchoTool):
@@ -52,10 +54,56 @@ class LargeOutputFakeEchoTool(FakeEchoTool):
         return FakeEchoOutput(echoed="x" * 9_000)
 
 
+class ProgressFakeEchoTool(FakeEchoTool):
+    async def execute(self, value):
+        await self.report_progress(50, "正在处理测试工具")
+        return await super().execute(value)
+
+
 class MediumRiskFakeEchoTool(FakeEchoTool):
     @property
     def spec(self) -> ToolSpec:
         return super().spec.model_copy(update={"risk": "medium"})
+
+
+class NativeFakeModelProvider(FakeModelProvider):
+    tool_call_mode = "native"
+    model = "native-test-model"
+
+    async def generate_native_tool_selection(self, *args: Any, **kwargs: Any) -> NativeToolSelection:
+        del args, kwargs
+        return NativeToolSelection(
+            invocation=ToolInvocation(
+                tool_id="builtin.test_echo",
+                arguments={"text": "native"},
+                provider_tool_call_id="provider-call-1",
+            )
+        )
+
+
+def tool_snapshot(spec: ToolSpec) -> ToolSnapshot:
+    return ToolSnapshot(
+        tool_id=spec.id,
+        namespace=spec.namespace,
+        name=spec.name,
+        display_name=spec.display_name or spec.name,
+        version=spec.version,
+        source_type=spec.source_type,
+        source=spec.source,
+        description=spec.description,
+        capabilities=spec.capabilities,
+        scenarios=spec.scenarios,
+        risk=spec.risk,
+        permissions=spec.permissions,
+        requires_network=spec.requires_network,
+        allowed_target_types=spec.allowed_target_types,
+        timeout_seconds=spec.timeout_seconds,
+        error_codes=spec.error_codes,
+        idempotent=spec.idempotent,
+        artifact_types=spec.artifact_types,
+        input_schema=spec.input_schema,
+        output_schema=spec.output_schema,
+    )
 
 
 def build_engine(tmp_path, scenario="success", profile=None, components: AgentComponents | None = None):
@@ -76,6 +124,38 @@ def build_engine(tmp_path, scenario="success", profile=None, components: AgentCo
 def profile_for(**overrides):
     value = AgentProfileInput(name="test profile", **overrides)
     return AgentProfileVersion(**value.model_dump(), version=1)
+
+
+@pytest.mark.asyncio
+async def test_native_tool_selection_uses_the_same_call_request_execution_path(tmp_path):
+    repository = SQLiteRepository(tmp_path / "native.db")
+    registry = ToolRegistry()
+    tool = FakeEchoTool()
+    registry.register(tool)
+    engine = AgentEngine(
+        repository,
+        NativeFakeModelProvider(),
+        registry,
+        PolicyEngine(),
+        artifact_root=tmp_path / "artifacts",
+    )
+    thread = repository.save_thread(Thread(title="native tool"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(
+        run_id=run.id,
+        task=TaskSpec(body="执行原生工具", tool_snapshots=[tool_snapshot(tool.spec)]),
+    )
+
+    state.action = await engine.select_action(state)
+    assert state.action.tool_name == "builtin.test_echo"
+    raw = await engine.nodes.execute_tool(state.model_dump(mode="python"))
+    completed = AgentStateModel.model_validate(raw)
+    persisted = repository.list_tool_calls(run.id)[0]
+
+    assert completed.observations[-1].output == {"echoed": "native"}
+    assert persisted.tool_id == "builtin.test_echo"
+    assert persisted.tool_version == "1.0.0"
+    assert persisted.arguments == {"text": "native"}
 
 
 @pytest.mark.asyncio
@@ -146,6 +226,35 @@ async def test_large_tool_output_is_archived_and_checkpoint_keeps_only_reference
     assert checkpoint and "x" * 9_000 not in str(checkpoint.state)
     tool_call = repository.list_tool_calls(run.id)[0]
     assert tool_call.artifact_ids == [artifact.id]
+
+
+@pytest.mark.asyncio
+async def test_tool_progress_is_persisted_as_an_event(tmp_path):
+    repository = SQLiteRepository(tmp_path / "tool-progress.db")
+    registry = ToolRegistry()
+    registry.register(ProgressFakeEchoTool())
+    engine = AgentEngine(repository, FakeModelProvider(), registry, PolicyEngine())
+    thread = repository.save_thread(Thread(title="tool progress"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(
+        run_id=run.id,
+        task=TaskSpec(body="记录工具进度"),
+        action=AgentAction(
+            kind="call_tool",
+            summary="执行带进度的测试工具",
+            tool_name="test_echo",
+            tool_input={"text": "verified"},
+        ),
+    )
+
+    await engine.nodes.execute_tool(state.model_dump(mode="python"))
+
+    progress = [
+        event for event in repository.list_events(run.id) if event.type == EventType.TOOL_PROGRESS
+    ]
+    assert len(progress) == 1
+    assert progress[0].summary == "正在处理测试工具"
+    assert progress[0].payload["percent"] == 50
 
 
 @pytest.mark.asyncio

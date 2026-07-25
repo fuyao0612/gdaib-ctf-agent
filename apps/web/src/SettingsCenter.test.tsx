@@ -124,6 +124,7 @@ describe("SettingsCenter", () => {
               input_price_per_million: 0,
               output_price_per_million: 0,
               structured_mode: "auto",
+              tool_call_mode: "structured",
               resolved_structured_mode: "json_object",
               fallback_on: ["timeout"],
               has_api_key: true,

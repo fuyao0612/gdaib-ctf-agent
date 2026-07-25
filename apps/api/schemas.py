@@ -11,7 +11,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from yuwang.domain.models import AgentPlan, InteractionMode, ThreadMode, VerificationRule
+from yuwang.domain.models import (
+    AgentPlan,
+    InteractionMode,
+    ThreadMode,
+    ThreadToolSelectionMode,
+    VerificationRule,
+)
 from yuwang.verification_rules import validate_verification_rule
 
 
@@ -23,6 +29,8 @@ class ThreadCreate(BaseModel):
     interaction_mode: InteractionMode = InteractionMode.CHAT
     provider_config_id: UUID | None = None
     skill_ids: list[UUID] = Field(default_factory=list, max_length=20)
+    tool_selection_mode: ThreadToolSelectionMode = "inherit"
+    tool_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class ThreadUpdate(BaseModel):
@@ -32,6 +40,8 @@ class ThreadUpdate(BaseModel):
     provider_config_id: UUID | None = None
     acknowledge_provider_fallback: bool = False
     skill_ids: list[UUID] | None = Field(default=None, max_length=20)
+    tool_selection_mode: ThreadToolSelectionMode | None = None
+    tool_ids: list[str] | None = Field(default=None, max_length=100)
 
 
 class MessageCreate(BaseModel):

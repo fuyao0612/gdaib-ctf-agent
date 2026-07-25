@@ -6,6 +6,7 @@ import type {
   AgentProfileInput,
   ProviderConfig,
   SettingsMode,
+  ToolSpec,
 } from "../types";
 import AgentProfileForm from "./agent-profile/AgentProfileForm";
 import AgentProfileList from "./agent-profile/AgentProfileList";
@@ -30,6 +31,7 @@ export default function AgentProfileCenter({
   mode,
 }: Props) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  const [tools, setTools] = useState<ToolSpec[]>([]);
   const [form, setForm] = useState<AgentProfileInput>(createEmptyProfile);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [versions, setVersions] = useState<AgentProfile[]>([]);
@@ -40,7 +42,12 @@ export default function AgentProfileCenter({
   const [schemaText, setSchemaText] = useState("");
 
   async function load() {
-    setProfiles(await api.adminProfiles(csrf));
+    const [profileItems, toolItems] = await Promise.all([
+      api.adminProfiles(csrf),
+      api.tools(),
+    ]);
+    setProfiles(profileItems);
+    setTools(Array.isArray(toolItems) ? toolItems : []);
     await onChanged();
   }
 
@@ -252,6 +259,7 @@ export default function AgentProfileCenter({
       <AgentProfileForm
         form={form}
         providers={providers}
+        tools={tools}
         expert
         wizardStep={wizardStep}
         schemaText={schemaText}

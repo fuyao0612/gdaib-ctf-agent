@@ -31,6 +31,7 @@ from yuwang.domain.models import (
     TaskSpec,
     Thread,
     ThreadMode,
+    ToolSnapshot,
 )
 from yuwang.model_providers import ModelProvider, OpenAICompatibleProvider, ProviderChain
 from yuwang.policy import PolicyEngine, SecurityConfig
@@ -44,7 +45,10 @@ from yuwang.settings import (
 )
 from yuwang.settings.models import ProviderPreset, resolve_structured_mode
 from yuwang.storage import SQLiteRepository
-from yuwang.tooling import create_reference_registry
+from yuwang.tooling import ToolSpec, create_reference_registry, select_tool_specs, validate_tool_ids
+from yuwang.tooling.ctf import register_ctf_tools
+from yuwang.tooling.mcp import McpService
+from yuwang.tooling.mcp.client import McpClient
 from yuwang.tooling.sdk import ToolRegistry
 
 
@@ -60,9 +64,20 @@ class ApiContext:
         self.profile_service.ensure_default(self.repository.get_agent_defaults().budget)
         self.policy = PolicyEngine(SecurityConfig())
         self.registry: ToolRegistry = create_reference_registry(config.artifact_root)
+        register_ctf_tools(self.registry, self.repository, config.artifact_root)
+        self.mcp_client = McpClient(
+            allowed_commands={self._normalized_mcp_command(value) for value in config.mcp_stdio_allowed_commands},
+            allow_insecure_local=config.allow_insecure_local_mcp,
+        )
         self.tasks: dict[UUID, asyncio.Task[None]] = {}
         # 会话只用于单实例自托管工作台；重启即失效，浏览器仅保存 HttpOnly Cookie。
         self.admin_sessions: dict[str, tuple[float, str]] = {}
+
+    @staticmethod
+    def _normalized_mcp_command(value: str) -> str:
+        from pathlib import Path
+
+        return str(Path(value).resolve()).casefold()
 
     def cleanup_callback(self, run_id: UUID) -> Callable[[asyncio.Task[None]], None]:
         """后台运行结束后从内存索引移除，数据库记录仍完整保留。"""
@@ -86,6 +101,11 @@ class ApiContext:
             cipher,
             allow_insecure_local=self.config.allow_insecure_local_provider,
         )
+
+    def get_mcp_service(self) -> McpService:
+        """MCP 认证与 Provider 密钥复用同一主密钥，但不向路由暴露明文。"""
+
+        return McpService(self.repository, self.get_settings_service().cipher, self.mcp_client)
 
     def verify_session(
         self,
@@ -128,6 +148,7 @@ class ApiContext:
                 timeout_seconds=value.timeout_seconds,
                 max_retries=min(value.max_retries, defaults.provider_retry_budget),
                 structured_mode=resolve_structured_mode(value.preset, value.structured_mode),
+                tool_call_mode=value.tool_call_mode,
                 fallback_on=value.fallback_on,
                 input_price_per_million=value.input_price_per_million,
                 output_price_per_million=value.output_price_per_million,
@@ -192,6 +213,39 @@ class ApiContext:
         thread.agent_profile_version = profile.version
         self.repository.save_thread(thread)
         return profile
+
+    def validate_tool_ids(self, tool_ids: list[str]) -> list[str]:
+        return validate_tool_ids(tool_ids, self.registry.names())
+
+    def validate_profile_tool_selection(self, profile: AgentProfileVersion) -> None:
+        if profile.tool_selection_mode == "selected":
+            self.validate_tool_ids(profile.tool_ids)
+
+    def validate_thread_tool_selection(
+        self,
+        profile: AgentProfileVersion,
+        mode: str,
+        tool_ids: list[str],
+    ) -> list[str]:
+        if mode == "inherit":
+            return []
+        selected = self.validate_tool_ids(tool_ids)
+        if profile.tool_selection_mode == "selected":
+            not_allowed = sorted(set(selected) - set(profile.tool_ids))
+            if not_allowed:
+                raise ValueError("Thread 只能选择 Agent Profile 已允许的工具")
+        return selected
+
+    def selected_tool_specs(
+        self, thread: Thread, profile: AgentProfileVersion
+    ) -> list[ToolSpec]:
+        return select_tool_specs(
+            self.registry.specs(),
+            profile_mode=profile.tool_selection_mode,
+            profile_tool_ids=profile.tool_ids,
+            thread_mode=thread.tool_selection_mode,
+            thread_tool_ids=thread.tool_ids,
+        )
 
     def require_thread(self, thread_id: UUID) -> Thread:
         thread = self.repository.get_thread(thread_id)
@@ -292,6 +346,34 @@ class ApiContext:
         verification_rules = (
             create.verification_rules or profile.validation_policy.evidence_rules
         )
+        tool_snapshots = [
+            ToolSnapshot(
+                tool_id=spec.id,
+                namespace=spec.namespace,
+                name=spec.name,
+                display_name=spec.display_name or spec.name,
+                version=spec.version,
+                source_type=spec.source_type,
+                source=spec.source,
+                description=spec.description,
+                capabilities=spec.capabilities,
+                scenarios=spec.scenarios,
+                risk=spec.risk,
+                permissions=spec.permissions,
+                requires_network=spec.requires_network,
+                allowed_target_types=spec.allowed_target_types,
+                timeout_seconds=spec.timeout_seconds,
+                error_codes=spec.error_codes,
+                idempotent=spec.idempotent,
+                artifact_types=spec.artifact_types,
+                input_schema=spec.input_schema,
+                output_schema=spec.output_schema,
+                config_schema=spec.config_schema,
+                supports_cancellation=spec.supports_cancellation,
+                supports_progress=spec.supports_progress,
+            )
+            for spec in self.selected_tool_specs(thread, profile)
+        ]
         return TaskSpec(
             body=origin_message.content,
             origin_message_id=origin_message.id,
@@ -302,6 +384,7 @@ class ApiContext:
             verification_rules=verification_rules,
             budget=profile.budget,
             skills=self.skill_service.snapshots_for(thread.skill_ids),
+            tool_snapshots=tool_snapshots,
         )
 
     async def start_run(
@@ -323,7 +406,9 @@ class ApiContext:
         profile = self.resolve_thread_profile(thread)
         try:
             selected_id = body.provider_config_id or thread.provider_config_id or profile.default_provider_id
-            fallback_ids = profile.fallback_provider_ids if profile.default_provider_id else None
+            # 备用链只能来自 Agent Profile 的明确配置；对话选择不会隐式加入
+            # 其他已启用 Provider，避免意外把任务发送给未选择的模型服务。
+            fallback_ids = profile.fallback_provider_ids
             provider_configs, provider = self.resolve_provider_chain(selected_id, fallback_ids)
             selected = provider_configs[0]
         except (ValueError, KeyError) as exc:

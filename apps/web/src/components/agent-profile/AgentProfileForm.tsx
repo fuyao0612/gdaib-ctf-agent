@@ -1,15 +1,17 @@
 /** 组合五个职责明确的配置区，并处理向导翻页和最终提交。 */
 import type { FormEvent } from "react";
-import type { AgentProfileInput, ProviderConfig } from "../../types";
+import type { AgentProfileInput, ProviderConfig, ToolSpec } from "../../types";
 import BasicProfileFields from "./BasicProfileFields";
 import ContextMemoryFields from "./ContextMemoryFields";
 import ProviderBudgetFields from "./ProviderBudgetFields";
+import ToolSelectionFields from "./ToolSelectionFields";
 import WorkflowValidationFields from "./WorkflowValidationFields";
 import { WIZARD_STEPS } from "./model";
 
 interface Props {
   form: AgentProfileInput;
   providers: ProviderConfig[];
+  tools: ToolSpec[];
   expert: boolean;
   wizardStep: number;
   schemaText: string;
@@ -25,6 +27,7 @@ interface Props {
 export default function AgentProfileForm({
   form,
   providers,
+  tools,
   expert,
   wizardStep,
   schemaText,
@@ -51,11 +54,10 @@ export default function AgentProfileForm({
           <BasicProfileFields form={form} onChange={onChange} />
         )}
         {(expert || wizardStep === 2) && (
-          <ProviderBudgetFields
-            form={form}
-            providers={providers}
-            onChange={onChange}
-          />
+          <>
+            <ProviderBudgetFields form={form} providers={providers} onChange={onChange} />
+            <ToolSelectionFields form={form} tools={tools} onChange={onChange} />
+          </>
         )}
         {(expert || wizardStep === 3) && (
           <ContextMemoryFields

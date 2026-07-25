@@ -5,6 +5,7 @@ import SettingsCenter from "./SettingsCenter";
 import CreateThreadDialog from "./components/CreateThreadDialog";
 import MessageComposer from "./components/MessageComposer";
 import SkillSelector from "./components/SkillSelector";
+import ToolSelector from "./components/ToolSelector";
 import {
   ConversationView,
   InspectorPanel,
@@ -20,6 +21,7 @@ import type {
   ProviderConfig,
   SkillDefinition,
   Thread,
+  ToolSpec,
 } from "./types";
 import "./styles.css";
 import "./thread-management.css";
@@ -58,6 +60,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
   const [skills, setSkills] = useState<SkillDefinition[]>([]);
+  const [tools, setTools] = useState<ToolSpec[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("新对话");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -160,6 +163,15 @@ export default function App() {
   useEffect(() => {
     void refreshSkills().catch(() => setSkills([]));
   }, [refreshSkills]);
+
+  const refreshTools = useCallback(async () => {
+    const result = await api.tools();
+    setTools(Array.isArray(result) ? result : []);
+  }, []);
+
+  useEffect(() => {
+    void refreshTools().catch(() => setTools([]));
+  }, [refreshTools]);
 
   useEffect(() => {
     const notice = detail?.provider_fallback_notice;
@@ -285,6 +297,28 @@ export default function App() {
       const updated = await api.updateThread(detail.id, { skill_ids: skillIds });
       setDetail((currentDetail) =>
         currentDetail?.id === updated.id ? { ...currentDetail, ...updated } : currentDetail,
+      );
+      await loadThreads();
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }
+
+  async function selectTools(mode: "inherit" | "selected", toolIds: string[]) {
+    if (!detail) return;
+    const unchanged =
+      detail.tool_selection_mode === mode &&
+      detail.tool_ids.length === toolIds.length &&
+      detail.tool_ids.every((id) => toolIds.includes(id));
+    if (unchanged) return;
+    setError("");
+    try {
+      const updated = await api.updateThread(detail.id, {
+        tool_selection_mode: mode,
+        tool_ids: toolIds,
+      });
+      setDetail((current) =>
+        current?.id === updated.id ? { ...current, ...updated } : current,
       );
       await loadThreads();
     } catch (cause) {
@@ -565,6 +599,13 @@ export default function App() {
                 disabled={uploading || chat.generating}
                 onChange={(skillIds) => void selectSkills(skillIds)}
               />
+              <ToolSelector
+                tools={tools}
+                mode={detail.tool_selection_mode ?? "inherit"}
+                value={detail.tool_ids ?? []}
+                disabled={uploading || chat.generating}
+                onChange={(mode, toolIds) => void selectTools(mode, toolIds)}
+              />
             </MessageComposer>
           </>
         )}
@@ -610,6 +651,7 @@ export default function App() {
             await refreshSettings();
             await refreshProviders();
             await refreshSkills();
+            await refreshTools();
             if (detail) await selectThread(detail.id);
             const status = await api.setupStatus();
             setInitialSetup(!status.configured);

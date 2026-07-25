@@ -16,6 +16,7 @@ jobs:
       - run: pip install --no-deps -e .
       - run: ruff check .
       - run: mypy
+      - run: python scripts/check_tool_contracts.py
       - run: pytest
       - run: python scripts/check_dependency_locks.py
       - run: pytest -q -o addopts='' --cov=yuwang.agent --cov-report=term-missing --cov-fail-under=90 tests

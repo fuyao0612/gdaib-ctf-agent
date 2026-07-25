@@ -29,5 +29,17 @@ class Settings(BaseModel):
     allow_insecure_local_provider: bool = (
         os.getenv("YUWANG_ALLOW_INSECURE_LOCAL_PROVIDER", "false").lower() == "true"
     )
+    # 仅允许管理员通过部署环境声明的程序启动 stdio MCP，绝不接受 Shell。
+    mcp_stdio_allowed_commands: list[str] = Field(
+        default_factory=lambda: [
+            value
+            for value in os.getenv("YUWANG_MCP_STDIO_ALLOWED_COMMANDS", "").split(os.pathsep)
+            if value
+        ]
+    )
+    allow_insecure_local_mcp: bool = (
+        os.getenv("YUWANG_ALLOW_INSECURE_LOCAL_MCP", "false").lower() == "true"
+    )
+    sandbox_url: str = os.getenv("YUWANG_SANDBOX_URL", "http://tool-sandbox:8081")
     admin_session_ttl_seconds: int = 8 * 60 * 60
     cookie_secure: bool = os.getenv("YUWANG_COOKIE_SECURE", "false").lower() == "true"

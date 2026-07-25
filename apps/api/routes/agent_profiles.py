@@ -57,6 +57,8 @@ def create_agent_profile_router(context: ApiContext) -> APIRouter:
     )
     async def admin_create_agent_profile(body: AgentProfileInput) -> AgentProfileVersion:
         try:
+            if body.tool_selection_mode == "selected":
+                context.validate_tool_ids(body.tool_ids)
             return service.create(body)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -132,6 +134,8 @@ def create_agent_profile_router(context: ApiContext) -> APIRouter:
         body: AgentProfileInput,
     ) -> AgentProfileVersion:
         try:
+            if body.tool_selection_mode == "selected":
+                context.validate_tool_ids(body.tool_ids)
             return service.update(profile_id, body)
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc

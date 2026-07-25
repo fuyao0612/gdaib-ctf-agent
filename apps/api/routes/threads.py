@@ -40,6 +40,9 @@ def create_thread_router(context: ApiContext) -> APIRouter:
                 raise HTTPException(409, str(exc)) from exc
         try:
             context.skill_service.snapshots_for(body.skill_ids)
+            tool_ids = context.validate_thread_tool_selection(
+                profile, body.tool_selection_mode, body.tool_ids
+            )
         except (KeyError, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
         return repository.save_thread(
@@ -49,6 +52,8 @@ def create_thread_router(context: ApiContext) -> APIRouter:
                 interaction_mode=body.interaction_mode,
                 provider_config_id=provider_config_id,
                 skill_ids=body.skill_ids,
+                tool_selection_mode=body.tool_selection_mode,
+                tool_ids=tool_ids,
                 agent_profile_id=profile.profile_id,
                 agent_profile_version=profile.version,
                 plan_mode=body.plan_mode,
@@ -109,6 +114,19 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             except (KeyError, ValueError) as exc:
                 raise HTTPException(409, str(exc)) from exc
             thread.skill_ids = body.skill_ids or []
+        if "tool_selection_mode" in body.model_fields_set or "tool_ids" in body.model_fields_set:
+            profile = context.resolve_thread_profile(thread)
+            mode = body.tool_selection_mode or thread.tool_selection_mode
+            try:
+                tool_ids = context.validate_thread_tool_selection(
+                    profile,
+                    mode,
+                    (body.tool_ids or []) if "tool_ids" in body.model_fields_set else thread.tool_ids,
+                )
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+            thread.tool_selection_mode = mode
+            thread.tool_ids = tool_ids
         thread.updated_at = utcnow()
         return repository.save_thread(thread)
 

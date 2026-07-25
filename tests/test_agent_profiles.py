@@ -187,5 +187,6 @@ def test_v02_database_and_json_rows_migrate_without_profile_fields(tmp_path):
     with sqlite3.connect(path) as db:
         versions = {row[0] for row in db.execute("SELECT version FROM schema_migrations")}
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert versions == {1, 2, 3, 4, 5, 6, 7, 8, 9}
+    assert versions == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
     assert "skills" in tables
+    assert "mcp_servers" in tables

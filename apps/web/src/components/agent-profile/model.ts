@@ -34,6 +34,8 @@ export function createEmptyProfile(): AgentProfileInput {
     run_mode: "normal",
     default_provider_id: null,
     fallback_provider_ids: [],
+    tool_selection_mode: "all",
+    tool_ids: [],
     user_prompt_template: "请处理以下任务：{task}",
     planning_strategy: "dynamic",
     budget: {

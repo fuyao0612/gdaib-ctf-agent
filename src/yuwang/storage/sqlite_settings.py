@@ -54,8 +54,24 @@ class SQLiteSettingsStore(SQLiteStore):
                 raise KeyError("Skill 不存在")
         return affected
 
-    def save_provider_config(self, value: ProviderConfig) -> ProviderConfig:
+    def save_provider_config(
+        self, value: ProviderConfig, *, set_default: bool = False
+    ) -> ProviderConfig:
         with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if set_default:
+                rows = db.execute("SELECT id,data FROM provider_configs").fetchall()
+                for row in rows:
+                    if row["id"] == str(value.id):
+                        continue
+                    current = ProviderConfig.model_validate_json(row["data"])
+                    if current.is_default:
+                        current.is_default = False
+                        db.execute(
+                            "UPDATE provider_configs SET data=? WHERE id=?",
+                            (current.model_dump_json(), row["id"]),
+                        )
+                value.is_default = True
             db.execute(
                 "INSERT OR REPLACE INTO provider_configs VALUES(?,?,?)",
                 (str(value.id), value.model_dump_json(), value.created_at),
@@ -75,15 +91,20 @@ class SQLiteSettingsStore(SQLiteStore):
         return [ProviderConfig.model_validate_json(row["data"]) for row in rows]
 
     def set_default_provider(self, provider_id: UUID) -> None:
-        with self._lock:
-            values = self.list_provider_configs()
-            if not any(value.id == provider_id for value in values):
+        with self._lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute("SELECT id,data FROM provider_configs").fetchall()
+            if not any(row["id"] == str(provider_id) for row in rows):
                 raise KeyError("Provider 配置不存在")
-            for value in values:
+            for row in rows:
+                value = ProviderConfig.model_validate_json(row["data"])
                 desired = value.id == provider_id
                 if value.is_default != desired:
                     value.is_default = desired
-                    self.save_provider_config(value)
+                    db.execute(
+                        "UPDATE provider_configs SET data=? WHERE id=?",
+                        (value.model_dump_json(), row["id"]),
+                    )
 
     def delete_provider_config(self, provider_id: UUID) -> None:
         with self.connect() as db:
