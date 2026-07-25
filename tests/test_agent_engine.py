@@ -159,6 +159,38 @@ async def test_native_tool_selection_uses_the_same_call_request_execution_path(t
 
 
 @pytest.mark.asyncio
+async def test_explicit_empty_tool_snapshot_never_exposes_or_executes_registered_tools(tmp_path):
+    repository, engine = build_engine(tmp_path)
+    thread = repository.save_thread(Thread(title="empty tool snapshot"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    task = TaskSpec(body="不允许工具", tool_snapshots=[])
+    state = AgentStateModel(
+        run_id=run.id,
+        task=task,
+        action=AgentAction(
+            kind="call_tool",
+            summary="尝试绕过快照",
+            tool_name="builtin.test_echo",
+            tool_input={"text": "blocked"},
+        ),
+    )
+
+    engine._context(state, "验证工具快照")
+    raw_action = state.model_dump(mode="python")
+    updated = AgentStateModel.model_validate(await engine.nodes.policy_check(raw_action))
+
+    assert task.tool_snapshot_frozen is True
+    assert state.tool_schemas == []
+    assert updated.action and updated.action.kind == "replan"
+    assert updated.observations[-1].success is False
+    assert "允许快照" in (updated.observations[-1].error or "")
+    assert repository.list_tool_calls(run.id) == []
+    with pytest.raises(AgentDeclaredFailure, match="允许快照"):
+        await engine.nodes.execute_tool(raw_action)
+    assert repository.list_tool_calls(run.id) == []
+
+
+@pytest.mark.asyncio
 async def test_complete_failure_replan_success_report(tmp_path):
     repository, engine = build_engine(tmp_path)
     thread = repository.save_thread(Thread(title="agent"))

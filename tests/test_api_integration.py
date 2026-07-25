@@ -1,4 +1,5 @@
 import json
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +14,7 @@ from apps.api.schemas import MessageCreate, RunCreate
 from tests.fakes import FakeEchoTool
 from yuwang.agent import AgentStateModel
 from yuwang.domain.models import AgentAction, AgentPlan, Observation, Run, RunStatus, TaskSpec
+from yuwang.tooling.mcp import McpServerInput
 
 
 def wait_for_terminal(client, run_id):
@@ -1459,3 +1461,27 @@ def test_service_lifespan_resumes_active_run_from_checkpoint(tmp_path, provider_
         assert wait_for_terminal(restarted, str(run.id))["status"] == "completed"
         events = restarted.get(f"/api/v1/runs/{run.id}/events").json()
         assert any("恢复" in event["summary"] for event in events)
+
+
+def test_service_lifespan_restores_enabled_mcp_tools_after_restart(tmp_path):
+    settings = Settings(
+        database_path=tmp_path / "mcp-restart.db",
+        artifact_root=tmp_path / "artifacts",
+        master_key=Fernet.generate_key().decode(),
+        mcp_stdio_allowed_commands=[sys.executable],
+    )
+    initial = create_app(settings)
+    with TestClient(initial):
+        server = initial.state.context.get_mcp_service().create(
+            McpServerInput(
+                name="重启恢复 MCP",
+                transport="stdio",
+                command=sys.executable,
+                args=["-m", "tests.mcp_test_server"],
+            )
+        )
+
+    restarted = create_app(settings)
+    with TestClient(restarted):
+        restored = restarted.state.registry.get(f"mcp.{server.id}.echo")
+        assert restored.spec.source == f"mcp:{server.id}"

@@ -57,4 +57,4 @@ $agentReady = if ($checks.PSObject.Properties.Name -contains 'agent') {
 Write-Host "  数据库：  $(if ($checks.database) { '正常' } else { '异常' })"
 Write-Host "  Provider：$(if ($checks.provider) { '已连接' } else { '未连接' })"
 Write-Host "  默认 Agent：$(if ($agentReady) { '可用' } else { '未就绪' })"
-Write-Host "  系统状态：$(if ($setup.configured) { '可以开始对话' } else { '需要完成首次配置' })"
+Write-Host "  系统状态：$(if ($setup.Body.configured) { '可以开始对话' } else { '需要完成首次配置' })"

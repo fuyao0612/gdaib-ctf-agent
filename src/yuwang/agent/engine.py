@@ -160,6 +160,24 @@ class AgentEngine:
             raise RunPaused("已在安全检查点暂停")
         return cast(GraphState, state.model_dump(mode="python"))
 
+    @staticmethod
+    def _has_explicit_tool_snapshots(task: TaskSpec) -> bool:
+        """区分历史任务缺失快照与新 Run 明确保存的空白名单。"""
+
+        return task.tool_snapshot_frozen
+
+    def run_tool_id(self, task: TaskSpec, reference: str) -> str | None:
+        """仅将本次 Run 快照内的稳定 ID 交给注册表解析。"""
+
+        if not self._has_explicit_tool_snapshots(task):
+            return reference
+        matches = [
+            snapshot
+            for snapshot in task.tool_snapshots
+            if reference in {snapshot.tool_id, snapshot.name}
+        ]
+        return matches[0].tool_id if len(matches) == 1 else None
+
     def _context(self, state: AgentStateModel, purpose: str) -> str:
         """构建带锚点和剩余预算的上下文，检测任务或配置被意外替换。"""
 
@@ -174,10 +192,10 @@ class AgentEngine:
         if state.context_anchor and state.context_anchor != anchor:
             raise AgentDeclaredFailure("检测到任务或配置上下文漂移")
         state.context_anchor = anchor
-        # 新 Run 使用已固化的工具快照；旧 Run 没有快照时才兼容读取注册表。
+        # 新 Run 的空快照明确表示不允许工具；只有历史任务缺少字段时才读注册表。
         tool_schemas = (
             [snapshot.model_dump(mode="json") for snapshot in state.task.tool_snapshots]
-            if state.task.tool_snapshots
+            if self._has_explicit_tool_snapshots(state.task)
             else [spec.model_dump(mode="json") for spec in self.registry.specs()]
         )
         state.tool_schemas = (

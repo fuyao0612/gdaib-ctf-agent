@@ -3,8 +3,15 @@ import pytest
 
 from tests.fakes import FakeEchoTool, FakeModelProvider
 from yuwang.domain.models import AgentAction, TaskSpec
-from yuwang.model_providers import OpenAICompatibleProvider, ProviderChain, ProviderError
+from yuwang.model_providers import (
+    OpenAICompatibleProvider,
+    ProviderCallMetrics,
+    ProviderChain,
+    ProviderError,
+)
+from yuwang.model_providers.providers import ProviderErrorCategory
 from yuwang.policy import PolicyEngine, redact
+from yuwang.tooling.adapters.function_calling import FunctionToolCatalog, NativeToolSelection
 from yuwang.tooling.sdk import LocalhostHTTPProbeTool, ToolExecutor, ToolRegistry
 
 
@@ -70,6 +77,41 @@ def provider_with_transport(
         output_price_per_million=4,
         transport=transport,
     )
+
+
+class NativeMetricsProvider:
+    tool_call_mode = "native"
+    fallback_on = ["service"]
+
+    def __init__(
+        self,
+        name: str,
+        metrics: ProviderCallMetrics,
+        *,
+        error: ProviderError | None = None,
+    ) -> None:
+        self.name = name
+        self.model = f"{name}-model"
+        self.metrics = metrics
+        self.error = error
+        self.last_call_metrics: ProviderCallMetrics | None = None
+        self.request_budgets: list[int | None] = []
+
+    async def generate_native_tool_selection(
+        self,
+        prompt: str,
+        catalog: FunctionToolCatalog,
+        *,
+        timeout: float | None = None,
+        request_budget: int | None = None,
+    ) -> NativeToolSelection:
+        del prompt, catalog, timeout
+        self.request_budgets.append(request_budget)
+        self.last_call_metrics = self.metrics
+        if self.error:
+            self.error.metrics = self.metrics
+            raise self.error
+        return NativeToolSelection(content='{"kind":"finish","summary":"ok"}')
 
 
 @pytest.mark.asyncio
@@ -256,6 +298,101 @@ async def test_provider_chain_falls_back_only_for_configured_categories():
     refusing = ProviderChain([FakeModelProvider("refusal"), FakeModelProvider("success")])
     with pytest.raises(ProviderError, match="refusal"):
         await refusing.generate_structured('{"observations":[]}', AgentAction, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_native_provider_chain_aggregates_fallback_metrics_and_retry_budget():
+    failed = NativeMetricsProvider(
+        "failed-native",
+        ProviderCallMetrics(
+            provider="failed-native",
+            model="failed-native-model",
+            request_count=2,
+            retry_count=1,
+            duration_ms=30,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            cost=0,
+            usage_reported=False,
+        ),
+        error=ProviderError(ProviderErrorCategory.SERVICE, "temporary", True),
+    )
+    succeeded = NativeMetricsProvider(
+        "success-native",
+        ProviderCallMetrics(
+            provider="success-native",
+            model="success-native-model",
+            request_count=1,
+            retry_count=0,
+            duration_ms=20,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            cost=0,
+            usage_reported=False,
+        ),
+    )
+    chain = ProviderChain([failed, succeeded], retry_budget=1)
+
+    selection = await chain.generate_native_tool_selection(
+        "task", FunctionToolCatalog.from_snapshots([])
+    )
+
+    assert selection.content
+    assert failed.request_budgets == [2]
+    assert succeeded.request_budgets == [1]
+    assert chain.last_call_metrics
+    assert chain.last_call_metrics.request_count == 3
+    assert chain.last_call_metrics.retry_count == 1
+    assert chain.last_call_metrics.duration_ms == 50
+
+
+@pytest.mark.asyncio
+async def test_native_provider_chain_attaches_aggregated_metrics_to_last_error():
+    first = NativeMetricsProvider(
+        "first-native",
+        ProviderCallMetrics(
+            provider="first-native",
+            model="first-native-model",
+            request_count=2,
+            retry_count=1,
+            duration_ms=30,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            cost=0,
+            usage_reported=False,
+        ),
+        error=ProviderError(ProviderErrorCategory.SERVICE, "temporary", True),
+    )
+    second = NativeMetricsProvider(
+        "second-native",
+        ProviderCallMetrics(
+            provider="second-native",
+            model="second-native-model",
+            request_count=1,
+            retry_count=0,
+            duration_ms=20,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            cost=0,
+            usage_reported=False,
+        ),
+        error=ProviderError(ProviderErrorCategory.SERVICE, "final", True),
+    )
+    chain = ProviderChain([first, second], retry_budget=1)
+
+    with pytest.raises(ProviderError) as caught:
+        await chain.generate_native_tool_selection(
+            "task", FunctionToolCatalog.from_snapshots([])
+        )
+
+    assert caught.value.metrics
+    assert caught.value.metrics.request_count == 3
+    assert caught.value.metrics.retry_count == 1
+    assert caught.value.metrics.duration_ms == 50
 
 
 def test_provider_rejects_empty_key():
