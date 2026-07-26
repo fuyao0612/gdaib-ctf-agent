@@ -418,9 +418,10 @@ class OpenAICompatibleProvider:
         allowed_requests = min(self.max_retries + 1, request_budget or self.max_retries + 1)
         started = time.perf_counter()
         last_error: ProviderError | None = None
+        request_prompt = prompt
         for request_index in range(allowed_requests):
             try:
-                result, usage = await self._request(prompt, output_type, effective_timeout)
+                result, usage = await self._request(request_prompt, output_type, effective_timeout)
                 self.last_call_metrics = self._metrics(request_index + 1, started, usage)
                 return result
             except ProviderError as exc:
@@ -430,6 +431,8 @@ class OpenAICompatibleProvider:
                     self.last_call_metrics = metrics
                     exc.metrics = metrics
                     raise
+                if exc.category == ProviderErrorCategory.INVALID_OUTPUT:
+                    request_prompt = self._repair_prompt(prompt, str(exc))
                 await asyncio.sleep(min(0.25 * (2**request_index), 4.0))
         raise last_error or ProviderError(ProviderErrorCategory.SERVICE, "Provider 调用失败")
 
@@ -715,9 +718,45 @@ class OpenAICompatibleProvider:
         except (KeyError, TypeError, ValueError, ValidationError) as exc:
             raise ProviderError(
                 ProviderErrorCategory.INVALID_OUTPUT,
-                f"模型返回的 JSON 未通过 {output_type.__name__} 协议校验",
+                self._structured_validation_error(output_type, exc),
                 True,
             ) from exc
+
+    @staticmethod
+    def _structured_validation_error(output_type: type[BaseModel], error: Exception) -> str:
+        """只暴露字段路径和规则，帮助模型修复输出且不记录其原始内容。"""
+
+        if isinstance(error, ValidationError):
+            issues = []
+            for item in error.errors(include_input=False)[:3]:
+                location = ".".join(str(part) for part in item.get("loc", ())) or "根对象"
+                issue_type = str(item.get("type", "invalid"))
+                issues.append(f"{location}（{issue_type}）")
+            if issues:
+                return (
+                    f"模型返回的 JSON 未通过 {output_type.__name__} 协议校验："
+                    f"{'; '.join(issues)}"
+                )
+        if isinstance(error, ValueError) and str(error) in {
+            "模型响应不包含 JSON 对象",
+            "模型响应中的 JSON 对象无效",
+            "模型响应包含多个或未闭合的 JSON 内容",
+            "模型返回的 JSON 字符串不包含对象",
+            "模型返回的结构化结果必须是 JSON 对象",
+        }:
+            return f"模型返回的 JSON 未通过 {output_type.__name__} 协议校验：{error}"
+        if isinstance(error, TypeError) and str(error) in {"content is not text", "content is empty"}:
+            return f"模型返回的 JSON 未通过 {output_type.__name__} 协议校验：响应正文为空或不是文本"
+        return f"模型返回的 JSON 未通过 {output_type.__name__} 协议校验"
+
+    @staticmethod
+    def _repair_prompt(prompt: str, validation_error: str) -> str:
+        """在重试时反馈脱敏校验结论，避免用相同提示重复得到同类无效 JSON。"""
+
+        return (
+            f"{prompt}\n\n上一次输出未通过结构化协议：{validation_error}。"
+            "请仅重新输出一个符合 JSON Schema 的对象；不要解释、不要 Markdown、不要增加 Schema 未定义字段。"
+        )
 
     @staticmethod
     def _structured_content(content: str) -> dict[str, Any]:

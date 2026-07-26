@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from tests.fakes import FakeEchoTool, FakeModelProvider
+from yuwang.control import AgentActionDraft
 from yuwang.domain.models import AgentAction, TaskSpec
 from yuwang.model_providers import (
     OpenAICompatibleProvider,
@@ -283,6 +284,7 @@ async def test_provider_invalid_output_and_refusal_are_classified():
     with pytest.raises(ProviderError) as invalid:
         await provider.generate_structured("task", AgentAction)
     assert invalid.value.category == "invalid_output"
+    assert "模型响应不包含 JSON 对象" in str(invalid.value)
     with pytest.raises(ProviderError) as refusal:
         await provider.generate_structured("task", AgentAction)
     assert refusal.value.category == "refusal"
@@ -313,6 +315,46 @@ async def test_provider_normalizes_wrapped_json_and_retries_invalid_structured_o
 
     assert action.kind == "finish"
     assert provider.last_call_metrics and provider.last_call_metrics.request_count == 2
+
+
+@pytest.mark.asyncio
+async def test_provider_retries_with_redacted_structured_validation_feedback():
+    requests: list[dict] = []
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"kind":"finish","summary":"ok",'
+                                    '"debug_trace":"sensitive value"}'
+                                )
+                            }
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": '{"kind":"finish","summary":"ok"}'}}]},
+            ),
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(__import__("json").loads(request.content))
+        return next(responses)
+
+    provider = provider_with_transport(httpx.MockTransport(handler), retries=1)
+    action = await provider.generate_structured("task", AgentActionDraft)
+
+    assert action.kind == "finish"
+    repair_prompt = requests[1]["messages"][-1]["content"]
+    assert "debug_trace（extra_forbidden）" in repair_prompt
+    assert "sensitive value" not in repair_prompt
 
 
 @pytest.mark.asyncio
