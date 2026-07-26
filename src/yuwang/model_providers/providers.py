@@ -753,10 +753,22 @@ class OpenAICompatibleProvider:
     def _repair_prompt(prompt: str, validation_error: str) -> str:
         """在重试时反馈脱敏校验结论，避免用相同提示重复得到同类无效 JSON。"""
 
-        return (
-            f"{prompt}\n\n上一次输出未通过结构化协议：{validation_error}。"
+        instruction = (
+            f"上一次输出未通过结构化协议：{validation_error}。"
             "请仅重新输出一个符合 JSON Schema 的对象；不要解释、不要 Markdown、不要增加 Schema 未定义字段。"
         )
+        try:
+            context = json.loads(prompt)
+        except json.JSONDecodeError:
+            return f"{prompt}\n\n{instruction}"
+        if isinstance(context, dict):
+            policy = context.get("system_policy_layer")
+            if isinstance(policy, dict):
+                # Agent 上下文本身是 JSON；修复提示也必须保持在同一对象中，避免
+                # 下游 OpenAI 兼容服务或协议测试服务器无法解析重试请求。
+                policy["structured_output_repair"] = instruction
+                return json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+        return f"{prompt}\n\n{instruction}"
 
     @staticmethod
     def _structured_content(content: str) -> dict[str, Any]:

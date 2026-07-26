@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -349,12 +351,14 @@ async def test_provider_retries_with_redacted_structured_validation_feedback():
         return next(responses)
 
     provider = provider_with_transport(httpx.MockTransport(handler), retries=1)
-    action = await provider.generate_structured("task", AgentActionDraft)
+    prompt = json.dumps({"system_policy_layer": {"immutable": True}, "purpose": "test"})
+    action = await provider.generate_structured(prompt, AgentActionDraft)
 
     assert action.kind == "finish"
-    repair_prompt = requests[1]["messages"][-1]["content"]
-    assert "debug_trace（extra_forbidden）" in repair_prompt
-    assert "sensitive value" not in repair_prompt
+    repair_context = json.loads(requests[1]["messages"][-1]["content"])
+    repair_instruction = repair_context["system_policy_layer"]["structured_output_repair"]
+    assert "debug_trace（extra_forbidden）" in repair_instruction
+    assert "sensitive value" not in repair_instruction
 
 
 @pytest.mark.asyncio
