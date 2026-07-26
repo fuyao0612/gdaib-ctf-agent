@@ -32,7 +32,9 @@ python -m yuwang.evaluation run --smoke --attempts 3 --provider-id <Provider UUI
 docker compose exec api python -m yuwang.evaluation run --smoke --attempts 1 --provider-id <Provider UUID> --database /data/yuwang.db --artifacts /data/artifacts
 ```
 
-普通聊天和备用链场景尚未具备低成本、可重复的正式调用入口时会记录为 `skipped`，绝不计为成功。
+普通聊天用例会经正式消息持久化和 Provider 文本协议执行，不创建 Run；评测记录保存线程追踪链接及
+真实请求次数、Token 和费用。无法由持久化状态确定性证明的语义断言会记录为 `skipped`，绝不计为成功。
+备用链等需要人为注入故障条件的用例仍会明确跳过，不能伪造失败或恢复结果。
 
 ## 结果与回放
 
