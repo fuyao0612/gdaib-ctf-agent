@@ -57,8 +57,9 @@ pytest -m real_provider tests/test_real_provider_smoke.py
 输入与断言契约，不包含预写模型回答、可执行代码或测试替身；`tests/test_evaluation_cases.py` 会检查
 覆盖面和安全边界。
 
-未来执行这些用例时必须沿用正式消息与 Run 路径并调用用户配置的真实 Provider。没有可用 API Key
-时应标记为未执行或跳过，不能用本地固定答案替代通过结果。
+运行方式、预算、重复尝试、持久化字段、筛选和回放接口见[本地评测](evaluation.md)。评测 CLI 必须显式
+指定已通过连接测试的真实 Provider，默认不会触发完整评测；没有可用 API Key 时应标记为未执行或跳过，
+不能用本地固定答案替代通过结果。
 
 ## 前端与浏览器
 

@@ -374,6 +374,7 @@ python examples/local_api.py
 - [上下文与记忆](docs/context-memory.md)：裁剪、完成可信等级和人工补充。
 - [设置参考](docs/settings.md)：全部高级字段。
 - [测试](docs/testing.md)：质量门禁与浏览器验收。
+- [本地评测](docs/evaluation.md)：评测用例、显式执行、结果查询与回放。
 - [故障排查](docs/troubleshooting.md)：启动、鉴权、模型和恢复问题。
 - [扩展开发](docs/extensions.md)：Provider、组件与工具的扩展边界。
 

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from datetime import datetime
 from pathlib import Path
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -14,10 +14,12 @@ from yuwang.domain.models import (
     EventType,
     Message,
     MessageRole,
+    ModelCall,
     Run,
     RunStatus,
     TaskSpec,
     Thread,
+    ToolCall,
     ToolSnapshot,
 )
 from yuwang.model_providers import ModelProvider
@@ -27,8 +29,7 @@ from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolRegistry, ToolSpec
 
 from .cases import BUILTIN_EVALUATION_CASES, EvaluationCase
-
-EvaluationStatus = Literal["passed", "failed", "skipped"]
+from .results import EvaluationRecord, EvaluationStatus, FailureCategory
 
 
 class EvaluationAssertionResult(BaseModel):
@@ -49,6 +50,7 @@ class EvaluationResult(BaseModel):
     case_id: str
     status: EvaluationStatus
     run_id: UUID | None = None
+    record_id: UUID | None = None
     assertions: tuple[EvaluationAssertionResult, ...]
     reason: str | None = None
 
@@ -82,19 +84,25 @@ class EvaluationRunner:
         self.artifact_root = artifact_root or database_path.parent / "evaluation-artifacts"
 
     async def run(
-        self, cases: Iterable[EvaluationCase] = BUILTIN_EVALUATION_CASES
+        self, cases: Iterable[EvaluationCase] = BUILTIN_EVALUATION_CASES, *, attempts: int = 1
     ) -> tuple[EvaluationResult, ...]:
         """顺序执行用例，避免共享 Provider 的限流掩盖单个用例结果。"""
 
-        return tuple([await self.run_case(case) for case in cases])
+        if attempts < 1:
+            raise ValueError("评测尝试次数必须至少为 1")
+        results: list[EvaluationResult] = []
+        for case in cases:
+            for attempt in range(1, min(attempts, case.max_attempts) + 1):
+                results.append(await self.run_case(case, attempt=attempt))
+        return tuple(results)
 
-    async def run_case(self, case: EvaluationCase) -> EvaluationResult:
+    async def run_case(self, case: EvaluationCase, *, attempt: int = 1) -> EvaluationResult:
         if not case.enabled:
-            return self._skipped(case, "评测用例已停用")
+            return self._skipped(case, "评测用例已停用", attempt)
         if self.provider is None:
-            return self._skipped(case, "未显式注入已配置的真实 Provider")
+            return self._skipped(case, "未显式注入已配置的真实 Provider", attempt)
         if case.expected_outcome in {"chat", "fallback"}:
-            return self._skipped(case, "当前最小运行器只执行需要 Agent Run 的任务型用例")
+            return self._skipped(case, "当前最小运行器只执行需要 Agent Run 的任务型用例", attempt)
 
         thread = self.repository.save_thread(Thread(title=f"评测：{case.name}"))
         messages = [
@@ -107,7 +115,8 @@ class EvaluationRunner:
             body=messages[-1].content,
             origin_message_id=messages[-1].id,
             scenario=f"evaluation:{case.case_id}",
-            budget=self.profile.budget,
+            authorized_targets=list(case.authorized_targets),
+            budget=case.budget,
             tool_snapshots=[self._tool_snapshot(spec) for spec in self.registry.specs()],
         )
         run = self.repository.save_run(
@@ -133,7 +142,7 @@ class EvaluationRunner:
 
         persisted = self.repository.get_run(run.id)
         if persisted is None:
-            return EvaluationResult(
+            result = EvaluationResult(
                 case_id=case.case_id,
                 status="failed",
                 run_id=run.id,
@@ -144,6 +153,7 @@ class EvaluationRunner:
                 ),
                 reason="正式运行记录未能读取",
             )
+            return self._persist_result(case, result, attempt, started_at=None, run=None)
         assertions = self._evaluate_assertions(case, persisted, task)
         statuses = {item.status for item in assertions}
         status: EvaluationStatus = (
@@ -153,16 +163,17 @@ class EvaluationRunner:
             if "skipped" in statuses
             else "passed"
         )
-        return EvaluationResult(
+        result = EvaluationResult(
             case_id=case.case_id,
             status=status,
             run_id=run.id,
             assertions=assertions,
             reason=None if status == "passed" else "存在未满足或尚未映射的声明式断言",
         )
+        return self._persist_result(case, result, attempt, started_at=run.created_at, run=persisted)
 
-    def _skipped(self, case: EvaluationCase, reason: str) -> EvaluationResult:
-        return EvaluationResult(
+    def _skipped(self, case: EvaluationCase, reason: str, attempt: int) -> EvaluationResult:
+        result = EvaluationResult(
             case_id=case.case_id,
             status="skipped",
             assertions=tuple(
@@ -171,6 +182,87 @@ class EvaluationRunner:
             ),
             reason=reason,
         )
+        return self._persist_result(case, result, attempt, started_at=None, run=None)
+
+    def _persist_result(
+        self,
+        case: EvaluationCase,
+        result: EvaluationResult,
+        attempt: int,
+        *,
+        started_at: datetime | None,
+        run: Run | None,
+    ) -> EvaluationResult:
+        """从正式 Run 统计指标，保存独立评测索引而不复制事件或报告正文。"""
+
+        calls = self.repository.list_model_calls(run.id) if run else []
+        tools = self.repository.list_tool_calls(run.id) if run else []
+        report = self.repository.get_report(run.id) if run else None
+        finished_at = run.finished_at if run and run.finished_at else datetime.now().astimezone()
+        actual_started = started_at or finished_at
+        duration_ms = max(0, int((finished_at - actual_started).total_seconds() * 1000))
+        input_tokens = sum(item.input_tokens for item in calls)
+        output_tokens = sum(item.output_tokens for item in calls)
+        estimated_cost = sum(float(item.metadata.get("cost", 0)) for item in calls)
+        provider = self.provider_config.name if self.provider_config else (run.provider if run else None)
+        model = self.provider_config.model if self.provider_config else None
+        record = EvaluationRecord(
+            case_id=case.case_id,
+            category=case.category,
+            difficulty=case.difficulty,
+            provider=provider,
+            model=model,
+            attempt=attempt,
+            started_at=actual_started,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            model_calls=len(calls),
+            tool_calls=len(tools),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost=estimated_cost,
+            success=result.status == "passed",
+            status=result.status,
+            submitted_flag=None,
+            flag_verified=bool(run and run.validation_status == "validated"),
+            finish_reason=(run.error if run and run.error else result.reason or "断言全部通过"),
+            failure_category=self._failure_category(result, run, calls, tools),
+            run_id=run.id if run else None,
+            trace_path=f"/api/v1/runs/{run.id}/events" if run else None,
+            report_path=f"/api/v1/runs/{run.id}/report" if report and run else None,
+        )
+        self.repository.save_evaluation_record(record)
+        return result.model_copy(update={"record_id": record.id})
+
+    @staticmethod
+    def _failure_category(
+        result: EvaluationResult,
+        run: Run | None,
+        calls: Sequence[ModelCall],
+        tools: Sequence[ToolCall],
+    ) -> FailureCategory | None:
+        if result.status == "passed":
+            return None
+        if result.status == "skipped":
+            return "provider_unavailable"
+        error = (run.error if run and run.error else result.reason or "").casefold()
+        if "上下文" in error:
+            return "context_failure"
+        if "步骤" in error:
+            return "step_limit"
+        if "超时" in error or "时间" in error:
+            return "time_limit"
+        if "预算" in error or "token" in error or "费用" in error:
+            return "budget_limit"
+        if "flag" in error or "候选" in error:
+            return "wrong_flag"
+        if run and run.status == RunStatus.STOPPED:
+            return "agent_abandoned"
+        if any(getattr(item, "status", None) == "failed" for item in tools):
+            return "tool_failure"
+        if any(getattr(item, "status", None) == "failed" for item in calls):
+            return "provider_failure"
+        return "assertion_failed"
 
     def _evaluate_assertions(
         self, case: EvaluationCase, run: Run, task: TaskSpec
