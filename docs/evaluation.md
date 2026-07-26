@@ -26,6 +26,12 @@ python -m yuwang.evaluation run --smoke --attempts 3 --provider-id <Provider UUI
 
 可以用 `--database` 与 `--artifacts` 指定隔离目录。没有 `YUWANG_MASTER_KEY`、Provider 不存在、未启用或未通过连接测试时，命令会明确拒绝执行，不会降级到测试替身或其他模型。
 
+默认 Docker 部署不需要把主密钥导入 PowerShell。使用已运行 API 容器中的受控环境，并显式指向持久化目录：
+
+```powershell
+docker compose exec api python -m yuwang.evaluation run --smoke --attempts 1 --provider-id <Provider UUID> --database /data/yuwang.db --artifacts /data/artifacts
+```
+
 普通聊天和备用链场景尚未具备低成本、可重复的正式调用入口时会记录为 `skipped`，绝不计为成功。
 
 ## 结果与回放

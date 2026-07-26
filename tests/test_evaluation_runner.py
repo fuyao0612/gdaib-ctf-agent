@@ -54,6 +54,8 @@ async def test_evaluation_runner_uses_agent_events_and_tool_snapshots(tmp_path):
             "Provider 快照存在",
             "TOOL_STARTED 已持久化",
             "TOOL_FINISHED 已持久化",
+            "生成公开任务说明",
+            "快照不含明文 API Key",
         ),
     )
 
@@ -63,3 +65,43 @@ async def test_evaluation_runner_uses_agent_events_and_tool_snapshots(tmp_path):
     assert result.run_id is not None
     assert {item.status for item in result.assertions} == {"passed"}
     assert runner.repository.list_events(result.run_id)
+
+
+@pytest.mark.asyncio
+async def test_executed_evaluation_with_unmapped_assertion_is_not_provider_unavailable(tmp_path):
+    registry = ToolRegistry()
+    registry.register(FakeEchoTool())
+    runner = EvaluationRunner(
+        tmp_path / "evaluation.db",
+        provider=FakeModelProvider(),
+        registry=registry,
+        provider_config=ProviderConfig(
+            name="评测配置快照",
+            preset=ProviderPreset.CUSTOM,
+            base_url="https://provider.example/v1",
+            model="test-model",
+            encrypted_api_key="test-encrypted-value",
+            enabled=True,
+            is_default=True,
+            fallback_order=0,
+            timeout_seconds=30,
+            max_retries=0,
+        ),
+        artifact_root=tmp_path / "artifacts",
+    )
+    result = await runner.run_case(
+        EvaluationCase(
+            case_id="unmapped-executed-assertion",
+            name="未映射断言",
+            category="测试",
+            user_messages=("执行一个可验证的工具任务",),
+            expected_outcome="task",
+            assertions=("当前未映射的运行语义",),
+        )
+    )
+
+    assert result.status == "skipped"
+    saved = runner.repository.get_evaluation_record(result.record_id)
+    assert saved is not None
+    assert saved.run_id == result.run_id
+    assert saved.failure_category is None

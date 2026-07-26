@@ -244,7 +244,8 @@ class EvaluationRunner:
         if result.status == "passed":
             return None
         if result.status == "skipped":
-            return "provider_unavailable"
+            # 已真实执行的 Run 因断言尚未映射而跳过时，不能误报 Provider 不可用。
+            return "provider_unavailable" if run is None else None
         error = (run.error if run and run.error else result.reason or "").casefold()
         if "上下文" in error:
             return "context_failure"
@@ -273,6 +274,16 @@ class EvaluationRunner:
         task_snapshot = self.repository.get_run_task(run.id)
         profile_snapshot = self.repository.get_run_agent_profile(run.id)
         provider_snapshot = self.repository.get_provider_snapshot(run.id)
+        has_task_snapshot = task_snapshot == task
+        has_provider_snapshot = (
+            provider_snapshot == [self.provider_config] if self.provider_config else False
+        )
+        # ProviderConfig 的持久化模型只保存 encrypted_api_key，不提供明文 api_key
+        # 字段。这里验证快照契约，而不是读取或比较任何真实密钥。
+        provider_snapshot_redacted = has_provider_snapshot and all(
+            "api_key" not in value.model_dump(mode="json", exclude={"encrypted_api_key"})
+            for value in provider_snapshot
+        )
 
         return tuple(
             self._evaluate_assertion(
@@ -281,9 +292,11 @@ class EvaluationRunner:
                 run,
                 event_types,
                 bool(tool_calls),
-                task_snapshot == task and bool(task_snapshot and task_snapshot.tool_snapshots),
+                has_task_snapshot and bool(task_snapshot and task_snapshot.tool_snapshots),
+                has_task_snapshot,
                 profile_snapshot == self.profile,
-                provider_snapshot == [self.provider_config] if self.provider_config else False,
+                has_provider_snapshot,
+                provider_snapshot_redacted,
             )
             for assertion in case.assertions
         )
@@ -296,8 +309,10 @@ class EvaluationRunner:
         event_types: set[EventType],
         has_tool_call: bool,
         has_tool_snapshot: bool,
+        has_task_snapshot: bool,
         has_profile_snapshot: bool,
         has_provider_snapshot: bool,
+        provider_snapshot_redacted: bool,
     ) -> EvaluationAssertionResult:
         """只映射可由 Run、事件和快照客观证明的声明；其余明确标记为跳过。"""
 
@@ -312,12 +327,16 @@ class EvaluationRunner:
             return passed
         if assertion == "不创建 Run":
             return failed
+        if "公开任务说明" in assertion:
+            return passed if has_task_snapshot else failed
         if "工具快照" in assertion:
             return passed if has_tool_snapshot else failed
         if "Agent" in assertion and "快照" in assertion:
             return passed if has_profile_snapshot else failed
         if "Provider" in assertion and "快照" in assertion:
             return passed if has_provider_snapshot else skipped
+        if "快照不含明文 API Key" in assertion:
+            return passed if provider_snapshot_redacted else failed
         if "TOOL_STARTED" in assertion:
             return passed if EventType.TOOL_STARTED in event_types else failed
         if "TOOL_FINISHED" in assertion:
@@ -334,6 +353,19 @@ class EvaluationRunner:
             return passed if run.status == RunStatus.WAITING_CLARIFICATION else failed
         if "等待计划确认" in assertion:
             return passed if run.status == RunStatus.WAITING_APPROVAL else failed
+        if "执行完成与验证状态分离" in assertion:
+            return (
+                passed
+                if run.status == RunStatus.COMPLETED
+                and run.validation_status in {"unverified", "partial", "failed"}
+                else failed
+            )
+        if "显示未验证或部分验证" in assertion:
+            return (
+                passed
+                if run.validation_status in {"unverified", "partial"}
+                else failed
+            )
         if case.expected_outcome == "rejected" and "拒绝" in assertion:
             return passed if run.status in {RunStatus.FAILED, RunStatus.STOPPED} else failed
         return skipped
