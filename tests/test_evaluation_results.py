@@ -1,0 +1,119 @@
+import pytest
+from cryptography.fernet import Fernet
+from fastapi.testclient import TestClient
+
+from apps.api.main import Settings, create_app
+from yuwang.domain.evaluation import EvaluationRecord, summarize_evaluations
+from yuwang.evaluation import EvaluationCase, EvaluationRunner
+from yuwang.storage import SQLiteRepository
+
+
+def record(**overrides) -> EvaluationRecord:
+    values = {
+        "case_id": "case-one",
+        "category": "任务",
+        "difficulty": "基础",
+        "provider": "测试 Provider",
+        "model": "test-model",
+        "attempt": 1,
+        "duration_ms": 120,
+        "model_calls": 2,
+        "tool_calls": 1,
+        "input_tokens": 30,
+        "output_tokens": 10,
+        "estimated_cost": 0.02,
+        "success": True,
+        "status": "passed",
+        "finish_reason": "断言全部通过",
+    }
+    values.update(overrides)
+    return EvaluationRecord(**values)
+
+
+def test_evaluation_result_storage_filters_and_summarizes(tmp_path):
+    repository = SQLiteRepository(tmp_path / "evaluation.db")
+    passed = repository.save_evaluation_record(record())
+    failed = repository.save_evaluation_record(
+        record(
+            case_id="case-two",
+            category="恢复",
+            difficulty="进阶",
+            status="failed",
+            success=False,
+            finish_reason="模型超时",
+            failure_category="provider_failure",
+        )
+    )
+    repository.save_evaluation_record(
+        record(
+            case_id="case-three",
+            provider=None,
+            model=None,
+            status="skipped",
+            success=False,
+            finish_reason="未配置 Provider",
+            failure_category="provider_unavailable",
+        )
+    )
+
+    assert repository.get_evaluation_record(passed.id) == passed
+    filtered = repository.list_evaluation_records(category="恢复")
+    assert [value.id for value in filtered] == [failed.id]
+    statistics = summarize_evaluations(repository.list_evaluation_records())
+    assert statistics.total == 3
+    assert statistics.success_rate == 0.5
+    assert statistics.average_tokens == 40
+    assert statistics.failure_categories == {
+        "provider_failure": 1,
+        "provider_unavailable": 1,
+    }
+
+
+def test_evaluation_api_reads_persisted_results_and_statistics(tmp_path):
+    app = create_app(
+        Settings(
+            database_path=tmp_path / "api.db",
+            artifact_root=tmp_path / "artifacts",
+            master_key=Fernet.generate_key().decode(),
+        )
+    )
+    saved = app.state.repository.save_evaluation_record(
+        record(case_id="api-case", category="API")
+    )
+
+    with TestClient(app) as client:
+        session = client.post("/api/v1/admin/session")
+        assert session.status_code == 200, session.text
+        client.headers.update({"X-CSRF-Token": session.json()["csrf_token"]})
+        listed = client.get("/api/v1/evaluations", params={"category": "API"})
+        assert listed.status_code == 200, listed.text
+        assert [item["id"] for item in listed.json()] == [str(saved.id)]
+        statistics = client.get("/api/v1/evaluations/statistics", params={"category": "API"})
+        assert statistics.status_code == 200, statistics.text
+        assert statistics.json()["success_rate"] == 1
+        detail = client.get(f"/api/v1/evaluations/{saved.id}")
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["case_id"] == "api-case"
+
+
+@pytest.mark.asyncio
+async def test_skipped_evaluation_is_persisted_without_creating_a_run(tmp_path):
+    runner = EvaluationRunner(tmp_path / "evaluation.db")
+    case = EvaluationCase(
+        case_id="persisted-skip",
+        name="持久化跳过",
+        category="测试",
+        user_messages=("执行任务",),
+        expected_outcome="task",
+        assertions=("创建 Run",),
+    )
+
+    result = await runner.run_case(case)
+
+    assert result.status == "skipped"
+    assert result.run_id is None
+    assert result.record_id is not None
+    saved = runner.repository.get_evaluation_record(result.record_id)
+    assert saved is not None
+    assert saved.status == "skipped"
+    assert saved.failure_category == "provider_unavailable"

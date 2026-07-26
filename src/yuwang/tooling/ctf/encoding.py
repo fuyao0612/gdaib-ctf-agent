@@ -10,7 +10,7 @@ from typing import Literal
 from urllib.parse import unquote
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from yuwang.tooling.contracts import ToolCallRequest, ToolSpec
 
@@ -18,12 +18,14 @@ from .base import CtfArtifactTool, ctf_spec
 
 EncodingType = Literal["auto", "base64", "base32", "hex", "url", "html"]
 MAX_INLINE_DECODED_CHARS = 2_000
+MAX_INLINE_INPUT_CHARS = 12_000
 
 
 class EncodingDecodeInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    artifact_id: UUID
+    artifact_id: UUID | None = None
+    text: str | None = Field(default=None, min_length=1, max_length=MAX_INLINE_INPUT_CHARS)
     encoding: EncodingType = "auto"
     max_layers: int = Field(default=2, ge=1, le=3)
     json_pointer: str | None = Field(default=None, max_length=512)
@@ -36,6 +38,14 @@ class EncodingDecodeInput(BaseModel):
         if not value.startswith("/") or ".." in value.split("/"):
             raise ValueError("JSON 指针必须以 / 开头且不能包含路径穿越")
         return value
+
+    @model_validator(mode="after")
+    def require_one_input_source(self) -> EncodingDecodeInput:
+        if (self.artifact_id is None) == (self.text is None):
+            raise ValueError("必须且只能提供 artifact_id 或 text")
+        if self.json_pointer and self.artifact_id is None:
+            raise ValueError("json_pointer 只能用于 JSON Artifact")
+        return self
 
 
 class DecodedCandidate(BaseModel):
@@ -64,7 +74,10 @@ class EncodingDecodeTool(CtfArtifactTool[EncodingDecodeInput, EncodingDecodeOutp
         return ctf_spec(
             name="encoding_decode",
             display_name="常见编码解码",
-            description="对上传题目 Artifact 进行受限层数的 Base64、Base32、Hex、URL 或 HTML 实体解码",
+            description=(
+                "对当前消息中的受限文本或上传题目 Artifact 进行受限层数的 Base64、"
+                "Base32、Hex、URL 或 HTML 实体解码"
+            ),
             capabilities=["encoding", "decode"],
             scenarios=["ctf", "crypto", "forensics"],
             permissions=["artifact:read", "artifact:create"],
@@ -73,13 +86,21 @@ class EncodingDecodeTool(CtfArtifactTool[EncodingDecodeInput, EncodingDecodeOutp
             input_schema=self.input_model.model_json_schema(),
             output_schema=self.output_model.model_json_schema(),
             artifact_types=["decoded_text"],
+            allowed_target_types=["artifact", "inline_text"],
         )
 
     async def execute_with_request(
         self, value: EncodingDecodeInput, request: ToolCallRequest | None
     ) -> EncodingDecodeOutput:
-        artifact, content = self.artifacts.read(value.artifact_id, request, max_bytes=256 * 1024)
-        text = content.decode("utf-8", errors="replace")
+        artifact = None
+        content = b""
+        if value.artifact_id is not None:
+            artifact, content = self.artifacts.read(
+                value.artifact_id, request, max_bytes=256 * 1024
+            )
+            text = content.decode("utf-8", errors="replace")
+        else:
+            text = value.text or ""
         if value.json_pointer:
             text = self._json_string_at_pointer(text, value.json_pointer)
         results: list[DecodedCandidate] = []
@@ -106,21 +127,32 @@ class EncodingDecodeTool(CtfArtifactTool[EncodingDecodeInput, EncodingDecodeOutp
                         )
                     )
                     if len(decoded) > MAX_INLINE_DECODED_CHARS:
-                        created = self.artifacts.create(
-                            artifact,
-                            filename=f"decoded-{kind}.txt",
-                            content=decoded.encode("utf-8"),
-                            kind="decoded_text",
-                            mime_type="text/plain",
-                            run_id=request.run_id if request else None,
-                        )
+                        if artifact is not None:
+                            created = self.artifacts.create(
+                                artifact,
+                                filename=f"decoded-{kind}.txt",
+                                content=decoded.encode("utf-8"),
+                                kind="decoded_text",
+                                mime_type="text/plain",
+                                run_id=request.run_id if request else None,
+                            )
+                        else:
+                            created = self.artifacts.create_for_run(
+                                request,
+                                filename=f"decoded-{kind}.txt",
+                                content=decoded.encode("utf-8"),
+                                kind="decoded_text",
+                                mime_type="text/plain",
+                            )
                         artifact_ids.append(created.id)
                     next_queue.append((decoded, next_chain, next_confidence))
                     if len(results) >= 6:
                         return EncodingDecodeOutput(
                             candidates=results,
                             artifact_ids=artifact_ids,
-                            input_truncated=len(content) == 256 * 1024,
+                            input_truncated=(
+                                value.artifact_id is not None and len(content) == 256 * 1024
+                            ),
                         )
             queue = next_queue
             if not queue:
@@ -128,7 +160,7 @@ class EncodingDecodeTool(CtfArtifactTool[EncodingDecodeInput, EncodingDecodeOutp
         return EncodingDecodeOutput(
             candidates=results,
             artifact_ids=artifact_ids,
-            input_truncated=len(content) == 256 * 1024,
+            input_truncated=(value.artifact_id is not None and len(content) == 256 * 1024),
         )
 
     @staticmethod

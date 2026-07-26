@@ -8,6 +8,8 @@ import type {
   AgentProfileSummary,
   Artifact,
   Event,
+  EvaluationRecord,
+  EvaluationStatistics,
   MemoryRecord,
   ProviderConfig,
   ProviderConfigInput,
@@ -35,6 +37,7 @@ let sessionCsrf = "";
 export const setSessionCsrf = (value: string) => {
   sessionCsrf = value;
 };
+export const getSessionCsrf = () => sessionCsrf;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // 所有页面都经过此函数访问后端：输入是相对 API 路径和 fetch 参数，
@@ -68,6 +71,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   setupStatus: () => request<SetupStatus>("/setup/status"),
   tools: () => request<ToolSpec[]>("/tools"),
+  evaluations: (query: Record<string, string> = {}) => {
+    const parameters = new URLSearchParams(
+      Object.entries(query).filter(([, value]) => value),
+    );
+    return request<EvaluationRecord[]>(`/evaluations${parameters.size ? `?${parameters}` : ""}`);
+  },
+  evaluationStatistics: (query: Record<string, string> = {}) => {
+    const parameters = new URLSearchParams(
+      Object.entries(query).filter(([, value]) => value),
+    );
+    return request<EvaluationStatistics>(
+      `/evaluations/statistics${parameters.size ? `?${parameters}` : ""}`,
+    );
+  },
   listThreads: () => request<Thread[]>("/threads"),
   listAgentProfiles: () => request<AgentProfileSummary[]>("/agent-profiles"),
   createThread: (title: string, skillIds: string[] = []) =>
@@ -215,10 +232,14 @@ export const api = {
       >
     >("/provider-presets"),
 
-  createAdminSession: () =>
-    request<{ csrf_token: string; expires_at: number }>("/admin/session", {
-      method: "POST",
-    }),
+  createAdminSession: async () => {
+    const value = await request<{ csrf_token: string; expires_at: number }>(
+      "/admin/session",
+      { method: "POST" },
+    );
+    setSessionCsrf(value.csrf_token);
+    return value;
+  },
   adminSession: async () => {
     const value = await request<{
       authenticated: boolean;

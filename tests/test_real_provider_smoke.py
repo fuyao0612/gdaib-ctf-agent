@@ -127,7 +127,8 @@ async def test_real_provider_compatibility_when_explicitly_enabled(
 
     provider = _provider_from_saved_config(service, provider_id)
 
-    # 连接测试、普通聊天、严格意图判断和流式输出必须都经过正式客户端。
+    # 连接测试、普通聊天和流式输出必须都经过正式客户端。新消息分派是确定性
+    # 规则，不应额外消耗一次真实模型调用。
     connection = await provider.test_connection()
     assert connection.request_count >= 1
     answer = await provider.generate_text(
@@ -136,7 +137,6 @@ async def test_real_provider_compatibility_when_explicitly_enabled(
     )
     assert answer.strip()
     intent = await classify_new_message(
-        provider,
         "请解释持续集成，不要执行任务。",
         has_attachments=False,
         recent_messages=[],
@@ -151,7 +151,8 @@ async def test_real_provider_compatibility_when_explicitly_enabled(
     ]
     assert "".join(chunks).strip()
 
-    # 直接建议模式不调用工具，仍要求 Agent 经历 Task Brief 和结构化 Action 两次真实调用。
+    # 直接建议模式跳过固定 Task Brief/Planner，且不提取重要事实时只进行一次
+    # 正式模型决策调用。
     profile = AgentProfileVersion(
         **AgentProfileInput(
             name=f"真实验收 Agent-{case.env_name}",
@@ -159,6 +160,7 @@ async def test_real_provider_compatibility_when_explicitly_enabled(
             completion_mode="advisory",
             workflow={"preset": "direct"},
             default_provider_id=provider_id,
+            memory_policy={"persist_important_facts": False},
         ).model_dump(),
         version=1,
     )
@@ -179,5 +181,5 @@ async def test_real_provider_compatibility_when_explicitly_enabled(
     finished = repository.get_run(run.id)
     assert finished and finished.status == RunStatus.COMPLETED
     assert finished.validation_status == "unverified"
-    assert len(repository.list_model_calls(run.id)) >= 2
+    assert len(repository.list_model_calls(run.id)) == 1
     assert repository.get_report(run.id) is not None

@@ -74,6 +74,7 @@ export default function App() {
     () => window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false",
   );
   const [initialSetup, setInitialSetup] = useState(false);
+  const [bootstrapReady, setBootstrapReady] = useState(false);
   // 上传是异步的。切换会话时先更新此 ref，旧会话的迟到响应不能混入新会话的
   // 待发送附件清单。
   const currentThreadIdRef = useRef<string | null>(null);
@@ -147,14 +148,21 @@ export default function App() {
     void bootstrap()
       .then((result) => {
         setInitialSetup(result.initialSetup);
-        setSettingsOpen(!result.authenticated);
+        // 本机会话可在首次启动前就建立，但 Provider 等产品配置仍未完成时，
+        // 必须自动打开设置中心，不能把“已认证”误判为“已配置”。
+        setSettingsOpen(result.initialSetup || !result.authenticated);
+        setBootstrapReady(result.authenticated);
       })
-      .catch(() => setError("无法连接后端服务，请检查部署状态。"));
+      .catch(() => {
+        setBootstrapReady(false);
+        setError("无法连接后端服务，请检查部署状态。");
+      });
   }, [bootstrap]);
 
   useEffect(() => {
+    if (!bootstrapReady) return;
     void refreshProviders().catch(() => setProviders([]));
-  }, [refreshProviders]);
+  }, [bootstrapReady, refreshProviders]);
 
   const refreshSkills = useCallback(async () => {
     const result = await api.listSkills();
@@ -162,8 +170,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!bootstrapReady) return;
     void refreshSkills().catch(() => setSkills([]));
-  }, [refreshSkills]);
+  }, [bootstrapReady, refreshSkills]);
 
   const refreshTools = useCallback(async () => {
     const result = await api.tools();
@@ -171,8 +180,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!bootstrapReady) return;
     void refreshTools().catch(() => setTools([]));
-  }, [refreshTools]);
+  }, [bootstrapReady, refreshTools]);
 
   useEffect(() => {
     const notice = detail?.provider_fallback_notice;

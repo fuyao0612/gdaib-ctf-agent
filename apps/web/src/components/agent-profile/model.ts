@@ -56,7 +56,7 @@ export function createEmptyProfile(): AgentProfileInput {
     },
     memory_policy: {
       enabled: true,
-      persist_important_facts: true,
+      persist_important_facts: false,
       max_facts: 100,
     },
     completion_mode: "evidence",

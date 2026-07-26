@@ -234,6 +234,19 @@ def create_provider(client: TestClient, base_url: str, **overrides) -> dict:
     return body
 
 
+def create_verified_profile(client: TestClient) -> dict:
+    response = client.post(
+        "/api/v1/admin/settings/agent-profiles",
+        json={
+            "name": "测试验证工作流",
+            "planning_strategy": "dynamic",
+            "workflow": {"preset": "verified"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
     app = configured_app(tmp_path)
     app.state.registry.register(FakeEchoTool())
@@ -241,7 +254,15 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         open_local_session(client)
         assert client.get("/api/v1/health").json()["version"] == "0.5.0"
         provider = create_provider(client, provider_server)
-        thread = client.post("/api/v1/threads", json={"title": "集成任务", "mode": "normal"}).json()
+        profile = create_verified_profile(client)
+        thread = client.post(
+            "/api/v1/threads",
+            json={
+                "title": "集成任务",
+                "mode": "normal",
+                "agent_profile_id": profile["profile_id"],
+            },
+        ).json()
         uploaded = client.post(
             f"/api/v1/threads/{thread['id']}/artifacts",
             files={"upload": ("sample.txt", b"evidence", "text/plain")},
@@ -415,18 +436,21 @@ def test_unified_message_entry_chooses_free_text_or_controlled_run(
             f"/api/v1/threads/{thread['id']}/message",
             json={
                 "request_id": str(uuid4()),
-                "content": "完成这道授权 CTF 题，并验证并报告结果",
-                "authorized_targets": ["http://127.0.0.1:8088/"],
+                "content": (
+                    "请执行任务：使用低风险 encoding_decode 工具解码 Base64 字符串 "
+                    "SGVsbG8=，仅处理该输入并报告结果。"
+                ),
             },
         )
         assert task.status_code == 200
+        assert task.headers["content-type"].startswith("text/event-stream")
         assert "event: execution_started" in task.text
         detail = client.get(f"/api/v1/threads/{thread['id']}").json()
         assert len(detail["runs"]) == 1
         assert detail["messages"][-1]["role"] == "user"
         task_spec = app.state.repository.get_run_task(UUID(detail["runs"][0]["id"]))
         assert task_spec and task_spec.verification_rules == []
-        assert task_spec.authorized_targets == ["http://127.0.0.1:8088/"]
+        assert task_spec.authorized_targets == []
 
 
 def test_semantic_intent_handles_natural_negated_ambiguous_and_contextual_messages(
@@ -1059,7 +1083,11 @@ def test_task_brief_clarification_persists_versions_and_resumes(
     with TestClient(app) as client:
         open_local_session(client)
         provider = create_provider(client, provider_server)
-        thread = client.post("/api/v1/threads", json={"title": "clarify"}).json()
+        profile = create_verified_profile(client)
+        thread = client.post(
+            "/api/v1/threads",
+            json={"title": "clarify", "agent_profile_id": profile["profile_id"]},
+        ).json()
         run_id = client.post(
             f"/api/v1/threads/{thread['id']}/turns",
             json={
@@ -1333,7 +1361,11 @@ def test_pause_guidance_resume_is_idempotent_and_survives_restart(
     with TestClient(app) as client:
         open_local_session(client)
         provider = create_provider(client, provider_server)
-        thread = client.post("/api/v1/threads", json={"title": "run control"}).json()
+        profile = create_verified_profile(client)
+        thread = client.post(
+            "/api/v1/threads",
+            json={"title": "run control", "agent_profile_id": profile["profile_id"]},
+        ).json()
         run_id = client.post(
             f"/api/v1/threads/{thread['id']}/turns",
             json={

@@ -33,6 +33,9 @@ from yuwang.settings.profiles import (
 T = TypeVar("T", bound=BaseModel)
 INLINE_ARTIFACT_CHAR_LIMIT = 2_000
 ARTIFACT_SUMMARY_CHAR_LIMIT = 600
+THREAD_SUMMARY_CHAR_LIMIT = 2_400
+THREAD_SUMMARY_ENTRY_CHAR_LIMIT = 180
+THREAD_SUMMARY_FALLBACK_CHAR_LIMIT = 600
 
 
 class AgentRuntimeState(Protocol):
@@ -131,7 +134,11 @@ class DefaultActionSelector:
         draft = await invoke(
             state,
             AgentActionDraft,
-            "选择下一动作：call_tool、replan、finish、fail 或 request_input",
+            (
+                "选择下一动作：call_tool、replan、finish、fail 或 request_input。"
+                "当用户已给出工具所需的完整受限输入，且工具 Schema 支持该输入时，"
+                "优先 call_tool；只有缺少 Schema 必填数据时才 request_input。"
+            ),
         )
         return draft.to_agent_action(state.observations)
 
@@ -155,11 +162,7 @@ class DefaultContextBuilder:
 
         if truncated and run and policy.include_thread_summary:
             older = messages[: -policy.recent_message_limit]
-            summary = (
-                "较早对话摘要（因消息窗口限制生成，可审计范围为 "
-                f"{older[0].id} 至 {older[-1].id}，共 {len(older)} 条）：\n"
-                + "\n".join(f"{item.role}: {item.content[:1000]}" for item in older)[:10_000]
-            )
+            summary = self._compact_thread_summary(older)
             previous = [
                 item
                 for item in self.repository.list_memories(run.thread_id, enabled_only=False)
@@ -201,6 +204,7 @@ class DefaultContextBuilder:
             or (item.kind == "run_summary" and policy.include_run_summaries)
             or (item.kind in {"important_fact", "user_input"} and policy.include_memories)
         ]
+        memory_payload = [item.model_dump(mode="json") for item in memories]
         # 首次任务附件与运行中由统一输入框追加的附件都保持不可信上下文；后者
         # 不修改不可变 TaskSpec，而是随检查点恢复。
         attachment_ids = [
@@ -241,7 +245,7 @@ class DefaultContextBuilder:
             ],
             "untrusted_model_content": {
                 "task_context": task_context,
-                "memory": [item.model_dump(mode="json") for item in memories],
+                "memory": memory_payload,
                 "current_plan": state.plan.model_dump(mode="json") if state.plan else None,
                 "task_brief": (
                     state.task_brief.model_dump(mode="json") if state.task_brief else None
@@ -266,26 +270,16 @@ class DefaultContextBuilder:
             "completion_mode": profile.completion_mode,
             "remaining_budget": state.remaining_budget,
         }
-        context["user_instruction"] = SafeTemplateRenderer.render(
-            profile.user_prompt_template,
-            {
-                "task": state.task.body,
-                "scenario": state.task.scenario,
-                "thread_summary": "\n".join(
-                    item.content for item in memories if item.kind == "thread_summary"
-                ),
-                "current_plan": context["untrusted_model_content"]["current_plan"] or "",
-                "observations": observations,
-                "remaining_budget": state.remaining_budget,
-            },
+        context["user_instruction"] = self._render_user_instruction(
+            profile, state, memory_payload, observations, context
         )
         prompt = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
         token_limit = self.repository.get_agent_defaults().context_token_budget
         if len(prompt) // 4 > token_limit:
             context["untrusted_conversation"] = context["untrusted_conversation"][-3:]
-            context["untrusted_model_content"]["memory"] = context["untrusted_model_content"][
-                "memory"
-            ][-10:]
+            context["untrusted_model_content"]["memory"] = self._compact_memory_payload(
+                memory_payload[-10:], THREAD_SUMMARY_FALLBACK_CHAR_LIMIT
+            )
             context["untrusted_attachment_content"] = [
                 {
                     key: value
@@ -294,6 +288,13 @@ class DefaultContextBuilder:
                 }
                 for item in attachment_context
             ]
+            context["user_instruction"] = self._render_user_instruction(
+                profile,
+                state,
+                context["untrusted_model_content"]["memory"],
+                observations,
+                context,
+            )
             prompt = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
             truncated = True
             reasons.append("context_token_budget")
@@ -310,6 +311,111 @@ class DefaultContextBuilder:
             original_memory_count=len(all_memories),
             kept_memory_count=len(memories),
         )
+
+    @staticmethod
+    def _render_user_instruction(
+        profile: AgentProfileVersion,
+        state: AgentRuntimeState,
+        memories: list[dict[str, Any]],
+        observations: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> str:
+        """模板使用与模型可见内容一致的摘要，避免裁剪后仍由模板重复旧消息。"""
+
+        thread_summary = "\n".join(
+            str(item["content"])
+            for item in memories
+            if item.get("kind") == "thread_summary"
+        )
+        return SafeTemplateRenderer.render(
+            profile.user_prompt_template,
+            {
+                "task": state.task.body,
+                "scenario": state.task.scenario,
+                "thread_summary": thread_summary,
+                "current_plan": context["untrusted_model_content"]["current_plan"] or "",
+                "observations": observations,
+                "remaining_budget": state.remaining_budget,
+            },
+        )
+
+    @classmethod
+    def _compact_thread_summary(cls, messages: list[Message]) -> str:
+        """把较早消息压成有界的公开事实摘要，不再复制整段原文。"""
+
+        sections: dict[str, list[str]] = {
+            "目标与约束": [],
+            "已完成操作": [],
+            "失败尝试": [],
+            "重要发现": [],
+            "待办事项": [],
+        }
+        for message in messages:
+            content = cls._bounded_text(message.content, THREAD_SUMMARY_ENTRY_CHAR_LIMIT)
+            if not content:
+                continue
+            bucket = cls._summary_bucket(message, content)
+            sections[bucket].append(f"{message.role}: {content}")
+
+        original_chars = sum(len(message.content) for message in messages)
+        lines = [
+            "较早对话确定性摘要（因消息窗口限制生成；原始记录未覆盖）。",
+            (
+                f"审计范围：{messages[0].id} 至 {messages[-1].id}，共 {len(messages)} 条，"
+                f"原始字符 {original_chars}，摘要上限 {THREAD_SUMMARY_CHAR_LIMIT}。"
+            ),
+        ]
+        for label, entries in sections.items():
+            representative = cls._representative_entries(entries)
+            if representative:
+                lines.append(f"{label}：")
+                lines.extend(f"- {entry}" for entry in representative)
+        return cls._bounded_text("\n".join(lines), THREAD_SUMMARY_CHAR_LIMIT)
+
+    @staticmethod
+    def _summary_bucket(message: Message, content: str) -> str:
+        normalized = content.casefold()
+        if str(message.role) == "user":
+            return "目标与约束"
+        if any(token in normalized for token in ("失败", "错误", "超时", "拒绝", "阻塞", "failure", "error")):
+            return "失败尝试"
+        if any(token in normalized for token in ("待办", "下一步", "需要", "todo", "next step")):
+            return "待办事项"
+        if any(token in normalized for token in ("完成", "成功", "已", "finished", "succeeded")):
+            return "已完成操作"
+        return "重要发现"
+
+    @staticmethod
+    def _representative_entries(entries: list[str]) -> list[str]:
+        """每类保留开头和结尾的代表项，避免活跃线程继续线性增长。"""
+
+        if len(entries) <= 2:
+            return entries
+        return [entries[0], entries[-1]]
+
+    @staticmethod
+    def _bounded_text(value: str, limit: int) -> str:
+        normalized = " ".join(value.split())
+        if len(normalized) <= limit:
+            return normalized
+        head = max(1, (limit - 36) // 2)
+        tail = max(1, limit - 36 - head)
+        omitted = len(normalized) - head - tail
+        return f"{normalized[:head].rstrip()} ... [已截断 {omitted} 字符] ... {normalized[-tail:].lstrip()}"
+
+    @classmethod
+    def _compact_memory_payload(
+        cls, values: list[dict[str, Any]], content_limit: int
+    ) -> list[dict[str, Any]]:
+        """预算降级只缩短模型侧副本，持久化记忆仍保留完整可审计摘要。"""
+
+        return [
+            {
+                **value,
+                "content": cls._bounded_text(str(value["content"]), content_limit),
+            }
+            for value in values
+        ]
 
     @staticmethod
     def _latest_user_instruction(

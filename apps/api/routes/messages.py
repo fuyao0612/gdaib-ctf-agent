@@ -93,20 +93,14 @@ async def _classify_new_message(
     thread_id: UUID,
     body: UnifiedMessageCreate,
 ) -> MessageIntent:
-    """仅使用会话当前 Provider 的首项做一次判断，配置或调用异常均由分类器降级。"""
+    """新消息分派不调用 Provider；显式任务才会创建进入 Agent 循环的 Run。"""
 
-    thread = context.validate_user_message_artifacts(thread_id, body.artifact_ids)
-    selected_id = body.provider_config_id or thread.provider_config_id
-    try:
-        _, chain = context.resolve_provider_chain(selected_id)
-    except (HTTPException, KeyError, ValueError):
-        return MessageIntent(kind="chat")
+    context.validate_user_message_artifacts(thread_id, body.artifact_ids)
     recent_messages = [
         {"role": str(message.role), "content": message.content[:1000]}
         for message in context.repository.list_messages(thread_id)[-6:]
     ]
     return await classify_new_message(
-        chain.providers[0],
         body.content,
         has_attachments=bool(body.artifact_ids),
         recent_messages=recent_messages,

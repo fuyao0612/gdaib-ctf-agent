@@ -2,6 +2,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import AgentProfileCenter from "./components/AgentProfileCenter";
+import EvaluationResults from "./components/EvaluationResults";
 import ProviderSettings from "./components/ProviderSettings";
 import SkillSettings from "./components/SkillSettings";
 import SetupProgress from "./components/SetupProgress";
@@ -345,6 +346,7 @@ export default function SettingsCenter({
                   onError={setError}
                 />
               )}
+              {mode === "advanced" && <EvaluationResults onError={setError} />}
               {mode === "advanced" && agentDefaults && (
                 <section>
                   <div className="settings-title">

@@ -94,6 +94,7 @@ class AgentRunCoordinator:
             "select_action",
             engine._route_action,
             {
+                "select_action": "select_action",
                 "policy_check": "policy_check",
                 "replan": "replan",
                 "verify": "verify",
@@ -105,6 +106,7 @@ class AgentRunCoordinator:
             "policy_check",
             engine._route_policy,
             {
+                "select_action": "select_action",
                 "replan": "replan",
                 "execute_tool": "execute_tool",
                 "await_plan_approval": "await_plan_approval",

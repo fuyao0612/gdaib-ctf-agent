@@ -211,7 +211,9 @@ export function useWorkbenchData() {
   const bootstrap = useCallback(async () => {
     const status = await api.setupStatus();
     try {
-      await api.adminSession();
+      // 首次打开本机 Web 没有 HttpOnly Cookie 是正常状态。直接建立会话，
+      // 避免先用受保护的 GET 探测而在控制台制造 401。
+      await api.createAdminSession();
       const [values, preferences] = await Promise.all([
         loadThreads(),
         api.chatPreferences(),

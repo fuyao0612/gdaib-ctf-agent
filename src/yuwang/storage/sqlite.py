@@ -21,12 +21,19 @@ from yuwang.domain.models import (
 from yuwang.settings.models import ProviderConfig
 from yuwang.settings.profiles import AgentProfileVersion
 from yuwang.storage.sqlite_control import SQLiteControlStore
+from yuwang.storage.sqlite_evaluation import SQLiteEvaluationStore
 from yuwang.storage.sqlite_mcp import SQLiteMcpStore
 from yuwang.storage.sqlite_settings import SQLiteSettingsStore
 from yuwang.storage.sqlite_workspace import SQLiteWorkspaceStore
 
 
-class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteMcpStore, SQLiteControlStore):
+class SQLiteRepository(
+    SQLiteWorkspaceStore,
+    SQLiteSettingsStore,
+    SQLiteMcpStore,
+    SQLiteControlStore,
+    SQLiteEvaluationStore,
+):
     """显式 SQLite 数据访问层。
 
     输入和输出均为领域模型，调用方看不到 SQL 行。未来替换数据库时实现
@@ -68,6 +75,8 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteMcpStore
                 CREATE TABLE IF NOT EXISTS run_pause_requests(run_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, requested_at TEXT NOT NULL, consumed_at TEXT);
                 CREATE TABLE IF NOT EXISTS chat_requests(request_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, status TEXT NOT NULL, user_message_id TEXT NOT NULL, assistant_message_id TEXT, error TEXT, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS mcp_servers(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS evaluation_results(id TEXT PRIMARY KEY, case_id TEXT NOT NULL, category TEXT NOT NULL, difficulty TEXT NOT NULL, provider TEXT, model TEXT, status TEXT NOT NULL, run_id TEXT, finished_at TEXT NOT NULL, data TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS idx_evaluation_results_filters ON evaluation_results(case_id, category, difficulty, provider, model, status, finished_at DESC);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (8);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (7);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
@@ -77,6 +86,7 @@ class SQLiteRepository(SQLiteWorkspaceStore, SQLiteSettingsStore, SQLiteMcpStore
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (3);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (9);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (10);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (11);
                 """
             )
             rows = db.execute("SELECT id,data FROM threads").fetchall()

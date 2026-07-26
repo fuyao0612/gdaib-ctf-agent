@@ -7,6 +7,20 @@
 不可变 Run，再经过准备、规划、受控动作、验证和报告收尾。Event（事件）是保存到 SQLite
 后再推送到页面的公开进度，不包含隐藏思维链。
 
+## 默认直接循环
+
+新建的“默认安全 Agent”使用 `direct` 策略：`ingest -> normalize_task -> select_action`，
+不为每个任务固定调用 Task Brief 或 Planner。模型不请求工具时会直接进入验证和报告；请求工具时仍
+完整经过 `policy_check -> execute_tool -> observe`，工具失败的简短观察会返回给同一个 Agent 再判断。
+模型或用户指引要求重新判断时，直接模式只回到 `select_action`，不会先生成一个冗余计划。默认也不
+自动提取“重要事实”，因此一次无工具建议任务只使用一次模型决策调用；需要长期事实提炼时可在设置
+中心显式开启。
+这不是绕过安全边界：Run 快照、工具白名单、审批、预算、检查点、审计和确定性验证保持不变。
+
+平台自动创建的旧默认 Profile 会在下次启动时版本化升级到该策略；用户创建或显式配置的 Profile 与
+历史 Run 快照不会被修改。需要固定计划、人工计划确认或自动重规划时，可在设置中心选择 `planned`
+或 `verified` Profile。
+
 ```mermaid
 flowchart LR
     U["用户"] --> W["Web\n输入与五阶段进度"]
@@ -23,7 +37,7 @@ flowchart LR
 实际节点：`ingest`、`normalize_task`。
 
 - `apps/api/routes/messages.py` 先处理停止、运行中指引、等待补充和等待澄清；只有没有活动
-  Run 时才判断消息是否需要受控执行。
+  Run 时才用保守的确定性规则判断明确执行、模糊请求或自由回复，不额外调用模型。
 - `apps/api/run_interactions.py` 负责补充、澄清和追加指引的请求 ID 幂等、时间线保存、附件
   归属校验与检查点恢复。`apps/api/routes/runs.py` 中的同类接口复用这一用例以保持兼容。
 - `apps/api/context.py` 构造不可变 TaskSpec，保存 Provider/Profile 快照并调度后台任务。

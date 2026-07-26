@@ -186,6 +186,7 @@ class SQLiteWorkspaceStore(SQLiteStore):
                     "run_control_requests",
                     "run_guidance",
                     "run_pause_requests",
+                    "evaluation_results",
                 ):
                     db.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))
             db.execute("DELETE FROM chat_requests WHERE thread_id=?", (key,))

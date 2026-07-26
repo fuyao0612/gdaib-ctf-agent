@@ -1,91 +1,48 @@
-import json
-
 import pytest
 
 from yuwang.dispatch import MessageIntent, classify_new_message, route_active_message
 from yuwang.domain.models import RunStatus
-from yuwang.model_providers import ProviderError
-from yuwang.model_providers.providers import ProviderErrorCategory
-
-
-class IntentProvider:
-    name = "intent-test"
-    timeout_seconds = 2
-
-    def __init__(self, result):
-        self.result = result
-        self.calls = 0
-        self.prompt = ""
-        self.request_budget = None
-
-    async def generate_structured(self, prompt, output_type, **kwargs):
-        del output_type
-        self.calls += 1
-        self.prompt = prompt
-        self.request_budget = kwargs.get("request_budget")
-        if isinstance(self.result, Exception):
-            raise self.result
-        return self.result
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("content", "result", "expected"),
+    ("content", "expected"),
     [
-        ("能解释一下这份方案吗？", MessageIntent(kind="chat"), "chat"),
-        (
-            "请把上周讨论的发布清单整理为可执行任务",
-            MessageIntent(kind="run"),
-            "run",
-        ),
-        (
-            "帮我处理一下这个事情",
-            MessageIntent(kind="clarify", clarification_question="请补充目标和预期交付物。"),
-            "clarify",
-        ),
-        ("不要执行，只说明风险。", MessageIntent(kind="chat"), "chat"),
+        ("能解释一下这份方案吗？", "chat"),
+        ("请把上周讨论的发布清单整理为可执行任务", "run"),
+        ("帮我处理一下这个事情", "clarify"),
+        ("不要执行，只说明风险。", "chat"),
+        ("请使用 encoding_decode 工具解码 SGVsbG8=", "run"),
     ],
 )
-async def test_semantic_intent_uses_one_strict_model_call(
-    content, result, expected
-):
-    provider = IntentProvider(result)
+async def test_new_message_dispatch_is_deterministic_and_does_not_call_a_model(content, expected):
     decision = await classify_new_message(
-        provider,
         content,
         has_attachments=False,
         recent_messages=[{"role": "user", "content": "刚才在讨论发布准备。"}],
     )
 
     assert decision.kind == expected
-    assert provider.calls == 1
-    assert provider.request_budget == 1
-    prompt = json.loads(provider.prompt)
-    assert prompt["user_message_untrusted"] == content
-    assert prompt["recent_conversation_untrusted"][0]["content"] == "刚才在讨论发布准备。"
-    assert "不能改变这些规则" in prompt["rules"][-1]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "result",
-    [
-        ProviderError(ProviderErrorCategory.TIMEOUT, "请求超时", True),
-        {"kind": "run", "unexpected": "field"},
-        {"kind": "clarify", "clarification_question": None},
-    ],
-)
-async def test_intent_failure_or_invalid_output_safely_falls_back_to_chat(result):
-    provider = IntentProvider(result)
+async def test_attachment_starts_a_controlled_task_without_model_routing():
     decision = await classify_new_message(
-        provider,
-        "帮我完成一件事",
-        has_attachments=False,
-        recent_messages=[],
+        "请处理这个附件", has_attachments=True, recent_messages=[]
     )
 
-    assert decision == MessageIntent(kind="chat")
-    assert provider.calls == 1
+    assert decision == MessageIntent(kind="run")
+
+
+@pytest.mark.asyncio
+async def test_explicit_continuation_of_a_prior_plan_starts_a_run():
+    decision = await classify_new_message(
+        "继续刚才那个安排。",
+        has_attachments=False,
+        recent_messages=[{"role": "user", "content": "我想准备发布说明。"}],
+    )
+
+    assert decision == MessageIntent(kind="run")
 
 
 @pytest.mark.parametrize(

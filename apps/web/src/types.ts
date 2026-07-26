@@ -474,3 +474,44 @@ export interface RunAudit {
     created_at: string;
   }>;
 }
+
+export type EvaluationStatus = "passed" | "failed" | "skipped";
+
+export interface EvaluationRecord {
+  id: string;
+  case_id: string;
+  category: string;
+  difficulty: string;
+  provider: string | null;
+  model: string | null;
+  attempt: number;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  model_calls: number;
+  tool_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+  success: boolean;
+  status: EvaluationStatus;
+  submitted_flag: string | null;
+  flag_verified: boolean;
+  finish_reason: string;
+  failure_category: string | null;
+  run_id: string | null;
+  trace_path: string | null;
+  report_path: string | null;
+}
+
+export interface EvaluationStatistics {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  success_rate: number;
+  average_duration_ms: number;
+  average_tokens: number;
+  average_cost: number;
+  failure_categories: Record<string, number>;
+}
