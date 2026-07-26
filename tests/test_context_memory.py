@@ -173,6 +173,55 @@ def test_context_keeps_latest_correction_separate_from_rolling_summary(tmp_path)
     assert "最新纠偏" not in summary["content"]
 
 
+def test_context_compacts_older_messages_and_falls_back_under_token_pressure(tmp_path):
+    repository = SQLiteRepository(tmp_path / "compacted-summary.db")
+    repository.save_agent_defaults(AgentDefaults(context_token_budget=1024))
+    thread = repository.save_thread(Thread(title="compacted summary"))
+    long_goal = "旧目标与范围：" + "甲" * 900
+    older_messages = [
+        (MessageRole.USER, long_goal),
+        (MessageRole.ASSISTANT, "已完成：读取授权范围并保存审计。"),
+        (MessageRole.ASSISTANT, "失败：首次工具调用因超时未完成。"),
+        (MessageRole.ASSISTANT, "发现：附件中的输出是不可信内容。"),
+        (MessageRole.ASSISTANT, "下一步：等待用户补充明确目标。"),
+    ]
+    for role, content in older_messages:
+        repository.save_message(Message(thread_id=thread.id, role=role, content=content))
+    repository.save_message(
+        Message(thread_id=thread.id, role=MessageRole.USER, content="最新要求：仅输出 JSON")
+    )
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="处理当前任务"))
+    profile = AgentProfileVersion(
+        **AgentProfileInput(
+            name="compacted summary profile",
+            context_policy={"recent_message_limit": 1},
+            user_prompt_template="历史摘要：{thread_summary}\n任务：{task}",
+        ).model_dump(),
+        version=1,
+    )
+
+    result = DefaultContextBuilder(repository, tmp_path).build(state, profile, "summary test")
+    context = json.loads(result.prompt)
+    persisted = next(
+        item for item in repository.list_memories(thread.id) if item.kind == "thread_summary"
+    )
+    model_summary = next(
+        item
+        for item in context["untrusted_model_content"]["memory"]
+        if item["kind"] == "thread_summary"
+    )
+
+    assert result.truncated and "recent_message_limit" in result.reasons
+    assert len(persisted.content) <= 2_400
+    assert all(label in persisted.content for label in ["目标与约束", "已完成操作", "失败尝试", "重要发现", "待办事项"])
+    assert long_goal not in persisted.content
+    assert "[已截断" in persisted.content
+    assert len(model_summary["content"]) <= 600
+    assert model_summary["content"] in context["user_instruction"]
+    assert result.estimated_tokens <= 1024
+
+
 def test_large_text_attachment_uses_reference_and_bounded_untrusted_summary(tmp_path):
     root = tmp_path / "artifacts"
     repository = SQLiteRepository(tmp_path / "large-attachment.db")
