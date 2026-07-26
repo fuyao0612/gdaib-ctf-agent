@@ -159,6 +159,19 @@ def test_agent_defaults_persist(tmp_path):
     assert service.get_agent_defaults() == defaults
 
 
+def test_legacy_context_budget_is_migrated_before_validation(tmp_path):
+    repository = SQLiteRepository(tmp_path / "legacy-settings.db")
+    with repository.connect() as db:
+        db.execute(
+            "INSERT INTO app_settings(key,data) VALUES('agent_defaults',?)",
+            (
+                '{"budget":{},"provider_retry_budget":2,'
+                '"context_token_budget":32000,"observation_char_budget":20000}',
+            ),
+        )
+    assert repository.get_agent_defaults().context_token_budget == 32_768
+
+
 def test_provider_snapshot_is_encrypted_and_immutable(tmp_path):
     repository = SQLiteRepository(tmp_path / "snapshots.db")
     service = SettingsService(repository, SecretCipher(Fernet.generate_key().decode()))
