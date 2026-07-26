@@ -211,7 +211,7 @@ async def test_complete_failure_replan_success_report(tmp_path):
     tool_events = [event for event in events if event.type == EventType.TOOL_FINISHED]
     assert [event.payload["success"] for event in tool_events] == [False, True]
     assert repository.get_report(run.id)[1]["tool_metrics"] == {"calls": 2, "failures": 1}
-    assert len(repository.list_model_calls(run.id)) == 7
+    assert len(repository.list_model_calls(run.id)) == 6
     assert [call.status for call in repository.list_tool_calls(run.id)] == [
         CallStatus.FAILED,
         CallStatus.SUCCEEDED,
@@ -688,6 +688,35 @@ async def test_direct_workflow_uses_one_model_call_for_an_advisory_answer(tmp_pa
     assert len(repository.list_model_calls(run.id)) == 1
     assert repository.latest_task_brief(run.id) is None
     assert not any(event.type == EventType.PLAN_UPDATED for event in repository.list_events(run.id))
+
+
+@pytest.mark.asyncio
+async def test_direct_replan_does_not_add_a_planner_model_call(tmp_path):
+    profile = profile_for(
+        planning_strategy="direct",
+        completion_mode="advisory",
+        workflow={"preset": "direct"},
+        memory_policy={"persist_important_facts": False},
+    )
+    repository, engine = build_engine(tmp_path, "advisory", profile)
+    thread = repository.save_thread(Thread(title="direct replan"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(
+        run_id=run.id,
+        task=TaskSpec(body="根据新约束重新判断"),
+        action=AgentAction(kind="replan", summary="用户补充了新约束"),
+    )
+
+    updated = AgentStateModel.model_validate(
+        await engine.nodes.replan(state.model_dump(mode="python"))
+    )
+
+    assert updated.plan is None
+    assert updated.replan_count == 1
+    assert repository.list_model_calls(run.id) == []
+    event = next(item for item in repository.list_events(run.id) if item.type == EventType.REPLANNED)
+    assert event.payload["planning_strategy"] == "direct"
+    assert engine.nodes.route_action(updated.model_dump(mode="python")) == "select_action"
 
 
 @pytest.mark.asyncio

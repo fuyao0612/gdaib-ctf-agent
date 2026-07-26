@@ -65,7 +65,9 @@ class ContextPolicy(BaseModel):
 class MemoryPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
-    persist_important_facts: bool = True
+    # 重要事实提取会额外请求一次模型。默认直接循环保持一次决策调用；需要
+    # 跨任务提炼长期偏好时，用户可在设置中心显式开启。
+    persist_important_facts: bool = False
     max_facts: int = Field(100, ge=0, le=1000)
 
 
@@ -256,6 +258,10 @@ class AgentProfileService:
                 data["budget"] = (budget or Budget()).model_dump()
                 data["planning_strategy"] = "direct"
                 data["workflow"] = {"preset": "direct"}
+                data["memory_policy"] = {
+                    **data["memory_policy"],
+                    "persist_important_facts": False,
+                }
                 return self.update(default.profile_id, AgentProfileInput.model_validate(data))
             return default
         return self.create(
@@ -285,6 +291,7 @@ class AgentProfileService:
             or profile.budget.max_steps == LEGACY_DEFAULT_MAX_STEPS
             or profile.budget.max_model_calls == LEGACY_DEFAULT_MAX_MODEL_CALLS
             or profile.budget.max_tokens < target.max_tokens
+            or profile.memory_policy.persist_important_facts
         )
 
     def create(self, value: AgentProfileInput) -> AgentProfileVersion:

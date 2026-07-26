@@ -517,6 +517,22 @@ class WorkflowNodes:
         state.guidance_replan_required = False
         state.guidance_replan_sequences.clear()
         state.replan_count += 1
+        if engine.profile.planning_strategy == "direct":
+            # 直接模式的“重新判断”只表示下一次 select_action 必须读取最新观察或
+            # 用户指引。额外生成计划既不会增加安全边界，也会无谓多消耗一次模型调用。
+            payload: dict[str, Any] = {
+                "replan_count": state.replan_count,
+                "planning_strategy": "direct",
+            }
+            if guidance_sequences:
+                payload["guidance_sequences"] = guidance_sequences
+            engine.events.emit(
+                state.run_id,
+                EventType.REPLANNED,
+                "直接模式已基于最新上下文重新选择下一动作",
+                payload,
+            )
+            return engine._result("replan", state)
         state.plan = await engine.planner.plan(
             state,
             cast(Any, engine._model_call),

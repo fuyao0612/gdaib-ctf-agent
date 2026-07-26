@@ -21,6 +21,7 @@ def test_profile_versions_copy_rollback_default_and_immutable_snapshot(tmp_path)
     assert default.version == 1 and default.is_default
     assert default.planning_strategy == "direct"
     assert default.workflow.preset == "direct"
+    assert default.memory_policy.persist_important_facts is False
 
     created = service.create(
         AgentProfileInput(
@@ -76,7 +77,29 @@ def test_default_profile_upgrades_only_platform_legacy_token_budget(tmp_path):
     assert upgraded.budget.max_steps == 40
     assert upgraded.planning_strategy == "direct"
     assert upgraded.workflow.preset == "direct"
+    assert upgraded.memory_policy.persist_important_facts is False
     assert service.ensure_default().version == upgraded.version
+
+
+def test_platform_default_upgrades_to_disable_extra_fact_extraction(tmp_path):
+    repository = SQLiteRepository(tmp_path / "default-memory-policy.db")
+    service = AgentProfileService(repository)
+    legacy = service.create(
+        AgentProfileInput(
+            name="默认安全 Agent",
+            description="由 v0.3 迁移创建的默认配置",
+            planning_strategy="direct",
+            workflow={"preset": "direct"},
+            memory_policy={"persist_important_facts": True},
+            is_default=True,
+        )
+    )
+
+    upgraded = service.ensure_default()
+
+    assert upgraded.profile_id == legacy.profile_id
+    assert upgraded.version == legacy.version + 1
+    assert upgraded.memory_policy.persist_important_facts is False
 
 
 def test_profile_export_import_is_secretless_and_template_safe(tmp_path):
