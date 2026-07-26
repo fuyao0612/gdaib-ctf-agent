@@ -23,7 +23,7 @@ from yuwang.domain.models import (
     RunStatus,
     ToolCall,
 )
-from yuwang.settings.models import AgentDefaults
+from yuwang.settings.models import AgentDefaults, ProviderConfig
 
 
 class AgentRepository(Protocol):
@@ -47,6 +47,7 @@ class AgentRepository(Protocol):
     def list_evidence(self, run_id: UUID | str) -> list[EvidenceRecord]: ...
     def save_report(self, run_id: UUID | str, markdown: str, data: dict[str, Any]) -> None: ...
     def get_agent_defaults(self) -> AgentDefaults: ...
+    def get_provider_snapshot(self, run_id: UUID | str) -> list[ProviderConfig]: ...
     def save_memory(self, value: MemoryRecord) -> MemoryRecord: ...
     def list_memories(
         self, thread_id: UUID | str, enabled_only: bool = True

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
+import time
+import unicodedata
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +40,27 @@ ARTIFACT_SUMMARY_CHAR_LIMIT = 600
 THREAD_SUMMARY_CHAR_LIMIT = 2_400
 THREAD_SUMMARY_ENTRY_CHAR_LIMIT = 180
 THREAD_SUMMARY_FALLBACK_CHAR_LIMIT = 600
+CONTEXT_COMPACTION_SUGGEST_RATIO = 0.75
+CONTEXT_COMPACTION_FORCE_RATIO = 0.90
+MIN_OUTPUT_TOKEN_RESERVE = 8_192
+
+
+def estimate_tokens(value: str) -> int:
+    """保守估算中英文混合文本的 Token，不把中文按四字符低估。
+
+    该函数是可替换估算器的默认实现。中文、日文、韩文及全角字符按接近一个
+    Token 计，ASCII 连续文本按约三字符计；取两种估算的较大值以留出安全余量。
+    """
+
+    if not value:
+        return 0
+    east_asian = sum(
+        1
+        for char in value
+        if unicodedata.east_asian_width(char) in {"W", "F"}
+        or "CJK" in unicodedata.name(char, "")
+    )
+    return max(math.ceil(len(value.encode("utf-8")) / 3), east_asian + math.ceil((len(value) - east_asian) / 3))
 
 
 class AgentRuntimeState(Protocol):
@@ -68,12 +93,22 @@ class ContextBuildResult(BaseModel):
     kept_message_count: int = Field(default=0, ge=0)
     original_memory_count: int = Field(default=0, ge=0)
     kept_memory_count: int = Field(default=0, ge=0)
+    before_tokens: int = Field(default=0, ge=0)
+    context_window_tokens: int = Field(default=0, ge=0)
+    input_token_budget: int = Field(default=0, ge=0)
+    compacted: bool = False
+    compaction_reason: str | None = None
+    compaction_duration_ms: int = Field(default=0, ge=0)
+    summary_version: str | None = None
+    summary_digest: str | None = None
 
 
 class ContextBuilder(Protocol):
     def build(
         self, state: AgentRuntimeState, profile: AgentProfileVersion, purpose: str
     ) -> ContextBuildResult: ...
+
+    def estimate_tokens(self, value: str) -> int: ...
 
 
 class Planner(Protocol):
@@ -148,42 +183,25 @@ class DefaultContextBuilder:
         self.repository = repository
         self.artifact_root = artifact_root.resolve()
 
+    estimate_tokens = staticmethod(estimate_tokens)
+
     def build(
         self, state: AgentRuntimeState, profile: AgentProfileVersion, purpose: str
     ) -> ContextBuildResult:
         run = self.repository.get_run(state.run_id)
         messages = self.repository.list_messages(run.thread_id) if run else []
         policy = profile.context_policy
-        selected_messages = messages[-policy.recent_message_limit :]
+        # 未达到 Token 阈值时保留完整历史；消息条数仅用于压缩后的最近窗口，
+        # 不能再成为压缩的主触发条件。
+        selected_messages = list(messages)
         reasons: list[str] = []
-        truncated = len(selected_messages) < len(messages)
-        if truncated:
-            reasons.append("recent_message_limit")
-
-        if truncated and run and policy.include_thread_summary:
-            older = messages[: -policy.recent_message_limit]
-            summary = self._compact_thread_summary(older)
-            previous = [
-                item
-                for item in self.repository.list_memories(run.thread_id, enabled_only=False)
-                if item.kind == "thread_summary"
-            ]
-            if not previous or previous[-1].content != summary:
-                for previous_memory in previous:
-                    self.repository.delete_memory(previous_memory.id)
-                self.repository.save_memory(
-                    MemoryRecord(
-                        thread_id=run.thread_id,
-                        kind="thread_summary",
-                        content=summary,
-                    )
-                )
+        truncated = False
 
         observations: list[dict[str, Any]] = []
         observation_chars = 0
         observation_limit = self.repository.get_agent_defaults().observation_char_budget
         for observation in reversed(state.observations):
-            value = observation.model_dump(mode="json")
+            value = self._compact_observation(observation)
             encoded = json.dumps(value, ensure_ascii=False, default=str)
             if observation_chars + len(encoded) > observation_limit:
                 truncated = True
@@ -274,8 +292,93 @@ class DefaultContextBuilder:
             profile, state, memory_payload, observations, context
         )
         prompt = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
-        token_limit = self.repository.get_agent_defaults().context_token_budget
-        if len(prompt) // 4 > token_limit:
+        before_tokens = self.estimate_tokens(prompt)
+        defaults = self.repository.get_agent_defaults()
+        provider_limits = [
+            value.context_window_tokens
+            for value in self.repository.get_provider_snapshot(state.run_id)
+            if value.context_window_tokens
+        ]
+        context_window = min([defaults.context_token_budget, *provider_limits])
+        output_reserve = max(MIN_OUTPUT_TOKEN_RESERVE, math.ceil(context_window * 0.10))
+        input_budget = max(1024, context_window - output_reserve)
+        compacted = False
+        compaction_reason: str | None = None
+        summary_version: str | None = None
+        summary_digest: str | None = None
+        compaction_started = time.perf_counter()
+        if before_tokens >= math.ceil(input_budget * CONTEXT_COMPACTION_SUGGEST_RATIO):
+            recent_count = max(1, min(policy.recent_message_limit, 16))
+            older = messages[:-recent_count]
+            if older and run and policy.include_thread_summary:
+                summary = self._compact_thread_summary(older)
+                summary_digest = hashlib.sha256(summary.encode()).hexdigest()
+                summary_version = summary_digest[:12]
+                previous = [
+                    item
+                    for item in self.repository.list_memories(run.thread_id, enabled_only=False)
+                    if item.kind == "thread_summary"
+                ]
+                if not previous or previous[-1].content != summary:
+                    for previous_memory in previous:
+                        self.repository.delete_memory(previous_memory.id)
+                    saved_summary = self.repository.save_memory(
+                        MemoryRecord(
+                            thread_id=run.thread_id,
+                            kind="thread_summary",
+                            content=summary,
+                        )
+                    )
+                    all_memories = [
+                        item for item in all_memories if item.kind != "thread_summary"
+                    ] + [saved_summary]
+                selected_messages = messages[-recent_count:]
+                memories = [
+                    item
+                    for item in all_memories
+                    if (item.kind == "thread_summary" and policy.include_thread_summary)
+                    or (item.kind == "run_summary" and policy.include_run_summaries)
+                    or (item.kind in {"important_fact", "user_input"} and policy.include_memories)
+                ]
+                memory_payload = [item.model_dump(mode="json") for item in memories]
+                context["untrusted_conversation"] = [
+                    item.model_dump(mode="json") for item in selected_messages
+                ]
+                context["untrusted_model_content"]["memory"] = memory_payload
+                context["user_instruction"] = self._render_user_instruction(
+                    profile, state, memory_payload, observations, context
+                )
+                compacted = True
+                truncated = True
+                compaction_reason = "threshold_75_percent"
+                reasons.append(compaction_reason)
+                prompt = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+        if self.estimate_tokens(prompt) >= math.ceil(input_budget * CONTEXT_COMPACTION_FORCE_RATIO):
+            # 强制降级仍保留系统规则、当前任务、最新纠偏、授权范围和最近消息。
+            context["untrusted_conversation"] = context["untrusted_conversation"][-4:]
+            context["untrusted_model_content"]["memory"] = self._compact_memory_payload(
+                context["untrusted_model_content"]["memory"][-10:],
+                THREAD_SUMMARY_FALLBACK_CHAR_LIMIT,
+            )
+            context["untrusted_attachment_content"] = [
+                {key: value for key, value in item.items() if key not in {"text", "summary_excerpt"}}
+                for item in attachment_context
+            ]
+            compacted = True
+            truncated = True
+            compaction_reason = "forced_90_percent"
+            reasons.append(compaction_reason)
+            context["user_instruction"] = self._render_user_instruction(
+                profile,
+                state,
+                context["untrusted_model_content"]["memory"],
+                observations,
+                context,
+            )
+            prompt = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+        if self.estimate_tokens(prompt) > input_budget:
+            # 语义压缩不可用或仍不足时采用确定性安全裁剪；绝不删除 SQLite
+            # 中的原始消息、事件或 Artifact，也不让 Run 因上下文过长直接损坏。
             context["untrusted_conversation"] = context["untrusted_conversation"][-3:]
             context["untrusted_model_content"]["memory"] = self._compact_memory_payload(
                 memory_payload[-10:], THREAD_SUMMARY_FALLBACK_CHAR_LIMIT
@@ -296,20 +399,30 @@ class DefaultContextBuilder:
                 context,
             )
             prompt = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+            compacted = True
             truncated = True
-            reasons.append("context_token_budget")
-        if len(prompt) // 4 > token_limit:
-            raise ValueError("上下文在安全裁剪后仍超过 Token 预算")
+            compaction_reason = "deterministic_safety_clip"
+            reasons.append(compaction_reason)
         return ContextBuildResult(
             prompt=prompt,
-            estimated_tokens=max(1, len(prompt) // 4),
+            estimated_tokens=max(1, self.estimate_tokens(prompt)),
             observation_chars=observation_chars,
             truncated=truncated,
             reasons=sorted(set(reasons)),
             original_message_count=len(messages),
-            kept_message_count=len(selected_messages),
+            kept_message_count=len(context["untrusted_conversation"]),
             original_memory_count=len(all_memories),
             kept_memory_count=len(memories),
+            before_tokens=before_tokens,
+            context_window_tokens=context_window,
+            input_token_budget=input_budget,
+            compacted=compacted,
+            compaction_reason=compaction_reason,
+            compaction_duration_ms=(
+                int((time.perf_counter() - compaction_started) * 1000) if compacted else 0
+            ),
+            summary_version=summary_version,
+            summary_digest=summary_digest,
         )
 
     @staticmethod
@@ -349,6 +462,7 @@ class DefaultContextBuilder:
             "失败尝试": [],
             "重要发现": [],
             "待办事项": [],
+            "证据引用": [],
         }
         for message in messages:
             content = cls._bounded_text(message.content, THREAD_SUMMARY_ENTRY_CHAR_LIMIT)
@@ -367,9 +481,11 @@ class DefaultContextBuilder:
         ]
         for label, entries in sections.items():
             representative = cls._representative_entries(entries)
+            lines.append(f"{label}：")
             if representative:
-                lines.append(f"{label}：")
                 lines.extend(f"- {entry}" for entry in representative)
+            else:
+                lines.append("- 无可确认的公开事实")
         return cls._bounded_text("\n".join(lines), THREAD_SUMMARY_CHAR_LIMIT)
 
     @staticmethod
@@ -377,6 +493,8 @@ class DefaultContextBuilder:
         normalized = content.casefold()
         if str(message.role) == "user":
             return "目标与约束"
+        if any(token in normalized for token in ("artifact", "证据", "sha256", "路径", "http")):
+            return "证据引用"
         if any(token in normalized for token in ("失败", "错误", "超时", "拒绝", "阻塞", "failure", "error")):
             return "失败尝试"
         if any(token in normalized for token in ("待办", "下一步", "需要", "todo", "next step")):
@@ -416,6 +534,21 @@ class DefaultContextBuilder:
             }
             for value in values
         ]
+
+    @classmethod
+    def _compact_observation(cls, observation: Observation) -> dict[str, Any]:
+        """工具原文留在 Artifact/审计，模型上下文只保留可追溯的摘要。"""
+
+        value = observation.model_dump(mode="json")
+        output = value.get("output")
+        if output:
+            encoded = json.dumps(output, ensure_ascii=False, default=str)
+            if len(encoded) > ARTIFACT_SUMMARY_CHAR_LIMIT:
+                value["output"] = {
+                    "summary": cls._bounded_text(encoded, ARTIFACT_SUMMARY_CHAR_LIMIT),
+                    "full_output": "保留在工具调用审计或关联 Artifact",
+                }
+        return value
 
     @staticmethod
     def _latest_user_instruction(

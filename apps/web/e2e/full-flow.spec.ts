@@ -37,28 +37,19 @@ async function configure(page: Page) {
   await inputs.nth(1).fill("protocol-test-model");
   await inputs.nth(2).fill("e2e-protocol-key");
   await providerForm.getByRole("button", { name: "创建 Provider" }).click();
-  const providerRow = providerSection.locator(".provider-row").first();
+  const providerRow = page.locator(".provider-row").first();
   await expect(providerRow).toContainText("自定义模型服务");
   await providerRow.getByRole("button", { name: /测试/ }).click();
   await expect(page.locator(".settings-feedback .settings-notice")).toContainText(
     "连接测试成功",
   );
 
-  const chatSection = page
-    .locator(".settings-content > section")
-    .filter({ hasText: "聊天与界面" });
-  await expect(chatSection.getByLabel("外观")).toHaveValue("light");
-  await chatSection.getByLabel("默认聊天模型").selectOption({ index: 1 });
-  await chatSection.getByRole("button", { name: "保存聊天设置" }).click();
-  await expect(page.locator(".settings-feedback .settings-notice")).toContainText(
-    "聊天与界面偏好已保存",
-  );
   await page.getByRole("button", { name: "关闭", exact: true }).click();
 }
 
 async function createThread(page: Page, title: string) {
-  await page.getByRole("button", { name: /新建对话/ }).click();
-  await page.getByLabel("对话名称").fill(title);
+  await page.getByRole("button", { name: /新建任务/ }).click();
+  await page.getByLabel("任务名称").fill(title);
   await page.getByRole("button", { name: "创建", exact: true }).click();
   await expect(page.getByTestId("thread-heading")).toContainText(title);
 }
@@ -80,12 +71,12 @@ function messageInput(page: Page) {
   return page.getByRole("textbox", { name: "消息", exact: true });
 }
 
-async function sendChat(page: Page, content: string, expectedCount: number) {
+async function sendTask(page: Page, content: string, expectedCount: number) {
   const input = messageInput(page);
   await input.fill(content);
   await input.press("Enter");
-  await expect(page.locator(".message.assistant")).toHaveCount(expectedCount, {
-    timeout: 15_000,
+  await expect(page.locator(".message.agent")).toHaveCount(expectedCount, {
+    timeout: 30_000,
   });
   await expect(
     page.getByRole("button", { name: "发送", exact: true }),
@@ -128,33 +119,30 @@ async function openTaskControls(page: Page) {
   await expect(page.getByTestId("run-control-panel")).toBeVisible();
 }
 
-test("first setup exposes chat defaults and a light interface", async ({ page }) => {
+test("first setup exposes a task-only workspace", async ({ page }) => {
   await configure(page);
-  await expect(page.getByRole("heading", { name: "开始一段新对话" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "开始一个新任务" })).toBeVisible();
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(245, 246, 248)");
   await expectNoHorizontalOverflow(page);
 
-  await createThread(page, "普通聊天");
+  await createThread(page, "无需工具的任务");
   await expect(page.getByLabel("默认回复方式")).toHaveCount(0);
   await expect(page.getByText("任务设置")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "运行审计" })).toHaveCount(0);
-  await sendChat(page, "你好", 1);
-  await expect(page.locator(".message.assistant").last()).toContainText(
-    "你好，我是御网智元。",
-  );
+  await sendTask(page, "请简短介绍你的能力", 1);
   await page.reload();
-  await expect(page.locator(".message.user")).toContainText("你好");
-  await expect(page.locator(".message.assistant")).toContainText("你好，我是御网智元。");
-  await expect(page.locator(".run-progress")).toHaveCount(0);
+  await expect(page.locator(".message.user")).toContainText("请简短介绍你的能力");
+  await expect(page.locator(".message.agent")).toHaveCount(1);
+  await expect(page.locator(".run-progress")).toHaveCount(1);
 });
 
-test("long chat scrolls inside the workspace at every target viewport", async ({
+test("long task history scrolls inside the workspace at every target viewport", async ({
   page,
 }, testInfo) => {
   await configure(page);
-  await createThread(page, "长对话滚动验收");
+  await createThread(page, "长任务滚动验收");
   for (let index = 1; index <= 20; index += 1)
-    await sendChat(page, `第 ${index} 轮：请记住这是一条用于滚动验收的长消息。`, index);
+    await sendTask(page, `第 ${index} 轮：请简要记录这一条用于滚动验收的任务。`, index);
 
   for (const viewport of viewports) {
     await page.setViewportSize(viewport);
@@ -191,7 +179,7 @@ test("long chat scrolls inside the workspace at every target viewport", async ({
     await conversation.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
-    await expect(page.locator(".message.assistant").last()).toBeInViewport();
+    await expect(page.locator(".message.agent").last()).toBeInViewport();
     await expect(messageInput(page)).toBeInViewport();
     await expectNoHorizontalOverflow(page);
     await page.screenshot({
@@ -209,9 +197,29 @@ test("long chat scrolls inside the workspace at every target viewport", async ({
     )
     .toBeGreaterThan(120);
   const before = await conversation.evaluate((element) => element.scrollTop);
-  await sendChat(page, "用户正在向上阅读时不要强制滚到底部。", 21);
+  await sendTask(page, "用户正在向上阅读时不要强制滚到底部。", 21);
   const after = await conversation.evaluate((element) => element.scrollTop);
   expect(Math.abs(after - before)).toBeLessThan(120);
+});
+
+test("one hundred task histories scroll independently from the fixed sidebar controls", async ({ page }) => {
+  await configure(page);
+  for (let index = 1; index <= 100; index += 1)
+    await createThread(page, `滚动验收任务 ${index}`);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const list = page.getByRole("navigation", { name: "任务历史" });
+  const sizes = await list.evaluate((element) => ({
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+  }));
+  expect(sizes.scrollHeight).toBeGreaterThan(sizes.clientHeight);
+  await list.evaluate((element) => { element.scrollTop = 0; });
+  await expect(list.getByRole("button", { name: /^滚动验收任务 100 更新于/ })).toBeVisible();
+  await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(list.getByRole("button", { name: /^滚动验收任务 1 更新于/ })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectNoHorizontalOverflow(page);
 });
 
 test("统一消息可自动执行并保留控制、报告、审计、停止与重试", async ({
@@ -223,7 +231,7 @@ test("统一消息可自动执行并保留控制、报告、审计、停止与�
   await messageInput(page).fill("执行任务：long-event: verify controlled evidence");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.getByTestId("result-completed")).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator(".message.assistant").last()).toBeVisible();
+  await expect(page.locator(".message.agent").last()).toBeVisible();
   await expect(page.getByText("展开结论、证据与任务报告")).toBeVisible();
 
   const auditButton = page.getByRole("button", {
