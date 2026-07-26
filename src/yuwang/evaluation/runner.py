@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
@@ -88,16 +88,30 @@ class EvaluationRunner:
         self.artifact_root = artifact_root or database_path.parent / "evaluation-artifacts"
 
     async def run(
-        self, cases: Iterable[EvaluationCase] = BUILTIN_EVALUATION_CASES, *, attempts: int = 1
+        self,
+        cases: Iterable[EvaluationCase] = BUILTIN_EVALUATION_CASES,
+        *,
+        attempts: int = 1,
+        completed_attempts: Iterable[tuple[str, int]] = (),
+        on_attempt_completed: Callable[
+            [EvaluationCase, int, EvaluationResult], Awaitable[None]
+        ]
+        | None = None,
     ) -> tuple[EvaluationResult, ...]:
         """顺序执行用例，避免共享 Provider 的限流掩盖单个用例结果。"""
 
         if attempts < 1:
             raise ValueError("评测尝试次数必须至少为 1")
+        already_completed = set(completed_attempts)
         results: list[EvaluationResult] = []
         for case in cases:
             for attempt in range(1, min(attempts, case.max_attempts) + 1):
-                results.append(await self.run_case(case, attempt=attempt))
+                if (case.case_id, attempt) in already_completed:
+                    continue
+                result = await self.run_case(case, attempt=attempt)
+                results.append(result)
+                if on_attempt_completed:
+                    await on_attempt_completed(case, attempt, result)
         return tuple(results)
 
     async def run_case(self, case: EvaluationCase, *, attempt: int = 1) -> EvaluationResult:

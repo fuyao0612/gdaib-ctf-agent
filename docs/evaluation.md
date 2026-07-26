@@ -24,6 +24,23 @@ python -m yuwang.evaluation run --case intent-explicit-task --provider-id <Provi
 python -m yuwang.evaluation run --smoke --attempts 3 --provider-id <Provider UUID>
 ```
 
+### 中断后恢复
+
+每次 `run` 会在数据库同目录写入 `*.evaluation-progress.json`。它只包含 Provider ID、选中的用例
+ID、尝试次数、已完成尝试的状态和评测记录 ID；不会保存 API Key、模型回复、工具输出或 Flag。每个尝试
+完成并落库后都会原子更新该文件，因此终端中断、进程退出或遇到失败时可以只继续未完成的尝试：
+
+```powershell
+python -m yuwang.evaluation run --smoke --attempts 3 --provider-id <Provider UUID> --resume
+
+# 为并行或隔离运行使用明确的进度文件
+python -m yuwang.evaluation run --smoke --provider-id <Provider UUID> --progress-file data/smoke-progress.json
+python -m yuwang.evaluation run --smoke --provider-id <Provider UUID> --progress-file data/smoke-progress.json --resume
+```
+
+恢复时会严格核对 Provider、用例集合、尝试次数和已保存的评测记录。任一项不一致或记录已被删除时命令会拒绝
+跳过，避免误把旧结果混入新的评测批次。
+
 可以用 `--database` 与 `--artifacts` 指定隔离目录。没有 `YUWANG_MASTER_KEY`、Provider 不存在、未启用或未通过连接测试时，命令会明确拒绝执行，不会降级到测试替身或其他模型。
 
 默认 Docker 部署不需要把主密钥导入 PowerShell。使用已运行 API 容器中的受控环境，并显式指向持久化目录：

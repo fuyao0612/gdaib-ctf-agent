@@ -15,7 +15,8 @@ from apps.api.config import Settings
 from apps.api.context import ApiContext
 
 from .cases import EvaluationCase, builtin_evaluation_cases
-from .runner import EvaluationRunner
+from .progress import EvaluationProgress, EvaluationProgressStore
+from .runner import EvaluationResult, EvaluationRunner
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -29,6 +30,12 @@ def parse_arguments() -> argparse.Namespace:
     run.add_argument("--provider-id", type=UUID, required=True, help="已连接测试的 Provider 配置 ID")
     run.add_argument("--database", type=Path, default=Path("data/yuwang.db"))
     run.add_argument("--artifacts", type=Path, default=Path("data/artifacts"))
+    run.add_argument(
+        "--progress-file",
+        type=Path,
+        help="恢复进度文件路径，默认与数据库同目录",
+    )
+    run.add_argument("--resume", action="store_true", help="从已有进度文件恢复未完成的尝试")
     return parser.parse_args()
 
 
@@ -47,6 +54,22 @@ def select_cases(arguments: argparse.Namespace) -> tuple[EvaluationCase, ...]:
 
 async def run(arguments: argparse.Namespace) -> int:
     cases = select_cases(arguments)
+    progress_path = arguments.progress_file or arguments.database.with_suffix(".evaluation-progress.json")
+    progress_store = EvaluationProgressStore(progress_path)
+    if arguments.resume:
+        progress = progress_store.load()
+        progress.ensure_compatible(
+            provider_id=arguments.provider_id,
+            cases=cases,
+            attempts=arguments.attempts,
+        )
+    else:
+        progress = EvaluationProgress.create(
+            provider_id=arguments.provider_id,
+            cases=cases,
+            attempts=arguments.attempts,
+        )
+        progress_store.save(progress)
     config = Settings(database_path=arguments.database, artifact_root=arguments.artifacts)
     context = ApiContext(config)
     provider_configs, provider = context.resolve_provider_chain(arguments.provider_id)
@@ -62,27 +85,43 @@ async def run(arguments: argparse.Namespace) -> int:
         provider_config=provider_configs[0],
         artifact_root=arguments.artifacts,
     )
-    results = await runner.run(cases, attempts=arguments.attempts)
+
+    for entry in progress.completed:
+        if runner.repository.get_evaluation_record(entry.record_id) is None:
+            raise ValueError("恢复文件引用的评测记录不存在，不能跳过该尝试")
+
+    async def save_attempt(case: EvaluationCase, attempt: int, result: EvaluationResult) -> None:
+        nonlocal progress
+        progress = progress.add_result(case=case, attempt=attempt, result=result)
+        progress_store.save(progress)
+
+    await runner.run(
+        cases,
+        attempts=arguments.attempts,
+        completed_attempts=progress.completed_keys,
+        on_attempt_completed=save_attempt,
+    )
     records = [
-        runner.repository.get_evaluation_record(result.record_id)
-        for result in results
-        if result.record_id is not None
+        runner.repository.get_evaluation_record(entry.record_id) for entry in progress.completed
     ]
+    statuses = [record.status for record in records if record]
     print(
         json.dumps(
             {
                 "results": [record.model_dump(mode="json") for record in records if record],
                 "summary": {
-                    "passed": sum(result.status == "passed" for result in results),
-                    "failed": sum(result.status == "failed" for result in results),
-                    "skipped": sum(result.status == "skipped" for result in results),
+                    "passed": sum(status == "passed" for status in statuses),
+                    "failed": sum(status == "failed" for status in statuses),
+                    "skipped": sum(status == "skipped" for status in statuses),
                 },
+                "progress_file": str(progress_path),
+                "resumed": arguments.resume,
             },
             ensure_ascii=False,
             indent=2,
         )
     )
-    return 1 if any(result.status == "failed" for result in results) else 0
+    return 1 if "failed" in statuses else 0
 
 
 def main() -> int:
