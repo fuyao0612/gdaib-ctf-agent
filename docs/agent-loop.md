@@ -7,6 +7,17 @@
 不可变 Run，再经过准备、规划、受控动作、验证和报告收尾。Event（事件）是保存到 SQLite
 后再推送到页面的公开进度，不包含隐藏思维链。
 
+## 默认直接循环
+
+新建的“默认安全 Agent”使用 `direct` 策略：`ingest -> normalize_task -> select_action`，
+不为每个任务固定调用 Task Brief 或 Planner。模型不请求工具时会直接进入验证和报告；请求工具时仍
+完整经过 `policy_check -> execute_tool -> observe`，工具失败的简短观察会返回给同一个 Agent 再判断。
+这不是绕过安全边界：Run 快照、工具白名单、审批、预算、检查点、审计和确定性验证保持不变。
+
+平台自动创建的旧默认 Profile 会在下次启动时版本化升级到该策略；用户创建或显式配置的 Profile 与
+历史 Run 快照不会被修改。需要固定计划、人工计划确认或自动重规划时，可在设置中心选择 `planned`
+或 `verified` Profile。
+
 ```mermaid
 flowchart LR
     U["用户"] --> W["Web\n输入与五阶段进度"]

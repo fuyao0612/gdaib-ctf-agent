@@ -107,6 +107,16 @@ class WorkflowNodes:
 
         engine = self.engine
         state = engine._state(raw)
+        if engine.profile.planning_strategy == "direct":
+            # Avoid an unconditional model call before the first action.  The
+            # original task remains in the immutable TaskSpec and context.
+            engine.events.emit(
+                state.run_id,
+                EventType.STATUS_UPDATE,
+                "直接执行模式：已保留原始任务上下文",
+                {"task_brief": "bypassed", "reason": "direct_workflow"},
+            )
+            return engine._result("create_task_brief", state)
         draft = await engine._model_call(
             state,
             TaskBriefDraft,
@@ -757,7 +767,7 @@ class WorkflowNodes:
         engine = self.engine
         state = engine._state(raw)
         if state.guidance_replan_required:
-            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+            return self._adjustment_target(state)
         action = state.action
         if not action:
             return "fail"
@@ -779,7 +789,7 @@ class WorkflowNodes:
         }.issubset(enabled):
             return "fail"
         if action.kind == "replan" and "replan" not in enabled:
-            return "fail"
+            return "select_action" if engine.profile.planning_strategy == "direct" else "fail"
         return {
             "call_tool": "policy_check",
             "replan": "replan",
@@ -792,12 +802,12 @@ class WorkflowNodes:
         engine = self.engine
         state = engine._state(raw)
         if state.guidance_replan_required:
-            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+            return self._adjustment_target(state)
         if state.pending_risk_approval_tool:
             return "await_plan_approval"
         action = state.action
         if action and action.kind == "replan":
-            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+            return self._adjustment_target(state)
         return "execute_tool"
 
     def route_verify(self, raw: GraphState) -> str:
@@ -813,11 +823,20 @@ class WorkflowNodes:
         engine = self.engine
         state = engine._state(raw)
         if state.guidance_replan_required:
-            return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+            return self._adjustment_target(state)
         observations = state.observations
         if observations and observations[-1].success:
             return "select_action"
-        return "replan" if "replan" in engine.profile.workflow.nodes else "fail"
+        return self._adjustment_target(state)
+
+    def _adjustment_target(self, state: Any) -> str:
+        """Keep direct mode in its same Agent loop after a failed observation."""
+
+        if "replan" in self.engine.profile.workflow.nodes:
+            return "replan"
+        if self.engine.profile.planning_strategy == "direct":
+            return "select_action"
+        return "fail"
 
     def should_plan(self) -> bool:
         """按明确规则决定新任务是否调用 Planner。"""

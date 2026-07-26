@@ -38,7 +38,9 @@ TEMPLATE_VARIABLES: dict[str, type[Any]] = {
 WorkflowPreset = Literal["direct", "planned", "verified"]
 WORKFLOW_PRESETS: dict[WorkflowPreset, tuple[str, ...]] = {
     "direct": (
-        "normalize_task", "select_action", "verify", "request_input", "generate_report",
+        # Direct omits fixed planning but retains the audited tool loop.
+        "normalize_task", "select_action", "policy_check", "execute_tool",
+        "observe", "verify", "request_input", "generate_report",
     ),
     "planned": (
         "normalize_task", "plan", "select_action", "policy_check", "execute_tool",
@@ -169,8 +171,6 @@ class AgentProfileInput(BaseModel):
         if self.planning_strategy == "direct":
             if self.workflow.preset != "direct":
                 raise ValueError("直接策略必须使用‘直接回答’工作流")
-            if self.completion_mode == "evidence":
-                raise ValueError("证据验证需要规划执行，不能使用直接策略")
         elif self.planning_strategy == "dynamic" and self.workflow.preset == "direct":
             raise ValueError("动态规划不能使用‘直接回答’工作流")
         elif self.planning_strategy == "hybrid" and self.workflow.preset != "verified":
@@ -249,11 +249,13 @@ class AgentProfileService:
         profiles = self.repository.list_agent_profiles()
         default = next((value for value in profiles if value.is_default), None)
         if default:
-            if self._needs_default_budget_upgrade(default, budget or Budget()):
+            if self._needs_default_upgrade(default, budget or Budget()):
                 data = default.model_dump(
                     exclude={"profile_id", "version", "schema_version", "created_at"}
                 )
                 data["budget"] = (budget or Budget()).model_dump()
+                data["planning_strategy"] = "direct"
+                data["workflow"] = {"preset": "direct"}
                 return self.update(default.profile_id, AgentProfileInput.model_validate(data))
             return default
         return self.create(
@@ -261,24 +263,28 @@ class AgentProfileService:
                 name=DEFAULT_PROFILE_NAME,
                 description=DEFAULT_PROFILE_DESCRIPTION,
                 budget=budget or Budget(),
+                planning_strategy="direct",
+                workflow={"preset": "direct"},
                 is_default=True,
             )
         )
 
     @staticmethod
-    def _needs_default_budget_upgrade(
+    def _needs_default_upgrade(
         profile: AgentProfileVersion, target: Budget
     ) -> bool:
         """仅升级平台自动创建、仍使用旧默认预算的 Profile。"""
 
-        return (
+        is_platform_default = (
             profile.name == DEFAULT_PROFILE_NAME
             and profile.description == DEFAULT_PROFILE_DESCRIPTION
-            and (
-                profile.budget.max_steps == LEGACY_DEFAULT_MAX_STEPS
-                or profile.budget.max_model_calls == LEGACY_DEFAULT_MAX_MODEL_CALLS
-                or profile.budget.max_tokens < target.max_tokens
-            )
+        )
+        return is_platform_default and (
+            profile.planning_strategy != "direct"
+            or profile.workflow.preset != "direct"
+            or profile.budget.max_steps == LEGACY_DEFAULT_MAX_STEPS
+            or profile.budget.max_model_calls == LEGACY_DEFAULT_MAX_MODEL_CALLS
+            or profile.budget.max_tokens < target.max_tokens
         )
 
     def create(self, value: AgentProfileInput) -> AgentProfileVersion:

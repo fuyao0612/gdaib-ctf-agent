@@ -19,6 +19,8 @@ def test_profile_versions_copy_rollback_default_and_immutable_snapshot(tmp_path)
     service = AgentProfileService(repository)
     default = service.ensure_default(Budget(max_steps=12))
     assert default.version == 1 and default.is_default
+    assert default.planning_strategy == "direct"
+    assert default.workflow.preset == "direct"
 
     created = service.create(
         AgentProfileInput(
@@ -72,6 +74,8 @@ def test_default_profile_upgrades_only_platform_legacy_token_budget(tmp_path):
     assert upgraded.budget.max_tokens == 72_000
     assert upgraded.budget.max_model_calls == 12
     assert upgraded.budget.max_steps == 40
+    assert upgraded.planning_strategy == "direct"
+    assert upgraded.workflow.preset == "direct"
     assert service.ensure_default().version == upgraded.version
 
 
@@ -130,10 +134,11 @@ def test_profile_export_import_is_secretless_and_template_safe(tmp_path):
 
 def test_workflow_uses_three_safe_presets_and_migrates_v03_nodes():
     assert AgentProfileInput(
-        name="direct", planning_strategy="direct", completion_mode="advisory",
+        name="direct", planning_strategy="direct",
         workflow={"preset": "direct"},
     ).workflow.nodes == (
-        "normalize_task", "select_action", "verify", "request_input", "generate_report"
+        "normalize_task", "select_action", "policy_check", "execute_tool", "observe",
+        "verify", "request_input", "generate_report"
     )
     planned = AgentProfileInput(name="planned", workflow={"preset": "planned"})
     assert "plan" in planned.workflow.nodes and "replan" not in planned.workflow.nodes
@@ -151,10 +156,9 @@ def test_workflow_uses_three_safe_presets_and_migrates_v03_nodes():
         AgentProfileInput(name="unsafe", workflow={"nodes": ["custom_python"]})
     with pytest.raises(ValueError, match="直接策略"):
         AgentProfileInput(name="conflict", planning_strategy="direct")
-    with pytest.raises(ValueError, match="证据验证"):
-        AgentProfileInput(
-            name="conflict", planning_strategy="direct", workflow={"preset": "direct"}
-        )
+    assert AgentProfileInput(
+        name="direct evidence", planning_strategy="direct", workflow={"preset": "direct"}
+    ).completion_mode == "evidence"
 
 
 def test_profile_evidence_rules_reject_universal_regex_and_keep_specific_flag_format():

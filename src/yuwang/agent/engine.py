@@ -70,7 +70,11 @@ class AgentEngine:
         self.policy = policy
         self.events = EventService(repository)
         self.profile = profile or AgentProfileVersion(
-            **AgentProfileInput(name="默认安全 Agent").model_dump(),
+            **AgentProfileInput(
+                name="默认安全 Agent",
+                planning_strategy="direct",
+                workflow={"preset": "direct"},
+            ).model_dump(),
             version=1,
         )
         self.artifact_root = (artifact_root or Path("data/artifacts")).resolve()
@@ -155,6 +159,20 @@ class AgentEngine:
     def _result(self, node: str, state: AgentStateModel) -> GraphState:
         safe_nodes = {"select_action", "policy_check", "observe", "verify", "replan"}
         guidance = self._apply_guidance(state) if node in safe_nodes else []
+        if (
+            guidance
+            and self.profile.planning_strategy == "direct"
+            and node in {"select_action", "policy_check", "observe"}
+        ):
+            # Direct mode has no Planner to consume the guidance marker.  Persist
+            # a fresh decision request instead, so a tool action chosen before
+            # the guidance arrived cannot run with stale context.
+            state.guidance_replan_required = False
+            state.guidance_replan_sequences.clear()
+            state.action = AgentAction(
+                kind="replan",
+                summary="已收到新增指引，正在基于最新上下文重新选择动作",
+            )
         self._checkpoint(node, state, guidance)
         if node in safe_nodes and self.repository.consume_pause_request(state.run_id):
             raise RunPaused("已在安全检查点暂停")
