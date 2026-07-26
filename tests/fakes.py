@@ -6,8 +6,9 @@ from typing import TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
 
-from yuwang.control import TaskBriefDraft
-from yuwang.domain.models import AgentAction, AgentPlan, ImportantFacts
+from yuwang.agent.failure_analysis import FailureAnalysisDraft
+from yuwang.control import AgentPlanDraft, TaskBriefDraft
+from yuwang.domain.models import AgentAction, ImportantFacts
 from yuwang.model_providers import ProviderError
 from yuwang.model_providers.providers import ProviderErrorCategory
 from yuwang.tooling.sdk import ToolPlugin, ToolSpec
@@ -34,6 +35,8 @@ class FakeModelProvider:
     ) -> T:
         del attempt, request_budget
         self.calls += 1
+        if self.scenario == "empty_timeout":
+            raise TimeoutError()
         if self.scenario == "timeout":
             await asyncio.sleep((timeout or 0.001) + 0.01)
             raise ProviderError(ProviderErrorCategory.TIMEOUT, "test timeout", True)
@@ -48,13 +51,12 @@ class FakeModelProvider:
                 raise ProviderError(
                     ProviderErrorCategory.INVALID_OUTPUT, "invalid structured output", True
                 ) from exc
-        if output_type is AgentPlan:
+        if output_type is AgentPlanDraft:
             return output_type.model_validate(
-                AgentPlan(
-                    summary="基于测试工具生成计划",
-                    steps=["执行测试工具", "核对候选证据", "提交验证"],
-                    success_approach="从工具输出提取候选并交由确定性验证器",
-                ).model_dump()
+                {
+                    "summary": "基于测试工具生成计划",
+                    "steps": ["执行测试工具", "核对候选证据", "提交验证"],
+                }
             )
         if output_type is TaskBriefDraft:
             context = json.loads(prompt)
@@ -94,6 +96,14 @@ class FakeModelProvider:
             return output_type.model_validate(
                 {"facts": ["用户希望获得中文回答", "用户希望获得中文回答"]}
             )
+        if output_type is FailureAnalysisDraft:
+            return output_type.model_validate(
+                {
+                    "summary": "任务在安全检查中止，当前未执行未经授权的动作。",
+                    "causes": ["模型选择了不可继续的动作"],
+                    "next_steps": ["补充允许范围或调整任务后重试"],
+                }
+            )
         context = json.loads(prompt)
         user_input = context.get("untrusted_user_input", {})
         observations = context.get(
@@ -122,6 +132,10 @@ class FakeModelProvider:
                     summary="生成结构化结果",
                     structured_output={"title": "validated", "priority": 1},
                 ).model_dump()
+            )
+        if self.scenario == "declared_failure":
+            return output_type.model_validate(
+                AgentAction(kind="fail", summary="测试触发安全失败").model_dump()
             )
         if observations and observations[-1]["success"]:
             latest = observations[-1]

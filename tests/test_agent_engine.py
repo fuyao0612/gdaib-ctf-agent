@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ from tests.fakes import FakeEchoOutput, FakeEchoTool, FakeModelProvider
 from yuwang.agent import AgentEngine, AgentStateModel, BudgetExceeded
 from yuwang.agent.components import AgentComponents, default_components
 from yuwang.agent.engine import AgentDeclaredFailure
+from yuwang.agent.nodes import WorkflowNodes
 from yuwang.domain.models import (
     AgentAction,
     AgentPlan,
@@ -435,6 +437,40 @@ async def test_provider_failure_is_safe_and_reported(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_empty_timeout_reason_has_deterministic_failure_analysis(tmp_path):
+    repository, engine = build_engine(tmp_path, "empty_timeout")
+    thread = repository.save_thread(Thread(title="timeout"))
+    run = repository.save_run(Run(thread_id=thread.id))
+
+    await engine.run(run.id, TaskSpec(body="safe task"))
+
+    failed = repository.get_run(run.id)
+    report = repository.get_report(run.id)
+    event = repository.list_events(run.id)[-1]
+    assert failed and failed.error and "超时" in failed.error
+    assert report and report[1]["failure_analysis"]["summary"] == failed.error
+    assert report[1]["failure_analysis"]["source"] == "deterministic"
+    assert event.type == EventType.RUN_FAILED
+    assert event.payload["failure_analysis"]["summary"] == failed.error
+
+
+@pytest.mark.asyncio
+async def test_declared_failure_uses_model_failure_analysis_when_budget_remains(tmp_path):
+    repository, engine = build_engine(tmp_path, "declared_failure")
+    thread = repository.save_thread(Thread(title="declared failure"))
+    run = repository.save_run(Run(thread_id=thread.id))
+
+    await engine.run(run.id, TaskSpec(body="safe task", budget=Budget(max_model_calls=6)))
+
+    report = repository.get_report(run.id)
+    assert report
+    analysis = report[1]["failure_analysis"]
+    assert analysis["source"] == "model"
+    assert "安全检查中止" in analysis["summary"]
+    assert "失败复盘" in report[0]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("scenario", "profile", "expected_status", "expected_level"),
     [
@@ -673,7 +709,27 @@ def test_context_drift_and_plan_loop_are_rejected(tmp_path):
     engine._track_plan_progress(state)
     with pytest.raises(AgentDeclaredFailure, match="循环规划"):
         engine._track_plan_progress(state)
+def test_verify_can_reuse_latest_flag_validation_observation() -> None:
+    call_id = uuid4()
+    candidate = WorkflowNodes._latest_flag_candidate(
+        SimpleNamespace(
+            observations=[
+                Observation(
+                    call_id=call_id,
+                    tool_name="ctf.flag_candidate_verify",
+                    success=True,
+                    summary="format matched",
+                    output={
+                        "candidate": "flag{observed_candidate}",
+                        "validation_status": "format_matched",
+                    },
+                )
+            ]
+        )
+    )
 
+    assert candidate and candidate.source_call_id == call_id
+    assert candidate.location == "/candidate"
 
 
 @pytest.mark.asyncio

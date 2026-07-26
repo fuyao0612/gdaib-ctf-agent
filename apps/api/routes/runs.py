@@ -330,11 +330,11 @@ def create_run_router(context: ApiContext) -> APIRouter:
         repository.save_run_task(retried.id, task)
         repository.save_provider_snapshot(retried.id, provider_configs)
         repository.save_run_agent_profile(retried.id, profile)
-        checkpoint = repository.latest_checkpoint(previous.id)
-        initial_state = AgentStateModel.model_validate(checkpoint.state) if checkpoint else None
         context.schedule(
             retried.id,
-            context.execute(retried, task, provider, profile, initial_state),
+            # 重试是一个新的 Run：复用不可变配置快照，但不能继承上一次尝试的
+            # Token、调用次数或进度状态，否则新预算会被历史消耗提前耗尽。
+            context.execute(retried, task, provider, profile),
         )
         return retried
 

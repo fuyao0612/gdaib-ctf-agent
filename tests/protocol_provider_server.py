@@ -119,7 +119,6 @@ class Handler(BaseHTTPRequestHandler):
                         "Return sourced digest evidence",
                     ]
                 ),
-                "success_approach": "Bind the SHA-256 candidate to the successful tool call.",
             }
         if schema_name == "importantfacts":
             return {"facts": ["用户偏好分阶段、可回滚的实施方案"]}

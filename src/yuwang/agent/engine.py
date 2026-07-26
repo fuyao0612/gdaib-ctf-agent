@@ -246,6 +246,9 @@ class AgentEngine:
             return action
         if not state.task.tool_snapshots:
             raise AgentDeclaredFailure("原生 Function Calling 需要 Run 工具快照")
+        remaining_requests = state.task.budget.max_model_calls - state.model_calls
+        if remaining_requests <= 0:
+            raise BudgetExceeded("模型调用次数已达到 Run 预算")
         prompt = self._context(state, "使用原生 Function Calling 选择下一动作")
         catalog = FunctionToolCatalog.from_snapshots(state.task.tool_snapshots)
         started = time.perf_counter()
@@ -255,6 +258,7 @@ class AgentEngine:
                     prompt,
                     catalog,
                     timeout=state.task.budget.step_timeout_seconds,
+                    request_budget=remaining_requests,
                 ),
                 timeout=state.task.budget.step_timeout_seconds,
             )
@@ -317,9 +321,18 @@ class AgentEngine:
         state: AgentStateModel,
         output_type: type[ModelT],
         purpose: str,
+        *,
+        request_budget: int | None = None,
     ) -> ModelT:
         """调用结构化模型并把重试、Token、费用和错误分类完整计入审计。"""
 
+        remaining_requests = state.task.budget.max_model_calls - state.model_calls
+        if remaining_requests <= 0:
+            raise BudgetExceeded("模型调用次数已达到 Run 预算")
+        effective_request_budget = min(
+            request_budget if request_budget is not None else remaining_requests,
+            remaining_requests,
+        )
         prompt = self._context(state, purpose)
         estimated_input_tokens = max(1, len(prompt) // 4)
         started = time.perf_counter()
@@ -329,6 +342,7 @@ class AgentEngine:
                     prompt,
                     output_type,
                     timeout=state.task.budget.step_timeout_seconds,
+                    request_budget=effective_request_budget,
                 ),
                 timeout=state.task.budget.step_timeout_seconds,
             )

@@ -6,9 +6,71 @@ from uuid import uuid4
 import pytest
 
 from yuwang.agent.state import AgentStateModel
-from yuwang.control import PlanRevision, PlanSource, TaskBrief, TaskBriefSource
-from yuwang.domain.models import AgentPlan, EventType, Run, RunStatus, TaskSpec, Thread
+from yuwang.control import (
+    AgentActionDraft,
+    AgentPlanDraft,
+    PlanRevision,
+    PlanSource,
+    TaskBrief,
+    TaskBriefSource,
+)
+from yuwang.domain.models import AgentPlan, EventType, Observation, Run, RunStatus, TaskSpec, Thread
 from yuwang.storage import SQLiteRepository
+
+
+def test_plan_draft_materializes_complete_plan() -> None:
+    plan = AgentPlanDraft(
+        summary="检查已授权目标的公开线索",
+        steps=["读取首页", "核对工具证据"],
+    ).to_agent_plan()
+
+    assert plan.summary == "检查已授权目标的公开线索"
+    assert plan.expected_results == ["完成：读取首页", "完成：核对工具证据"]
+    assert len(plan.verification_methods) == len(plan.steps)
+    assert plan.risks == ["工具、目标范围和参数仍须通过 Run 快照与 PolicyEngine 校验。"]
+
+
+def test_action_draft_binds_candidate_to_actual_tool_observation() -> None:
+    call_id = uuid4()
+    action = AgentActionDraft(
+        kind="finish",
+        summary="展示候选 Flag",
+        candidate={"value": "flag{evidence_bound}"},
+    ).to_agent_action(
+        [
+            Observation(
+                call_id=call_id,
+                tool_name="ctf.flag_candidate_verify",
+                success=True,
+                summary="候选已检查",
+                output={"candidate": "flag{evidence_bound}"},
+            )
+        ]
+    )
+
+    assert action.candidate and action.candidate.source_call_id == call_id
+    assert action.candidate.location == "/candidate"
+
+
+def test_finish_draft_reuses_latest_verified_flag_candidate() -> None:
+    call_id = uuid4()
+    action = AgentActionDraft(kind="finish", summary="完成取证").to_agent_action(
+        [
+            Observation(
+                call_id=call_id,
+                tool_name="ctf.flag_candidate_verify",
+                success=True,
+                summary="候选格式匹配",
+                output={
+                    "candidate": "flag{verified_by_tool}",
+                    "validation_status": "format_matched",
+                },
+            )
+        ]
+    )
+
+    assert action.candidate and action.candidate.value == "flag{verified_by_tool}"
+    assert action.candidate.source_call_id == call_id
 
 
 def test_task_brief_versions_preserve_original_request(tmp_path) -> None:

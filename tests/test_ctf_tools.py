@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import zipfile
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread as WorkerThread
+from urllib.parse import urlparse
 from uuid import UUID
 
 import pytest
 
 from yuwang.domain.models import Artifact, Run, Thread
 from yuwang.storage import SQLiteRepository
-from yuwang.tooling import ToolCallRequest, ToolExecutor, ToolRegistry
+from yuwang.tooling import ToolCallRequest, ToolExecutor, ToolRegistry, create_reference_registry
+from yuwang.tooling.builtins import LocalhostHTTPProbeTool
 from yuwang.tooling.ctf import register_ctf_tools
 
 
@@ -42,6 +48,20 @@ def setup_tool_context(tmp_path: Path, content: bytes, filename: str = "challeng
     return repository, root, thread, artifact, run, ToolExecutor(registry)
 
 
+def test_localhost_probe_uses_only_the_fixed_docker_host_gateway(monkeypatch) -> None:
+    raw_url = "http://127.0.0.1:8088/robots.txt"
+    parsed = urlparse(raw_url)
+    monkeypatch.setenv("YUWANG_LOCAL_CTF_HOST_GATEWAY", "http://host.docker.internal")
+
+    assert LocalhostHTTPProbeTool._loopback_request_url(raw_url, parsed) == (
+        "http://host.docker.internal:8088/robots.txt"
+    )
+
+    monkeypatch.setenv("YUWANG_LOCAL_CTF_HOST_GATEWAY", "http://127.0.0.1")
+    with pytest.raises(ValueError, match="宿主机网关配置无效"):
+        LocalhostHTTPProbeTool._loopback_request_url(raw_url, parsed)
+
+
 async def invoke(executor: ToolExecutor, run: Run, tool: str, arguments: dict[str, object]):
     return await executor.execute_call(
         ToolCallRequest(
@@ -49,6 +69,87 @@ async def invoke(executor: ToolExecutor, run: Run, tool: str, arguments: dict[st
             tool_id=f"ctf.{tool}",
             tool_version="1.0.0",
             arguments=arguments,
+        )
+    )
+
+
+@contextmanager
+def local_ctf_server():
+    """测试专用的公开线索链路，不在生产路径注册或暴露。"""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            path, _, query = self.path.partition("?")
+            if path == "/":
+                self._reply(
+                    200,
+                    "text/html; charset=utf-8",
+                    b'<meta name="build-token" content="sunrise-7"><a href="/api/status">status</a>',
+                )
+            elif path == "/api/status":
+                self._reply(200, "application/json", b'{"next":"/robots.txt"}')
+            elif path == "/robots.txt":
+                self._reply(200, "text/plain", b"User-agent: *\nDisallow: /dev-notes.txt\n")
+            elif path == "/dev-notes.txt":
+                self._reply(
+                    200,
+                    "text/plain",
+                    b"Debug requires query unlock=1 and header X-CTF-Token equal to the build token.",
+                )
+            elif (
+                path == "/api/debug"
+                and query == "unlock=1"
+                and self.headers.get("X-CTF-Token") == "sunrise-7"
+            ):
+                self._reply(
+                    200,
+                    "application/json",
+                    json.dumps(
+                        {"flag_b64": "ZmxhZ3tsb2NhbF9hZ2VudF9mb3VuZF9kZWJ1Z19kb29yfQ=="}
+                    ).encode(),
+                )
+            else:
+                self._reply(403, "text/plain", b"forbidden")
+
+        def _reply(self, status: int, content_type: str, body: bytes) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: object) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = WorkerThread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        worker.join(timeout=2)
+        server.server_close()
+
+
+async def invoke_http(
+    executor: ToolExecutor,
+    run: Run,
+    base_url: str,
+    path: str,
+    *,
+    ctf_header: dict[str, str] | None = None,
+):
+    return await executor.execute_call(
+        ToolCallRequest(
+            run_id=run.id,
+            tool_id="builtin.localhost_http_probe",
+            tool_version="1.1.0",
+            target_scope=[base_url],
+            arguments={
+                "url": f"{base_url}{path}",
+                **({"ctf_header": ctf_header} if ctf_header else {}),
+            },
         )
     )
 
@@ -165,3 +266,76 @@ async def test_classical_cipher_is_bounded_and_artifact_scope_is_enforced(tmp_pa
     ]
     assert not cross_thread.success
     assert cross_thread.error and "不属于当前 Thread" in cross_thread.error.message
+
+
+@pytest.mark.asyncio
+async def test_local_ctf_http_evidence_chain_decodes_candidate_flag(tmp_path: Path) -> None:
+    repository, root, _, _, run, _ = setup_tool_context(tmp_path, b"placeholder")
+    registry = create_reference_registry(root, repository)
+    register_ctf_tools(registry, repository, root)
+    executor = ToolExecutor(registry)
+
+    with local_ctf_server() as base_url:
+        blocked_scope = await executor.execute_call(
+            ToolCallRequest(
+                run_id=run.id,
+                tool_id="builtin.localhost_http_probe",
+                tool_version="1.1.0",
+                target_scope=["http://127.0.0.1:1"],
+                arguments={"url": f"{base_url}/"},
+            )
+        )
+        homepage = await invoke_http(executor, run, base_url, "/")
+        status = await invoke_http(executor, run, base_url, "/api/status")
+        robots = await invoke_http(executor, run, base_url, "/robots.txt")
+        notes = await invoke_http(executor, run, base_url, "/dev-notes.txt")
+        debug = await invoke_http(
+            executor,
+            run,
+            base_url,
+            "/api/debug?unlock=1",
+            ctf_header={"name": "X-CTF-Token", "value": "sunrise-7"},
+        )
+
+    assert homepage.success and "build-token" in homepage.output["body_excerpt"]
+    assert not blocked_scope.success
+    assert blocked_scope.error and "授权范围" in blocked_scope.error.message
+    assert homepage.output["explicit_links"] == ["/api/status"]
+    assert status.success and "robots.txt" in status.output["body_excerpt"]
+    assert robots.success and robots.output["robots_paths"] == ["/dev-notes.txt"]
+    assert notes.success and "X-CTF-Token" in notes.output["body_excerpt"]
+    assert debug.success and debug.output["artifact_ids"]
+
+    evidence_id = debug.output["artifact_ids"][0]
+    decoded = await invoke(
+        executor,
+        run,
+        "encoding_decode",
+        {"artifact_id": evidence_id, "encoding": "base64", "json_pointer": "/flag_b64"},
+    )
+    candidate = decoded.output["candidates"][0]["value"]
+    verified = await invoke(
+        executor,
+        run,
+        "flag_candidate_verify",
+        {"artifact_id": evidence_id, "candidate": candidate, "flag_prefix": "flag"},
+    )
+
+    assert candidate == "flag{local_agent_found_debug_door}"
+    assert verified.success
+    assert verified.output["validation_status"] == "format_matched"
+
+    invalid_header = await executor.execute_call(
+        ToolCallRequest(
+            run_id=run.id,
+            tool_id="builtin.localhost_http_probe",
+            tool_version="1.1.0",
+            target_scope=["127.0.0.1"],
+            arguments={
+                "url": "http://127.0.0.1:8088/",
+                "ctf_header": {"name": "Authorization", "value": "Bearer forbidden"},
+            },
+        )
+    )
+    assert not invalid_header.success
+    assert invalid_header.error and invalid_header.error.code == "invalid_input"

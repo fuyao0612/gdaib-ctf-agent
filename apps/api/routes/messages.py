@@ -262,7 +262,10 @@ def create_message_router(context: ApiContext) -> APIRouter:
             )
             created = await context.start_run(
                 thread_id,
-                RunCreate(provider_config_id=body.provider_config_id),
+                RunCreate(
+                    provider_config_id=body.provider_config_id,
+                    authorized_targets=body.authorized_targets,
+                ),
                 origin_message=user_message,
             )
             return _response(

@@ -28,6 +28,7 @@ from yuwang.domain.models import (
     Artifact,
     CallStatus,
     EventType,
+    EvidenceCandidate,
     EvidenceLevel,
     EvidenceRecord,
     Observation,
@@ -506,8 +507,10 @@ class WorkflowNodes:
         state.guidance_replan_required = False
         state.guidance_replan_sequences.clear()
         state.replan_count += 1
-        plan = await engine._model_call(state, AgentPlan, "根据历史观察重新规划")
-        state.plan = AgentPlan.model_validate(plan)
+        state.plan = await engine.planner.plan(
+            state,
+            cast(Any, engine._model_call),
+        )
         previous = engine.repository.latest_plan_revision(state.run_id)
         revision = PlanRevision(
             run_id=state.run_id,
@@ -597,6 +600,25 @@ class WorkflowNodes:
             return "external"
         return "model"
 
+    @staticmethod
+    def _latest_flag_candidate(state: Any) -> EvidenceCandidate | None:
+        """收尾缺少候选引用时，仅复用专用工具已验证格式的真实输出。"""
+
+        for observation in reversed(state.observations):
+            output = observation.output
+            if (
+                observation.success
+                and observation.tool_name == "ctf.flag_candidate_verify"
+                and output.get("validation_status") == "format_matched"
+                and isinstance(output.get("candidate"), str)
+            ):
+                return EvidenceCandidate(
+                    value=output["candidate"],
+                    source_call_id=observation.call_id,
+                    location="/candidate",
+                )
+        return None
+
     async def verify(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
@@ -641,6 +663,7 @@ class WorkflowNodes:
             )
             return engine._result("verify", state)
         candidate = state.action.candidate if state.action else None
+        candidate = candidate or self._latest_flag_candidate(state)
         if not state.task.verification_rules:
             # 任务可以给出可用结论，但没有确定性外部条件时绝不声称“已验证成功”。
             if not state.action or not (state.action.answer or candidate):

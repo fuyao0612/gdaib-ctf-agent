@@ -183,4 +183,22 @@ describe("统一任务结果卡片", () => {
   it("将部分验证作为独立状态标签", () => {
     expect(validationStatusLabel("partial")).toBe("部分验证");
   });
+
+  it("空失败原因优先展示报告中的失败复盘", () => {
+    const failedRun = { ...makeRun("failed"), error: "" };
+    const failedReport: Report = {
+      markdown: "# 失败报告",
+      data: {
+        failure_analysis: {
+          summary: "模型调用超时，未再次请求模型以避免额外消耗。",
+          causes: ["等待时间超过限制"],
+          next_steps: ["检查 Provider 连通性后重试"],
+        },
+      },
+    };
+    render(
+      <ResultCard run={failedRun} events={events} audit={audit} report={failedReport} messages={[]} />,
+    );
+    expect(screen.getByTestId("failure-analysis")).toHaveTextContent("模型调用超时");
+  });
 });

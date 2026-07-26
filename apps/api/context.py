@@ -63,7 +63,7 @@ class ApiContext:
         self.skill_service = SkillService(self.repository)
         self.profile_service.ensure_default(self.repository.get_agent_defaults().budget)
         self.policy = PolicyEngine(SecurityConfig())
-        self.registry: ToolRegistry = create_reference_registry(config.artifact_root)
+        self.registry: ToolRegistry = create_reference_registry(config.artifact_root, self.repository)
         register_ctf_tools(self.registry, self.repository, config.artifact_root)
         self.mcp_client = McpClient(
             allowed_commands={self._normalized_mcp_command(value) for value in config.mcp_stdio_allowed_commands},

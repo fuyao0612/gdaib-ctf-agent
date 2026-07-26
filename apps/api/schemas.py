@@ -58,6 +58,10 @@ class ChatCreate(MessageCreate):
 class UnifiedMessageCreate(ChatCreate):
     """工作台唯一的发送契约；是否创建 Run 由服务端判断。"""
 
+    # 目标授权不能从自然语言任务中推断。聊天入口需要显式携带它，
+    # 才能让受控 Run 与保留的 /turns 接口具有相同的安全语义。
+    authorized_targets: list[str] = Field(default_factory=list, max_length=20)
+
 
 class RunCreate(BaseModel):
     provider_config_id: UUID | None = None

@@ -125,30 +125,33 @@ class ProviderChain:
         attempt: int = 1,
         request_budget: int | None = None,
     ) -> T:
-        del request_budget
         last_error: ProviderError | None = None
-        remaining_retries = self.retry_budget
+        remaining_requests = max(
+            1, request_budget if request_budget is not None else self.retry_budget + 1
+        )
         aggregate_requests = 0
-        aggregate_retries = 0
         aggregate_duration = 0
         for provider in self.providers:
+            if remaining_requests <= 0:
+                break
             try:
                 result = await provider.generate_structured(
                     prompt,
                     output_type,
                     timeout=timeout,
                     attempt=attempt,
-                    request_budget=remaining_retries + 1,
+                    request_budget=remaining_requests,
                 )
                 metrics = getattr(provider, "last_call_metrics", None)
+                request_count = metrics.request_count if metrics else 1
+                aggregate_requests += request_count
+                aggregate_duration += metrics.duration_ms if metrics else 0
+                remaining_requests = max(0, remaining_requests - max(1, request_count))
                 if metrics:
-                    aggregate_requests += metrics.request_count
-                    aggregate_retries += metrics.retry_count
-                    aggregate_duration += metrics.duration_ms
                     self.last_call_metrics = metrics.model_copy(
                         update={
                             "request_count": aggregate_requests,
-                            "retry_count": aggregate_retries,
+                            "retry_count": max(0, aggregate_requests - 1),
                             "duration_ms": aggregate_duration,
                         }
                     )
@@ -156,11 +159,10 @@ class ProviderChain:
             except ProviderError as exc:
                 last_error = exc
                 metrics = exc.metrics or getattr(provider, "last_call_metrics", None)
-                if metrics:
-                    aggregate_requests += metrics.request_count
-                    aggregate_retries += metrics.retry_count
-                    aggregate_duration += metrics.duration_ms
-                    remaining_retries = max(0, remaining_retries - metrics.retry_count)
+                request_count = metrics.request_count if metrics else 1
+                aggregate_requests += request_count
+                aggregate_duration += metrics.duration_ms if metrics else 0
+                remaining_requests = max(0, remaining_requests - max(1, request_count))
                 fallback_on = set(getattr(provider, "fallback_on", []))
                 if exc.category.value not in fallback_on:
                     break
@@ -180,7 +182,7 @@ class ProviderChain:
             metrics = base.model_copy(
                 update={
                     "request_count": aggregate_requests,
-                    "retry_count": aggregate_retries,
+                    "retry_count": max(0, aggregate_requests - 1),
                     "duration_ms": aggregate_duration,
                 }
             )
@@ -205,12 +207,14 @@ class ProviderChain:
                 "当前 Provider 未配置原生 Function Calling，请在设置中心选择 native 模式",
             )
         last_error: ProviderError | None = None
-        del request_budget
-        remaining_retries = self.retry_budget
+        remaining_requests = max(
+            1, request_budget if request_budget is not None else self.retry_budget + 1
+        )
         aggregate_requests = 0
-        aggregate_retries = 0
         aggregate_duration = 0
         for provider in self.providers:
+            if remaining_requests <= 0:
+                break
             if str(getattr(provider, "tool_call_mode", "structured")) != "native":
                 continue
             try:
@@ -218,17 +222,18 @@ class ProviderChain:
                     prompt,
                     catalog,
                     timeout=timeout,
-                    request_budget=remaining_retries + 1,
+                    request_budget=remaining_requests,
                 )
                 metrics = getattr(provider, "last_call_metrics", None)
+                request_count = metrics.request_count if metrics else 1
+                aggregate_requests += request_count
+                aggregate_duration += metrics.duration_ms if metrics else 0
+                remaining_requests = max(0, remaining_requests - max(1, request_count))
                 if metrics:
-                    aggregate_requests += metrics.request_count
-                    aggregate_retries += metrics.retry_count
-                    aggregate_duration += metrics.duration_ms
                     self.last_call_metrics = metrics.model_copy(
                         update={
                             "request_count": aggregate_requests,
-                            "retry_count": aggregate_retries,
+                            "retry_count": max(0, aggregate_requests - 1),
                             "duration_ms": aggregate_duration,
                         }
                     )
@@ -236,11 +241,10 @@ class ProviderChain:
             except ProviderError as exc:
                 last_error = exc
                 metrics = exc.metrics or getattr(provider, "last_call_metrics", None)
-                if metrics:
-                    aggregate_requests += metrics.request_count
-                    aggregate_retries += metrics.retry_count
-                    aggregate_duration += metrics.duration_ms
-                    remaining_retries = max(0, remaining_retries - metrics.retry_count)
+                request_count = metrics.request_count if metrics else 1
+                aggregate_requests += request_count
+                aggregate_duration += metrics.duration_ms if metrics else 0
+                remaining_requests = max(0, remaining_requests - max(1, request_count))
                 if exc.category.value not in set(getattr(provider, "fallback_on", [])):
                     break
         if last_error:
@@ -259,7 +263,7 @@ class ProviderChain:
             metrics = base.model_copy(
                 update={
                     "request_count": aggregate_requests,
-                    "retry_count": aggregate_retries,
+                    "retry_count": max(0, aggregate_requests - 1),
                     "duration_ms": aggregate_duration,
                 }
             )
@@ -414,9 +418,10 @@ class OpenAICompatibleProvider:
         allowed_requests = min(self.max_retries + 1, request_budget or self.max_retries + 1)
         started = time.perf_counter()
         last_error: ProviderError | None = None
+        request_prompt = prompt
         for request_index in range(allowed_requests):
             try:
-                result, usage = await self._request(prompt, output_type, effective_timeout)
+                result, usage = await self._request(request_prompt, output_type, effective_timeout)
                 self.last_call_metrics = self._metrics(request_index + 1, started, usage)
                 return result
             except ProviderError as exc:
@@ -426,6 +431,8 @@ class OpenAICompatibleProvider:
                     self.last_call_metrics = metrics
                     exc.metrics = metrics
                     raise
+                if exc.category == ProviderErrorCategory.INVALID_OUTPUT:
+                    request_prompt = self._repair_prompt(prompt, str(exc))
                 await asyncio.sleep(min(0.25 * (2**request_index), 4.0))
         raise last_error or ProviderError(ProviderErrorCategory.SERVICE, "Provider 调用失败")
 
@@ -705,13 +712,102 @@ class OpenAICompatibleProvider:
             if not isinstance(content, str):
                 raise TypeError("content is not text")
             usage = self._parse_usage(body.get("usage"))
-            return output_type.model_validate_json(content), usage
+            return output_type.model_validate(self._structured_content(content)), usage
         except ProviderError:
             raise
         except (KeyError, TypeError, ValueError, ValidationError) as exc:
             raise ProviderError(
-                ProviderErrorCategory.INVALID_OUTPUT, "模型未返回符合配置的结构化 JSON"
+                ProviderErrorCategory.INVALID_OUTPUT,
+                self._structured_validation_error(output_type, exc),
+                True,
             ) from exc
+
+    @staticmethod
+    def _structured_validation_error(output_type: type[BaseModel], error: Exception) -> str:
+        """只暴露字段路径和规则，帮助模型修复输出且不记录其原始内容。"""
+
+        if isinstance(error, ValidationError):
+            issues = []
+            for item in error.errors(include_input=False)[:3]:
+                location = ".".join(str(part) for part in item.get("loc", ())) or "根对象"
+                issue_type = str(item.get("type", "invalid"))
+                issues.append(f"{location}（{issue_type}）")
+            if issues:
+                return (
+                    f"模型返回的 JSON 未通过 {output_type.__name__} 协议校验："
+                    f"{'; '.join(issues)}"
+                )
+        if isinstance(error, ValueError) and str(error) in {
+            "模型响应不包含 JSON 对象",
+            "模型响应中的 JSON 对象无效",
+            "模型响应包含多个或未闭合的 JSON 内容",
+            "模型返回的 JSON 字符串不包含对象",
+            "模型返回的结构化结果必须是 JSON 对象",
+        }:
+            return f"模型返回的 JSON 未通过 {output_type.__name__} 协议校验：{error}"
+        if isinstance(error, TypeError) and str(error) in {"content is not text", "content is empty"}:
+            return f"模型返回的 JSON 未通过 {output_type.__name__} 协议校验：响应正文为空或不是文本"
+        return f"模型返回的 JSON 未通过 {output_type.__name__} 协议校验"
+
+    @staticmethod
+    def _repair_prompt(prompt: str, validation_error: str) -> str:
+        """在重试时反馈脱敏校验结论，避免用相同提示重复得到同类无效 JSON。"""
+
+        instruction = (
+            f"上一次输出未通过结构化协议：{validation_error}。"
+            "请仅重新输出一个符合 JSON Schema 的对象；不要解释、不要 Markdown、不要增加 Schema 未定义字段。"
+        )
+        try:
+            context = json.loads(prompt)
+        except json.JSONDecodeError:
+            return f"{prompt}\n\n{instruction}"
+        if isinstance(context, dict):
+            policy = context.get("system_policy_layer")
+            if isinstance(policy, dict):
+                # Agent 上下文本身是 JSON；修复提示也必须保持在同一对象中，避免
+                # 下游 OpenAI 兼容服务或协议测试服务器无法解析重试请求。
+                policy["structured_output_repair"] = instruction
+                return json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+        return f"{prompt}\n\n{instruction}"
+
+    @staticmethod
+    def _structured_content(content: str) -> dict[str, Any]:
+        """兼容模型的展示包装，但最终只交给严格 Schema 校验的 JSON 对象。"""
+
+        normalized = content.strip().lstrip("\ufeff")
+        if normalized.startswith("```") and normalized.endswith("```"):
+            first_newline = normalized.find("\n")
+            if first_newline != -1:
+                normalized = normalized[first_newline + 1 : -3].strip()
+        if normalized.startswith("<think>"):
+            closing = normalized.find("</think>")
+            if closing != -1:
+                normalized = normalized[closing + len("</think>") :].strip()
+
+        decoder = json.JSONDecoder()
+        try:
+            value = json.loads(normalized)
+        except json.JSONDecodeError:
+            # 兼容“说明文字 + 单个 JSON 对象”的 OpenAI 兼容服务；只接受完整的
+            # 单个对象，绝不把对象外文本或其他字段带入 Agent 状态。
+            start = normalized.find("{")
+            if start < 0:
+                raise ValueError("模型响应不包含 JSON 对象") from None
+            try:
+                value, end = decoder.raw_decode(normalized[start:])
+            except json.JSONDecodeError as exc:
+                raise ValueError("模型响应中的 JSON 对象无效") from exc
+            suffix = normalized[start + end :].strip()
+            if suffix and suffix not in {"```", "</think>"}:
+                raise ValueError("模型响应包含多个或未闭合的 JSON 内容") from None
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError("模型返回的 JSON 字符串不包含对象") from exc
+        if not isinstance(value, dict):
+            raise ValueError("模型返回的结构化结果必须是 JSON 对象")
+        return value
 
     async def _request_native_tool_selection(
         self, prompt: str, catalog: FunctionToolCatalog, timeout: float

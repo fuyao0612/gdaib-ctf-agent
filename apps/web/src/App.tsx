@@ -52,6 +52,7 @@ export default function App() {
     bootstrap,
   } = workspace;
   const [message, setMessage] = useState("");
+  const [authorizedTarget, setAuthorizedTarget] = useState("");
   const [pendingArtifacts, setPendingArtifacts] = useState<Artifact[]>([]);
   // 附件在服务端确认接收前不应被当作已随消息发送；单独记录上传中状态，
   // 不用全局 busy 锁住正在运行任务的主输入框。
@@ -229,6 +230,7 @@ export default function App() {
     // 新 Thread 不能继承旧会话尚未完成的请求、草稿或上传响应。
     chat.reset();
     setMessage("");
+    setAuthorizedTarget("");
     setPendingArtifacts([]);
     setBusy(true);
     setError("");
@@ -266,11 +268,16 @@ export default function App() {
     if (!detail || !message.trim()) return;
     const content = message.trim();
     const artifacts = pendingArtifacts;
+    const authorizedTargets = authorizedTarget
+      .split(/[\n,]/)
+      .map((target) => target.trim())
+      .filter(Boolean);
     // 网络失败时保留文字和待发送附件，让用户能确认并重试；只有统一消息
     // 接口确认受理后才清空草稿，避免形成“附件好像上传/发送了”的错觉。
-    if (await chat.send(content, artifacts)) {
+    if (await chat.send(content, artifacts, authorizedTargets)) {
       setMessage("");
       setPendingArtifacts([]);
+      setAuthorizedTarget("");
     }
   }
 
@@ -577,6 +584,7 @@ export default function App() {
             <MessageComposer
               activeRun={activeRun}
               message={message}
+              authorizedTarget={authorizedTarget}
               pendingArtifacts={pendingArtifacts}
               providers={providers}
               providerConfigId={detail.provider_config_id}
@@ -584,6 +592,7 @@ export default function App() {
               chatGenerating={chat.generating}
               chatCanRetry={Boolean(chat.failure?.retryable)}
               onMessageChange={setMessage}
+              onAuthorizedTargetChange={setAuthorizedTarget}
               onProviderChange={(providerId) => void selectProvider(providerId)}
               onUpload={(file) => void upload(file)}
               onSend={() => void send()}

@@ -1,7 +1,10 @@
+import json
+
 import httpx
 import pytest
 
 from tests.fakes import FakeEchoTool, FakeModelProvider
+from yuwang.control import AgentActionDraft
 from yuwang.domain.models import AgentAction, TaskSpec
 from yuwang.model_providers import (
     OpenAICompatibleProvider,
@@ -283,9 +286,79 @@ async def test_provider_invalid_output_and_refusal_are_classified():
     with pytest.raises(ProviderError) as invalid:
         await provider.generate_structured("task", AgentAction)
     assert invalid.value.category == "invalid_output"
+    assert "模型响应不包含 JSON 对象" in str(invalid.value)
     with pytest.raises(ProviderError) as refusal:
         await provider.generate_structured("task", AgentAction)
     assert refusal.value.category == "refusal"
+
+
+@pytest.mark.asyncio
+async def test_provider_normalizes_wrapped_json_and_retries_invalid_structured_output():
+    responses = iter(
+        [
+            httpx.Response(200, json={"choices": [{"message": {"content": "not-json"}}]}),
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "```json\n{\"kind\":\"finish\",\"summary\":\"ok\"}\n```"
+                            }
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+    provider = provider_with_transport(httpx.MockTransport(lambda _: next(responses)), retries=1)
+
+    action = await provider.generate_structured("task", AgentAction)
+
+    assert action.kind == "finish"
+    assert provider.last_call_metrics and provider.last_call_metrics.request_count == 2
+
+
+@pytest.mark.asyncio
+async def test_provider_retries_with_redacted_structured_validation_feedback():
+    requests: list[dict] = []
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"kind":"finish","summary":"ok",'
+                                    '"debug_trace":"sensitive value"}'
+                                )
+                            }
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": '{"kind":"finish","summary":"ok"}'}}]},
+            ),
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(__import__("json").loads(request.content))
+        return next(responses)
+
+    provider = provider_with_transport(httpx.MockTransport(handler), retries=1)
+    prompt = json.dumps({"system_policy_layer": {"immutable": True}, "purpose": "test"})
+    action = await provider.generate_structured(prompt, AgentActionDraft)
+
+    assert action.kind == "finish"
+    repair_context = json.loads(requests[1]["messages"][-1]["content"])
+    repair_instruction = repair_context["system_policy_layer"]["structured_output_repair"]
+    assert "debug_trace（extra_forbidden）" in repair_instruction
+    assert "sensitive value" not in repair_instruction
 
 
 @pytest.mark.asyncio
@@ -307,8 +380,8 @@ async def test_native_provider_chain_aggregates_fallback_metrics_and_retry_budge
         ProviderCallMetrics(
             provider="failed-native",
             model="failed-native-model",
-            request_count=2,
-            retry_count=1,
+            request_count=1,
+            retry_count=0,
             duration_ms=30,
             input_tokens=0,
             output_tokens=0,
@@ -343,7 +416,7 @@ async def test_native_provider_chain_aggregates_fallback_metrics_and_retry_budge
     assert failed.request_budgets == [2]
     assert succeeded.request_budgets == [1]
     assert chain.last_call_metrics
-    assert chain.last_call_metrics.request_count == 3
+    assert chain.last_call_metrics.request_count == 2
     assert chain.last_call_metrics.retry_count == 1
     assert chain.last_call_metrics.duration_ms == 50
 
@@ -390,9 +463,11 @@ async def test_native_provider_chain_attaches_aggregated_metrics_to_last_error()
         )
 
     assert caught.value.metrics
-    assert caught.value.metrics.request_count == 3
+    assert caught.value.metrics.request_count == 2
     assert caught.value.metrics.retry_count == 1
-    assert caught.value.metrics.duration_ms == 50
+    assert caught.value.metrics.duration_ms == 30
+    assert first.request_budgets == [2]
+    assert second.request_budgets == []
 
 
 def test_provider_rejects_empty_key():

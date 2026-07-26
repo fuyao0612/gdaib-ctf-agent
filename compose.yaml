@@ -27,6 +27,9 @@ services:
       YUWANG_COOKIE_SECURE: ${YUWANG_COOKIE_SECURE:-false}
       YUWANG_MASTER_KEY: ${YUWANG_MASTER_KEY:?Set YUWANG_MASTER_KEY in .env}
       YUWANG_SANDBOX_URL: http://tool-sandbox:8081
+      # 用户输入和 Run 白名单仍只允许 localhost/127.0.0.1；该固定网关仅处理
+      # Windows/macOS Docker 容器无法直接访问宿主机回环靶场的网络命名差异。
+      YUWANG_LOCAL_CTF_HOST_GATEWAY: http://host.docker.internal
     volumes:
       - ${YUWANG_DATA_PATH:-./data}:/data
     depends_on:

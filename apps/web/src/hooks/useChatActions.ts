@@ -10,6 +10,7 @@ export interface ChatFailure {
   threadId: string;
   content: string;
   artifactIds: string[];
+  authorizedTargets: string[];
 }
 
 interface Options {
@@ -82,6 +83,7 @@ export function useChatActions(options: Options) {
           artifact_ids: value.artifactIds,
           retry,
           provider_config_id: options.providerConfigId,
+          authorized_targets: value.authorizedTargets,
         },
         controller.signal,
         (event) => {
@@ -144,13 +146,14 @@ export function useChatActions(options: Options) {
     }
   };
 
-  const send = (content: string, artifacts: Artifact[]) =>
+  const send = (content: string, artifacts: Artifact[], authorizedTargets: string[]) =>
     execute(
       {
         requestId: crypto.randomUUID(),
         threadId: options.detail?.id ?? "",
         content,
         artifactIds: artifacts.map((item) => item.id),
+        authorizedTargets,
         message: "",
         retryable: true,
       },
@@ -179,6 +182,7 @@ export function useChatActions(options: Options) {
         // Run 状态识别该短语并返回持久化后的终态。
         content: "停止任务",
         artifactIds: [],
+        authorizedTargets: [],
         message: "",
         retryable: false,
       },

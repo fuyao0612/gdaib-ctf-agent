@@ -53,6 +53,7 @@ function renderComposer(status: RunStatus) {
     <MessageComposer
       activeRun={run(status)}
       message="补充范围"
+      authorizedTarget=""
       pendingArtifacts={[]}
       providers={[provider]}
       providerConfigId={provider.id}
@@ -60,6 +61,7 @@ function renderComposer(status: RunStatus) {
       chatGenerating={false}
       chatCanRetry={false}
       onMessageChange={onMessageChange}
+      onAuthorizedTargetChange={vi.fn()}
       onProviderChange={vi.fn()}
       onUpload={vi.fn()}
       onSend={onSend}
@@ -74,10 +76,12 @@ function renderComposer(status: RunStatus) {
 describe("统一消息输入框", () => {
   it("显示会话级已启用模型，并在切换时回传 Provider ID", () => {
     const onProviderChange = vi.fn();
+    const onAuthorizedTargetChange = vi.fn();
     render(
       <MessageComposer
         activeRun={null}
         message=""
+        authorizedTarget=""
         pendingArtifacts={[]}
         providers={[provider]}
         providerConfigId={provider.id}
@@ -85,6 +89,7 @@ describe("统一消息输入框", () => {
         chatGenerating={false}
         chatCanRetry={false}
         onMessageChange={vi.fn()}
+        onAuthorizedTargetChange={onAuthorizedTargetChange}
         onProviderChange={onProviderChange}
         onUpload={vi.fn()}
         onSend={vi.fn()}
@@ -100,6 +105,9 @@ describe("统一消息输入框", () => {
       target: { value: provider.id },
     });
     expect(onProviderChange).toHaveBeenCalledWith(provider.id);
+    const target = screen.getByLabelText("本次运行授权目标");
+    fireEvent.change(target, { target: { value: "http://127.0.0.1:8088/" } });
+    expect(onAuthorizedTargetChange).toHaveBeenCalledWith("http://127.0.0.1:8088/");
   });
 
   it("运行中保持可编辑，并将发送语义标为追加指引", () => {
@@ -138,6 +146,7 @@ describe("统一消息输入框", () => {
       <MessageComposer
         activeRun={run("running")}
         message="等附件完成后发送"
+        authorizedTarget=""
         pendingArtifacts={[]}
         providers={[provider]}
         providerConfigId={provider.id}
@@ -145,6 +154,7 @@ describe("统一消息输入框", () => {
         chatGenerating={false}
         chatCanRetry={false}
         onMessageChange={vi.fn()}
+        onAuthorizedTargetChange={vi.fn()}
         onProviderChange={vi.fn()}
         onUpload={vi.fn()}
         onSend={onSend}
@@ -167,6 +177,7 @@ describe("统一消息输入框", () => {
       <MessageComposer
         activeRun={run("running")}
         message=""
+        authorizedTarget=""
         pendingArtifacts={[]}
         providers={[provider]}
         providerConfigId={provider.id}
@@ -174,6 +185,7 @@ describe("统一消息输入框", () => {
         chatGenerating
         chatCanRetry={false}
         onMessageChange={vi.fn()}
+        onAuthorizedTargetChange={vi.fn()}
         onProviderChange={vi.fn()}
         onUpload={vi.fn()}
         onSend={vi.fn()}
@@ -193,6 +205,7 @@ describe("统一消息输入框", () => {
       <MessageComposer
         activeRun={stopPending}
         message=""
+        authorizedTarget=""
         pendingArtifacts={[]}
         providers={[provider]}
         providerConfigId={provider.id}
@@ -200,6 +213,7 @@ describe("统一消息输入框", () => {
         chatGenerating={false}
         chatCanRetry
         onMessageChange={vi.fn()}
+        onAuthorizedTargetChange={vi.fn()}
         onProviderChange={vi.fn()}
         onUpload={vi.fn()}
         onSend={vi.fn()}
