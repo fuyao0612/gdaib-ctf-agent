@@ -23,7 +23,6 @@ from yuwang.agent import AgentEngine, AgentStateModel
 from yuwang.domain.models import (
     ACTIVE_RUN_STATUSES,
     EventType,
-    InteractionMode,
     Message,
     MessageRole,
     Run,
@@ -169,7 +168,7 @@ class ApiContext:
         return configs, self.build_provider_chain(configs)
 
     def default_thread_provider_id(self) -> UUID | None:
-        """解析新会话的全局默认模型，避免 ChatDefaults 改变会话级选择语义。"""
+        """解析新任务历史的全局默认模型。"""
 
         service = self.get_settings_service()
         try:
@@ -401,7 +400,6 @@ class ApiContext:
         """
 
         thread = self.require_thread(thread_id)
-        thread.interaction_mode = InteractionMode.AGENT
         self.repository.save_thread(thread)
         profile = self.resolve_thread_profile(thread)
         try:
@@ -420,6 +418,7 @@ class ApiContext:
         run = Run(
             thread_id=thread.id,
             provider=selected.name,
+            model=selected.model,
             provider_config_id=selected.id,
             agent_profile_id=profile.profile_id,
             agent_profile_version=profile.version,

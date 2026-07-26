@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+﻿import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderConfig, Run, RunStatus } from "../types";
 import MessageComposer from "./MessageComposer";
@@ -99,9 +99,9 @@ describe("统一消息输入框", () => {
       />,
     );
 
-    expect(screen.getByLabelText("当前对话模型")).toHaveValue(provider.id);
+    expect(screen.getByLabelText("当前任务模型")).toHaveValue(provider.id);
     expect(screen.getByRole("option", { name: /测试模型 · test-model（可用）/ })).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("当前对话模型"), {
+    fireEvent.change(screen.getByLabelText("当前任务模型"), {
       target: { value: provider.id },
     });
     expect(onProviderChange).toHaveBeenCalledWith(provider.id);
@@ -166,7 +166,7 @@ describe("统一消息输入框", () => {
 
     expect(screen.getByLabelText("消息")).toBeEnabled();
     expect(screen.getByLabelText("上传附件")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "正在发送…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "正在提交…" })).toBeDisabled();
     expect(screen.getByText(/附件正在上传/)).toBeInTheDocument();
     fireEvent.keyDown(screen.getByLabelText("消息"), { key: "Enter" });
     expect(onSend).not.toHaveBeenCalled();
@@ -223,7 +223,7 @@ describe("统一消息输入框", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "重试回复" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "重试任务请求" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "停止请求处理中" })).toBeDisabled();
     expect(screen.getByText(/停止请求处理中，仍在接收任务状态更新/)).toBeInTheDocument();
   });

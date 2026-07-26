@@ -17,7 +17,6 @@ from apps.api.config import Settings
 from apps.api.context import ApiContext
 from apps.api.routes import (
     create_agent_profile_router,
-    create_chat_router,
     create_evaluation_router,
     create_health_router,
     create_mcp_server_router,
@@ -121,7 +120,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(create_skill_router(context))
     application.include_router(create_thread_router(context))
     application.include_router(create_message_router(context))
-    application.include_router(create_chat_router(context))
     application.include_router(create_run_router(context))
     application.include_router(create_report_router(context))
     application.include_router(create_evaluation_router(context))

@@ -49,7 +49,6 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             Thread(
                 title=body.title,
                 mode=body.mode,
-                interaction_mode=body.interaction_mode,
                 provider_config_id=provider_config_id,
                 skill_ids=body.skill_ids,
                 tool_selection_mode=body.tool_selection_mode,
@@ -94,8 +93,6 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             thread.title = body.title.strip()
         if body.archived is not None:
             thread.archived = body.archived
-        if body.interaction_mode is not None:
-            thread.interaction_mode = body.interaction_mode
         if "provider_config_id" in body.model_fields_set:
             if body.provider_config_id is None:
                 raise HTTPException(400, "请选择一个已启用的 Provider")

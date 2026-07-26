@@ -52,7 +52,7 @@ describe("ThreadSidebar", () => {
     );
     expect(screen.queryByText("历史任务")).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("显示已归档"));
-    fireEvent.change(screen.getByLabelText("搜索对话"), {
+    fireEvent.change(screen.getByLabelText("搜索任务"), {
       target: { value: "历史" },
     });
     expect(screen.getByText("历史任务")).toBeInTheDocument();
@@ -70,9 +70,30 @@ describe("ThreadSidebar", () => {
         onDelete={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByLabelText("搜索对话"), {
+    fireEvent.change(screen.getByLabelText("搜索任务"), {
       target: { value: "不存在的任务" },
     });
-    expect(screen.getByText("没有匹配的对话。")).toBeInTheDocument();
+    expect(screen.getByText("没有匹配的任务。")).toBeInTheDocument();
+  });
+
+  it("渲染一百条历史任务时保留稳定行，不把标题或操作压缩到同一行", () => {
+    const history = Array.from({ length: 100 }, (_, index) => ({
+      ...threads[0],
+      id: `history-${index}`,
+      title: `第 ${index + 1} 条历史任务：用于验证长标题不会挤压操作区`,
+    }));
+    const { container } = render(
+      <ThreadSidebar
+        threads={history}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onToggleArchive={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(container.querySelectorAll(".thread-row")).toHaveLength(100);
+    expect(screen.getByText(/第 1 条历史任务/)).toBeInTheDocument();
+    expect(screen.getByText(/第 100 条历史任务/)).toBeInTheDocument();
+    expect(container.querySelector(".thread-list")).toHaveClass("thread-list");
   });
 });

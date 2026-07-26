@@ -2,7 +2,6 @@
 
 from .models import (
     AgentDefaults,
-    ChatDefaults,
     ProviderConfig,
     ProviderConfigInput,
     ProviderConfigView,
@@ -21,7 +20,6 @@ from .skills import SkillDefinition, SkillInput, SkillService
 
 __all__ = [
     "AgentDefaults",
-    "ChatDefaults",
     "AgentProfileExport",
     "AgentProfileInput",
     "AgentProfileService",

@@ -9,11 +9,8 @@ API 装配入口 `apps/api/main.py` 只安装中间件和路由；`context.py` �
 ```mermaid
 flowchart LR
   Web["React 工作台"] -->|统一消息 fetch-SSE| Message["消息协调路由"]
-  Message -->|自由回复| Chat["聊天流"]
   Message -->|创建任务| API["Run 调度"]
   Message -->|指引 / 补充 / 澄清| Interaction["RunInteractionService"]
-  Chat --> Provider["ModelProvider 协议"]
-  Chat --> Repo["Repository 协议 / SQLite"]
   API --> Agent["AgentEngine / LangGraph"]
   Interaction --> Repo
   Interaction --> Agent
@@ -31,14 +28,12 @@ flowchart LR
 用户层只有一条消息入口，内部仍复用两个稳定生命周期：
 
 - `apps/api/routes/messages.py` 对活动 Run 调用 `yuwang.dispatch.route_active_message()`：停止短语优先，
-  等待补充/澄清时直接提交相应内容，其余活动状态默认追加指引。没有活动 Run 时
-  `classify_new_message()` 使用保守确定性规则得到 `chat`、`run` 或 `clarify`，不额外调用 Provider；
-  明确执行才会启动 Run，模糊请求会保存固定的可重放澄清问题，不能因猜测扩大授权。
-- `apps/api/routes/chat.py` 返回 `reply_start/text_delta/reply_complete/reply_failed`，不创建 Run。
+  等待补充/澄清时直接提交相应内容，其余活动状态默认追加指引。没有活动 Run 时，每条用户消息
+  都保存来源消息、固化快照并创建受控 Run；Agent 自己决定是否调用已授权工具或请求补充。
 - `ApiContext.start_run()` 固化 TaskSpec、Provider/Profile 快照并调度 LangGraph；`routes/runs.py` 的兼容接口也复用它。
 - `apps/api/run_interactions.py` 把追加指引、用户补充和任务澄清收敛为同一组持久化、幂等和
   恢复用例；旧的 Run 路由仅为 API 兼容而保留。
-- `apps/web/src/hooks/useChatActions.ts` 使用统一 fetch-SSE；`MessageComposer.tsx` 始终保持一个
+- `apps/web/src/hooks/useTaskActions.ts` 使用统一 fetch-SSE；`MessageComposer.tsx` 始终保持一个
   可用输入框，`useWorkbenchData.ts` 只管理 Run 的 EventSource 与持久化恢复。
 - Thread 的 `interaction_mode=chat|agent` 为历史数据和兼容 API 保留；`mode=normal|competition` 仅表示 Agent 执行限制。
 
@@ -48,7 +43,7 @@ flowchart LR
 
 | Run 状态 | `POST /threads/{thread_id}/message` 的行为 |
 | --- | --- |
-| 无活动 Run | 自由回复，或保存用户消息、固化快照并创建 Run。 |
+| 无活动 Run | 保存用户消息、固化快照并创建 Run。 |
 | `queued`、`running`、`waiting_approval` | 保存消息并按 Run 内序号排队为追加指引。 |
 | `waiting_input` | 保存补充信息和检查点，从检查点恢复。 |
 | `waiting_clarification` | 保存澄清信息和检查点，从检查点恢复。 |

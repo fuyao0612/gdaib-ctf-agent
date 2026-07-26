@@ -15,7 +15,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 
-from yuwang.agent.components import AgentComponents, default_components
+from yuwang.agent.components import AgentComponents, default_components, estimate_tokens
 from yuwang.agent.finalization import AgentFinalizer
 from yuwang.agent.nodes import WorkflowNodes
 from yuwang.agent.progress import action_fingerprint, observation_digest, track_plan_progress
@@ -229,6 +229,25 @@ class AgentEngine:
         result = self.context_builder.build(state, self.profile, purpose)
         state.context_tokens = result.estimated_tokens
         state.observation_chars = result.observation_chars
+        state.context_window_tokens = result.context_window_tokens
+        state.context_input_budget = result.input_token_budget
+        if result.compacted and result.summary_digest != state.context_summary_digest:
+            state.context_compressions += 1
+            state.context_summary_digest = result.summary_digest
+            self.events.emit(
+                state.run_id,
+                EventType.CONTEXT_COMPACTED,
+                "上下文已按 Token 占用比例压缩",
+                {
+                    "before_tokens": result.before_tokens,
+                    "after_tokens": result.estimated_tokens,
+                    "summary_version": result.summary_version,
+                    "reason": result.compaction_reason,
+                    "duration_ms": result.compaction_duration_ms,
+                    "context_window_tokens": result.context_window_tokens,
+                    "input_token_budget": result.input_token_budget,
+                },
+            )
         if result.truncated:
             state.context_truncations += 1
             self.events.emit(
@@ -352,7 +371,7 @@ class AgentEngine:
             remaining_requests,
         )
         prompt = self._context(state, purpose)
-        estimated_input_tokens = max(1, len(prompt) // 4)
+        estimated_input_tokens = max(1, estimate_tokens(prompt))
         started = time.perf_counter()
         try:
             result = await asyncio.wait_for(

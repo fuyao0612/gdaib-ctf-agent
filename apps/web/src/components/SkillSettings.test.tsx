@@ -92,6 +92,6 @@ describe("SkillSettings", () => {
     expect(remove).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
     await waitFor(() => expect(remove).toHaveBeenCalledWith("csrf-test", "skill-1"));
-    expect(onNotice).toHaveBeenCalledWith("Skill 已删除，引用它的对话已取消选择");
+    expect(onNotice).toHaveBeenCalledWith("Skill 已删除，引用它的任务已取消选择");
   });
 });

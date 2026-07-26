@@ -81,6 +81,10 @@ class AgentStateModel(BaseModel):
     context_tokens: int = 0
     observation_chars: int = 0
     context_truncations: int = 0
+    context_window_tokens: int = 0
+    context_input_budget: int = 0
+    context_compressions: int = 0
+    context_summary_digest: str | None = None
     final_answer: str | None = None
     structured_output: dict[str, Any] | None = None
     tool_schemas: list[dict[str, Any]] = Field(default_factory=list)
@@ -136,6 +140,10 @@ class GraphState(TypedDict, total=False):
     context_tokens: int
     observation_chars: int
     context_truncations: int
+    context_window_tokens: int
+    context_input_budget: int
+    context_compressions: int
+    context_summary_digest: str | None
     final_answer: str | None
     structured_output: dict[str, Any] | None
     tool_schemas: list[dict[str, Any]]

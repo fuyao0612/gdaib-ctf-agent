@@ -73,7 +73,7 @@ describe("ToolSelector", () => {
       <ToolSelector tools={tools} mode="inherit" value={[]} disabled={false} onChange={onChange} />,
     );
 
-    fireEvent.change(screen.getByLabelText("本次对话工具范围"), {
+    fireEvent.change(screen.getByLabelText("本次任务工具范围"), {
       target: { value: "selected" },
     });
     expect(onChange).toHaveBeenCalledWith("selected", []);

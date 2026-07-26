@@ -30,7 +30,7 @@ from yuwang.domain.models import (
 )
 from yuwang.model_providers import OpenAICompatibleProvider
 from yuwang.policy import PolicyEngine
-from yuwang.settings import AgentProfileInput, AgentProfileVersion
+from yuwang.settings import AgentDefaults, AgentProfileInput, AgentProfileVersion
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolRegistry, ToolSpec
 from yuwang.tooling.adapters.function_calling import NativeToolSelection, ToolInvocation
@@ -906,8 +906,9 @@ async def test_context_truncation_event_explains_original_and_kept_counts(tmp_pa
         memory_policy={"enabled": True, "persist_important_facts": False, "max_facts": 10},
     )
     repository, engine = build_engine(tmp_path, "advisory", profile)
+    repository.save_agent_defaults(AgentDefaults(context_token_budget=32_768))
     thread = repository.save_thread(Thread(title="truncation"))
-    for content in ["first", "assistant before", "follow-up"]:
+    for content in ["first" + "中" * 15_000, "assistant before" + "中" * 15_000, "follow-up" + "中" * 15_000]:
         repository.save_message(
             Message(
                 thread_id=thread.id,
@@ -918,9 +919,14 @@ async def test_context_truncation_event_explains_original_and_kept_counts(tmp_pa
     run = repository.save_run(Run(thread_id=thread.id))
     await engine.run(run.id, TaskSpec(body="follow-up"))
     event = next(
-        item for item in repository.list_events(run.id) if item.type == EventType.CONTEXT_TRUNCATED
+        item for item in repository.list_events(run.id) if item.type == EventType.CONTEXT_COMPACTED
     )
-    assert event.payload["messages"] == {"original": 3, "kept": 1}
+    assert event.payload["before_tokens"] > event.payload["after_tokens"]
+    assert event.payload["reason"] in {
+        "threshold_75_percent",
+        "forced_90_percent",
+        "deterministic_safety_clip",
+    }
     summary = next(
         item for item in repository.list_memories(thread.id) if item.kind == "thread_summary"
     )

@@ -1,4 +1,4 @@
-/** 可搜索的对话导航，包含归档、重命名与删除意图入口。 */
+/** 可搜索的任务历史，包含归档、重命名与删除意图入口。 */
 import { useState } from "react";
 import type { Thread } from "../types";
 
@@ -11,7 +11,7 @@ interface Props {
   onDelete: (thread: Thread) => void;
 }
 
-/** 对话导航只处理筛选和用户意图，数据变更仍由工作台统一协调。 */
+/** 任务历史只处理筛选和用户意图，数据变更仍由工作台统一协调。 */
 export default function ThreadSidebar({
   threads,
   selectedId,
@@ -32,8 +32,8 @@ export default function ThreadSidebar({
     <>
       <input
         className="thread-search"
-        aria-label="搜索对话"
-        placeholder="搜索对话…"
+        aria-label="搜索任务"
+        placeholder="搜索任务…"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />
@@ -45,7 +45,7 @@ export default function ThreadSidebar({
         />
         显示已归档
       </label>
-      <nav className="thread-list" aria-label="历史对话">
+      <nav className="thread-list" aria-label="任务历史">
         {visible.map((thread) => (
           <div
             key={thread.id}
@@ -83,7 +83,7 @@ export default function ThreadSidebar({
         ))}
         {visible.length === 0 && (
           <p className="thread-empty">
-            {query ? "没有匹配的对话。" : "暂无对话，点击上方按钮创建。"}
+            {query ? "没有匹配的任务。" : "暂无任务，点击上方按钮创建。"}
           </p>
         )}
       </nav>

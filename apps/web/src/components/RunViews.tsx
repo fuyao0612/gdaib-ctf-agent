@@ -76,8 +76,11 @@ interface ConversationProps {
   audit: RunAudit | null;
   control: RunControl | null;
   busy: boolean;
-  chatDraft: string;
-  chatFailure: { message: string; retryable: boolean } | null;
+  taskFailure?: { message: string; retryable: boolean } | null;
+  /** @deprecated 旧测试契约；任务界面不会渲染自由回复草稿。 */
+  chatDraft?: string;
+  /** @deprecated 旧测试契约；任务界面不会渲染聊天失败状态。 */
+  chatFailure?: { message: string; retryable: boolean } | null;
   onEditPlan: (plan: import("../types").AgentPlan, version: number, reason: string) => void;
   onDecidePlan: (
     decision: "approve" | "reject",
@@ -96,8 +99,7 @@ export function ConversationView({
   audit,
   control,
   busy,
-  chatDraft,
-  chatFailure,
+  taskFailure,
   onEditPlan,
   onDecidePlan,
   onPause,
@@ -110,6 +112,11 @@ export function ConversationView({
   // Run 的 SSE 事件会频繁刷新视图。受控展开状态可避免原生 details 在重渲染时偶发收起，
   // 让暂停、继续和追加指引始终可操作。
   const [taskDetailsOpen, setTaskDetailsOpen] = useState(false);
+  const messageAuthor = (message: ThreadDetail["messages"][number]) => {
+    if (message.role === "user") return "你";
+    if (!message.model) return "历史模型未知";
+    return `${message.model}${message.model_is_fallback ? "（备用）" : ""}`;
+  };
 
   useLayoutEffect(() => {
     const element = scrollRef.current;
@@ -124,13 +131,13 @@ export function ConversationView({
       element.scrollTop = userScrollTopRef.current;
     }
     previousScrollHeightRef.current = element.scrollHeight;
-  }, [chatDraft, detail.messages.length, events.length]);
+  }, [detail.messages.length, events.length]);
 
   return (
     <section
       ref={scrollRef}
       className="conversation"
-      aria-label="对话时间线"
+      aria-label="任务时间线"
       data-testid="conversation-scroll"
       onScroll={(event) => {
         const element = event.currentTarget;
@@ -146,26 +153,27 @@ export function ConversationView({
           </span>
           <div>
             <div className="message-meta">
-              {message.role === "user" ? "你" : "助手"} ·{" "}
+              {messageAuthor(message)} ·{" "}
               {new Date(message.created_at).toLocaleTimeString()}
             </div>
             <p>{message.content}</p>
           </div>
         </div>
       ))}
-      {chatDraft && (
-        <div className="message assistant streaming" aria-live="polite">
+      {run && ["queued", "running"].includes(run.status) && (
+        <div className="message agent streaming" aria-live="polite" data-testid="active-model-label">
           <span className="avatar">智</span>
           <div>
-            <div className="message-meta">助手 · 正在回复</div>
-            <p>{chatDraft}<span className="typing-caret" aria-hidden="true" /></p>
+            <div className="message-meta">
+              {run.model ?? "历史模型未知"} · 正在运行
+            </div>
           </div>
         </div>
       )}
-      {chatFailure && (
+      {taskFailure && (
         <div className="timeline-error" role="alert">
-          <strong>回复未完成</strong>
-          <span>{chatFailure.message}</span>
+          <strong>任务请求未完成</strong>
+          <span>{taskFailure.message}</span>
         </div>
       )}
       {run && <RunProgress run={run} events={events} audit={audit} />}
@@ -293,11 +301,13 @@ export function InspectorPanel(props: InspectorProps) {
               {props.audit.limits.max_tokens ?? "-"}
             </dd>
             <dt>上下文</dt>
-            <dd>{props.audit.usage.context_tokens ?? 0} Token</dd>
+            <dd>{props.audit.usage.context_tokens ?? 0} / {props.audit.usage.context_input_budget ?? "-"} Token</dd>
+            <dt>有效窗口</dt>
+            <dd>{props.audit.usage.context_window_tokens ?? "-"} Token</dd>
             <dt>观察</dt>
             <dd>{props.audit.usage.observation_chars ?? 0} 字符</dd>
             <dt>裁剪</dt>
-            <dd>{props.audit.usage.context_truncations ?? 0} 次</dd>
+            <dd>{props.audit.usage.context_compressions ?? props.audit.usage.context_truncations ?? 0} 次</dd>
             <dt>开始</dt>
             <dd>{props.audit.history?.started_at ? new Date(props.audit.history.started_at).toLocaleString() : "尚未开始"}</dd>
             <dt>结束</dt>
@@ -348,7 +358,7 @@ export function InspectorPanel(props: InspectorProps) {
       )}
       {props.detail && (
         <section className="memory-panel">
-          <div className="section-label">对话记忆</div>
+          <div className="section-label">任务记忆</div>
           <div className="memory-controls">
             <button onClick={() => props.onToggleMemory(true)}>启用</button>
             <button onClick={() => props.onToggleMemory(false)}>停用</button>

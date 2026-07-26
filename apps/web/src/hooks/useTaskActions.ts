@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import { api } from "../api";
 import type { Artifact, Message, Run, ThreadDetail } from "../types";
 
-export interface ChatFailure {
+export interface TaskRequestFailure {
   message: string;
   retryable: boolean;
   requestId: string;
@@ -24,10 +24,9 @@ interface Options {
   onRunInteraction: (run: Run) => void;
 }
 
-export function useChatActions(options: Options) {
-  const [generating, setGenerating] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [failure, setFailure] = useState<ChatFailure | null>(null);
+export function useTaskActions(options: Options) {
+  const [submitting, setSubmitting] = useState(false);
+  const [failure, setFailure] = useState<TaskRequestFailure | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
   // fetch-SSE 的回调在 abort 后仍可能迟到。用会话和请求代次共同判定归属，
   // 让旧会话永远不能写入刚切换到的新会话。
@@ -58,7 +57,7 @@ export function useChatActions(options: Options) {
     });
   };
 
-  const execute = async (value: ChatFailure, retry: boolean): Promise<boolean> => {
+  const execute = async (value: TaskRequestFailure): Promise<boolean> => {
     // 同一输入框的每次提交都有独立 request_id；在上一次 SSE 尚未结束时拒绝
     // 本地的重复点击，避免把同一条指引并发发送两次。
     if (!options.detail || controllerRef.current) return false;
@@ -69,38 +68,22 @@ export function useChatActions(options: Options) {
       currentThreadIdRef.current === threadId;
     const controller = new AbortController();
     controllerRef.current = controller;
-    setGenerating(true);
-    setDraft("");
+    setSubmitting(true);
     setFailure(null);
     options.setError("");
     try {
-      let replyFailed = false;
       await api.message(
         threadId,
         {
           request_id: value.requestId,
           content: value.content,
           artifact_ids: value.artifactIds,
-          retry,
           provider_config_id: options.providerConfigId,
           authorized_targets: value.authorizedTargets,
         },
         controller.signal,
         (event) => {
           if (!isCurrentRequest()) return;
-          if (event.type === "reply_start")
-            appendMessage(event.data.user_message, threadId, requestVersion);
-          if (event.type === "text_delta")
-            setDraft((current) => current + event.data.text);
-          if (event.type === "reply_complete") {
-            appendMessage(event.data.message, threadId, requestVersion);
-            setDraft("");
-          }
-          if (event.type === "reply_failed") {
-            replyFailed = true;
-            setDraft("");
-            setFailure({ ...value, ...event.data, threadId });
-          }
           if (event.type === "execution_started") {
             appendMessage(event.data.user_message, threadId, requestVersion);
             options.onExecutionStarted(event.data.run);
@@ -127,22 +110,21 @@ export function useChatActions(options: Options) {
         current?.id === threadId ? latest : current,
       );
       await options.loadThreads();
-      return !replyFailed;
+      return true;
     } catch (cause) {
       if (!isCurrentRequest()) return false;
       const stopped = cause instanceof DOMException && cause.name === "AbortError";
-      setDraft("");
       setFailure({
         ...value,
         threadId,
-        message: stopped ? "已停止生成，可以重试这条消息。" : String(cause),
+        message: stopped ? "任务请求已取消，可以重试。" : String(cause),
         retryable: true,
       });
       if (!stopped) options.setError(String(cause));
       return false;
     } finally {
       if (controllerRef.current === controller) controllerRef.current = null;
-      if (isCurrentRequest()) setGenerating(false);
+      if (isCurrentRequest()) setSubmitting(false);
     }
   };
 
@@ -157,12 +139,11 @@ export function useChatActions(options: Options) {
         message: "",
         retryable: true,
       },
-      false,
     );
 
   const retry = () =>
     failure && failure.threadId === currentThreadIdRef.current
-      ? execute(failure, true)
+      ? execute(failure)
       : Promise.resolve(false);
   const cancelResponse = () => controllerRef.current?.abort();
   const stopRun = () => {
@@ -186,21 +167,18 @@ export function useChatActions(options: Options) {
         message: "",
         retryable: false,
       },
-      false,
     );
   };
   const reset = () => {
     requestVersionRef.current += 1;
     cancelResponse();
     controllerRef.current = null;
-    setGenerating(false);
-    setDraft("");
+    setSubmitting(false);
     setFailure(null);
   };
 
   return {
-    generating,
-    draft,
+    submitting,
     failure,
     send,
     retry,

@@ -196,6 +196,25 @@ textarea:disabled {
   flex-direction: column;
   gap: 3px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-color: #bcc5d0 #e8ecf1;
+  scrollbar-width: thin;
+}
+
+.thread-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.thread-list::-webkit-scrollbar-track {
+  background: #e8ecf1;
+  border-radius: 8px;
+}
+
+.thread-list::-webkit-scrollbar-thumb {
+  border: 3px solid #e8ecf1;
+  border-radius: 8px;
+  background: #aeb9c6;
 }
 
 .thread-item {

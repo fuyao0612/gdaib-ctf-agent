@@ -73,6 +73,8 @@ class SQLiteRepository(
                 CREATE TABLE IF NOT EXISTS run_control_requests(run_id TEXT NOT NULL, request_id TEXT NOT NULL, action TEXT NOT NULL, payload_hash TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(run_id,request_id));
                 CREATE TABLE IF NOT EXISTS run_guidance(run_id TEXT NOT NULL, sequence INTEGER NOT NULL, request_id TEXT NOT NULL, data TEXT NOT NULL, consumed_at TEXT, created_at TEXT NOT NULL, PRIMARY KEY(run_id,sequence), UNIQUE(run_id,request_id));
                 CREATE TABLE IF NOT EXISTS run_pause_requests(run_id TEXT PRIMARY KEY, request_id TEXT NOT NULL, requested_at TEXT NOT NULL, consumed_at TEXT);
+                -- v0.5 的普通聊天请求表仅为升级兼容保留；所有历史正文已在
+                -- messages 中，运行时不再读取或写入该表。
                 CREATE TABLE IF NOT EXISTS chat_requests(request_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, status TEXT NOT NULL, user_message_id TEXT NOT NULL, assistant_message_id TEXT, error TEXT, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS mcp_servers(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS evaluation_results(id TEXT PRIMARY KEY, case_id TEXT NOT NULL, category TEXT NOT NULL, difficulty TEXT NOT NULL, provider TEXT, model TEXT, status TEXT NOT NULL, run_id TEXT, finished_at TEXT NOT NULL, data TEXT NOT NULL);
@@ -110,10 +112,6 @@ class SQLiteRepository(
                     "UPDATE threads SET data=? WHERE id=?",
                     (json.dumps(data, ensure_ascii=False), row["id"]),
                 )
-            db.execute(
-                "UPDATE chat_requests SET status='failed',error=? WHERE status='running'",
-                ("服务重启中断生成，请重试",),
-            )
 
     def save_run(self, value: Run) -> Run:
         with self._lock, self.connect() as db:

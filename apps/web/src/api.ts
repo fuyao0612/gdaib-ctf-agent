@@ -1,7 +1,6 @@
 /** 浏览器 API 边界：统一凭据、CSRF、错误结构和 JSON 编解码。 */
 import type {
   AgentDefaults,
-  ChatDefaults,
   UnifiedMessageEvent,
   AgentProfile,
   AgentProfileInput,
@@ -99,7 +98,6 @@ export const api = {
       request_id: string;
       content: string;
       artifact_ids: string[];
-      retry: boolean;
       provider_config_id: string | null;
       authorized_targets: string[];
     },
@@ -119,7 +117,7 @@ export const api = {
     if (!response.ok) {
       const body = await response
         .json()
-        .catch(() => ({ error: { message: "聊天请求失败" } }));
+        .catch(() => ({ error: { message: "任务请求失败" } }));
       throw new Error(body.error?.message ?? `HTTP ${response.status}`);
     }
     if (!response.body) throw new Error("浏览器无法读取流式响应");
@@ -377,17 +375,6 @@ export const api = {
     }),
   saveAgentDefaults: (csrf: string, value: AgentDefaults) =>
     request<AgentDefaults>("/admin/settings/agent", {
-      method: "PUT",
-      headers: adminHeaders(csrf),
-      body: JSON.stringify(value),
-    }),
-  chatDefaults: (csrf: string) =>
-    request<ChatDefaults>("/admin/settings/chat", {
-      headers: adminHeaders(csrf),
-    }),
-  chatPreferences: () => request<ChatDefaults>("/settings/chat"),
-  saveChatDefaults: (csrf: string, value: ChatDefaults) =>
-    request<ChatDefaults>("/admin/settings/chat", {
       method: "PUT",
       headers: adminHeaders(csrf),
       body: JSON.stringify(value),

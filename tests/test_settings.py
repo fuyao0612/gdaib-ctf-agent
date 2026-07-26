@@ -15,7 +15,6 @@ from yuwang.settings import (
 )
 from yuwang.settings.models import (
     PROVIDER_PRESETS,
-    ChatDefaults,
     resolve_structured_mode,
     validate_provider_url,
 )
@@ -216,7 +215,7 @@ def test_deleting_non_default_provider_atomically_falls_back_referencing_threads
     assert b"delete-secret-key" not in (tmp_path / "settings.db").read_bytes()
 
 
-def test_provider_deletion_rejects_chat_profile_and_active_run_references(tmp_path):
+def test_provider_deletion_rejects_profile_and_active_run_references(tmp_path):
     repository = SQLiteRepository(tmp_path / "settings.db")
     service = SettingsService(repository, SecretCipher(Fernet.generate_key().decode()))
     service.create_provider(input_config(name="全局默认", api_key="default-secret-key"))
@@ -228,7 +227,6 @@ def test_provider_deletion_rejects_chat_profile_and_active_run_references(tmp_pa
             fallback_order=1,
         )
     )
-    service.save_chat_defaults(ChatDefaults(default_provider_id=selected.id))
     AgentProfileService(repository).create(
         AgentProfileInput(name="引用模型的任务配置", default_provider_id=selected.id)
     )
@@ -239,7 +237,6 @@ def test_provider_deletion_rejects_chat_profile_and_active_run_references(tmp_pa
 
     impact = service.provider_deletion_impact(selected.id)
     reasons = impact["blocking_reasons"]
-    assert any("默认聊天模型" in str(reason) for reason in reasons)
     assert any("Agent 配置" in str(reason) for reason in reasons)
     assert any("活动 Run" in str(reason) for reason in reasons)
     assert "referenced-secret-key" not in repr(impact)

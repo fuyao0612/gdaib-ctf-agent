@@ -8,7 +8,6 @@ from uuid import UUID
 from yuwang.domain.models import Run, Thread, utcnow
 from yuwang.settings.models import (
     AgentDefaults,
-    ChatDefaults,
     ProviderConfig,
     ProviderConfigInput,
     ProviderConfigView,
@@ -35,8 +34,6 @@ class SettingsRepository(Protocol):
     def list_agent_profiles(self) -> list[AgentProfileVersion]: ...
     def get_agent_defaults(self) -> AgentDefaults: ...
     def save_agent_defaults(self, value: AgentDefaults) -> None: ...
-    def get_chat_defaults(self) -> ChatDefaults: ...
-    def save_chat_defaults(self, value: ChatDefaults) -> None: ...
 
 
 class SettingsService:
@@ -125,9 +122,6 @@ class SettingsService:
         reasons: list[str] = []
         if current.is_default:
             reasons.append("该配置是全局默认 Provider，请先切换默认项")
-        chat_defaults = self.get_chat_defaults()
-        if chat_defaults.default_provider_id == provider_id:
-            reasons.append("该配置是默认聊天模型，请先在聊天设置中切换默认项")
         profiles = [
             profile.name
             for profile in self.repository.list_agent_profiles()
@@ -236,11 +230,4 @@ class SettingsService:
 
     def save_agent_defaults(self, value: AgentDefaults) -> AgentDefaults:
         self.repository.save_agent_defaults(value)
-        return value
-
-    def get_chat_defaults(self) -> ChatDefaults:
-        return self.repository.get_chat_defaults()
-
-    def save_chat_defaults(self, value: ChatDefaults) -> ChatDefaults:
-        self.repository.save_chat_defaults(value)
         return value

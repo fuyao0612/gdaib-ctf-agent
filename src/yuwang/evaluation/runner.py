@@ -27,7 +27,7 @@ from yuwang.domain.models import (
 )
 from yuwang.model_providers import ModelProvider, ProviderCallMetrics, ProviderError
 from yuwang.policy import PolicyEngine
-from yuwang.settings import AgentProfileInput, AgentProfileVersion, ProviderConfig
+from yuwang.settings import AgentDefaults, AgentProfileInput, AgentProfileVersion, ProviderConfig
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolRegistry, ToolSpec
 
@@ -119,8 +119,6 @@ class EvaluationRunner:
             return self._skipped(case, "评测用例已停用", attempt)
         if self.provider is None:
             return self._skipped(case, "未显式注入已配置的真实 Provider", attempt)
-        if case.expected_outcome == "chat":
-            return await self._run_chat_case(case, attempt=attempt)
         if case.expected_outcome == "fallback":
             return self._skipped(case, "当前运行器未注入可控故障条件，不能伪造 Provider 失败", attempt)
 
@@ -206,7 +204,7 @@ class EvaluationRunner:
                 provider_config_id=self.provider_config.id if self.provider_config else None,
             )
         )
-        defaults = self.repository.get_chat_defaults()
+        defaults = AgentDefaults()
         metrics: list[ProviderCallMetrics] = []
         responses: list[Message] = []
         try:
@@ -216,12 +214,12 @@ class EvaluationRunner:
                 )
                 prompt = build_chat_messages(
                     self.repository.list_messages(thread.id),
-                    recent_limit=defaults.recent_message_limit,
-                    token_limit=defaults.context_token_limit,
+                    recent_limit=30,
+                    token_limit=defaults.context_token_budget,
                 )
                 answer = await self.provider.generate_text(
                     prompt,
-                    system_prompt=defaults.system_prompt,
+                    system_prompt="你是一个可靠、简洁的中文 Agent。",
                     timeout=self.provider_config.timeout_seconds if self.provider_config else None,
                 )
                 assistant = self.repository.save_message(

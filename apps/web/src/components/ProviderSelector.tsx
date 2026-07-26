@@ -24,7 +24,7 @@ export default function ProviderSelector({ providers, value, disabled, onChange 
     <label className="provider-selector">
       <span>模型</span>
       <select
-        aria-label="当前对话模型"
+        aria-label="当前任务模型"
         value={value ?? ""}
         disabled={disabled || !availableProviders.length}
         onChange={(event) => onChange(event.target.value)}

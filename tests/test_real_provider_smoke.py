@@ -15,7 +15,6 @@ import pytest
 from cryptography.fernet import Fernet
 
 from yuwang.agent import AgentEngine
-from yuwang.dispatch import classify_new_message
 from yuwang.domain.models import Run, RunStatus, TaskSpec, Thread
 from yuwang.model_providers import OpenAICompatibleProvider
 from yuwang.policy import PolicyEngine
@@ -136,12 +135,6 @@ async def test_real_provider_compatibility_when_explicitly_enabled(
         system_prompt="你是简洁的技术助手。",
     )
     assert answer.strip()
-    intent = await classify_new_message(
-        "请解释持续集成，不要执行任务。",
-        has_attachments=False,
-        recent_messages=[],
-    )
-    assert intent.kind == "chat"
     chunks = [
         chunk
         async for chunk in provider.stream_text(

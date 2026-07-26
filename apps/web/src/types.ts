@@ -1,5 +1,6 @@
 /** 与后端公开 JSON 契约一一对应的工作台类型。 */
 export type Mode = "normal" | "competition";
+/** 历史数据兼容字段；新建任务不再选择交互模式。 */
 export type InteractionMode = "chat" | "agent";
 export type PlanMode = "auto" | "approval";
 export type SettingsMode = "beginner" | "advanced";
@@ -82,7 +83,7 @@ export interface Thread {
   id: string;
   title: string;
   mode: Mode;
-  interaction_mode: InteractionMode;
+  interaction_mode?: InteractionMode;
   provider_config_id: string | null;
   provider_fallback_notice: string | null;
   skill_ids?: string[];
@@ -100,6 +101,10 @@ export interface Message {
   role: "user" | "agent" | "assistant" | "system";
   content: string;
   artifact_ids: string[];
+  run_id?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  model_is_fallback?: boolean;
   created_at: string;
 }
 export interface Run {
@@ -107,6 +112,7 @@ export interface Run {
   thread_id: string;
   status: RunStatus;
   provider: string;
+  model?: string | null;
   agent_profile_id: string | null;
   agent_profile_version: number | null;
   plan_mode: PlanMode;
@@ -224,6 +230,7 @@ export interface ProviderConfig {
   fallback_order: number | null;
   timeout_seconds: number;
   max_retries: number;
+  context_window_tokens?: number | null;
   structured_mode: StructuredMode;
   tool_call_mode: ToolCallMode;
   input_price_per_million: number;
@@ -249,6 +256,7 @@ export interface ProviderConfigInput {
   fallback_order: number | null;
   timeout_seconds: number;
   max_retries: number;
+  context_window_tokens?: number | null;
   structured_mode: StructuredMode;
   tool_call_mode: ToolCallMode;
   input_price_per_million: number;
@@ -296,25 +304,7 @@ export interface AgentDefaults {
   context_token_budget: number;
   observation_char_budget: number;
 }
-export interface ChatDefaults {
-  default_provider_id: string | null;
-  default_mode: InteractionMode;
-  system_prompt: string;
-  stream_enabled: boolean;
-  recent_message_limit: number;
-  context_token_limit: number;
-  attachment_char_limit: number;
-  sidebar_expanded: boolean;
-  audit_expanded: boolean;
-  theme: "light";
-}
-export type ChatEvent =
-  | { type: "reply_start"; data: { request_id: string; user_message: Message } }
-  | { type: "text_delta"; data: { text: string } }
-  | { type: "reply_complete"; data: { message: Message } }
-  | { type: "reply_failed"; data: { message: string; retryable: boolean } };
 export type UnifiedMessageEvent =
-  | ChatEvent
   | { type: "execution_started"; data: { run: Run; user_message: Message } }
   | {
       type: "execution_stopped";
