@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -181,6 +182,54 @@ async def test_encoding_and_flag_candidate_are_artifact_bound(tmp_path: Path) ->
     assert "尚未经过赛题平台验证" in flag.output["message"]
     assert not arbitrary_path.success
     assert arbitrary_path.error and arbitrary_path.error.code == "invalid_input"
+
+
+@pytest.mark.asyncio
+async def test_encoding_decode_accepts_bounded_inline_text_and_preserves_artifact_boundary(
+    tmp_path: Path,
+) -> None:
+    repository, _, thread, artifact, run, executor = setup_tool_context(tmp_path, b"placeholder")
+
+    decoded = await invoke(
+        executor,
+        run,
+        "encoding_decode",
+        {"text": "SGVsbG8=", "encoding": "base64"},
+    )
+    neither = await invoke(executor, run, "encoding_decode", {"encoding": "base64"})
+    both = await invoke(
+        executor,
+        run,
+        "encoding_decode",
+        {"artifact_id": str(artifact.id), "text": "SGVsbG8=", "encoding": "base64"},
+    )
+    pointer = await invoke(
+        executor,
+        run,
+        "encoding_decode",
+        {"text": "SGVsbG8=", "json_pointer": "/value"},
+    )
+
+    assert decoded.success
+    assert decoded.output["candidates"] == [
+        {"value": "Hello", "preview": "Hello", "confidence": 0.96, "decode_chain": ["base64"]}
+    ]
+    assert not neither.success and neither.error and neither.error.code == "invalid_input"
+    assert not both.success and both.error and both.error.code == "invalid_input"
+    assert not pointer.success and pointer.error and pointer.error.code == "invalid_input"
+    assert repository.list_artifacts(thread.id) == [artifact]
+
+    long_text = base64.b64encode(b"x" * 2_001).decode()
+    long_result = await invoke(
+        executor,
+        run,
+        "encoding_decode",
+        {"text": long_text, "encoding": "base64"},
+    )
+    assert long_result.success
+    created = repository.get_artifact(UUID(long_result.output["artifact_ids"][0]))
+    assert created and created.thread_id == thread.id and created.run_id == run.id
+    assert created.kind == "decoded_text" and created.size == 2_001
 
 
 @pytest.mark.asyncio

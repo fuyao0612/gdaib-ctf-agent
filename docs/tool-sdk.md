@@ -73,7 +73,7 @@ class CharacterCountTool(ToolPlugin[CountInput, CountOutput]):
 
 ## Artifact、进度、取消与超时
 
-CTF 文件工具只接收 `artifact_id`，通过 `ArtifactAccess` 在当前 Run 和 Thread 范围内读取。不要接收宿主机路径，也不要返回或伪造 `storage_ref`。派生文件使用 `ArtifactAccess.create`，由服务端生成安全引用和 SHA-256。
+CTF 文件工具只接收 `artifact_id`，通过 `ArtifactAccess` 在当前 Run 和 Thread 范围内读取。不要接收宿主机路径，也不要返回或伪造 `storage_ref`。纯文本 `encoding_decode` 是例外：它可接收不超过 12,000 字符的当前消息文本，且与 `artifact_id` 严格二选一；长结果必须通过 `ArtifactAccess.create_for_run` 写入当前 Run。派生文件使用 `ArtifactAccess.create`，由服务端生成安全引用和 SHA-256。
 
 长任务在循环边界主动检查取消；收到 `asyncio.CancelledError` 时直接重新抛出。工具可调用 `await self.report_progress(50, "正在解析")` 上报 0 至 100 的进度。Agent 会把它持久化为 `tool_progress` 事件；未提供观察者的直接测试调用会安全忽略进度。
 

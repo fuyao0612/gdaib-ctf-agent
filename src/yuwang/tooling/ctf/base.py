@@ -42,6 +42,7 @@ def ctf_spec(
     input_schema: dict[str, object],
     output_schema: dict[str, object],
     artifact_types: list[str] | None = None,
+    allowed_target_types: list[str] | None = None,
 ) -> ToolSpec:
     return ToolSpec(
         namespace="ctf",
@@ -57,7 +58,7 @@ def ctf_spec(
         risk="low",
         permissions=permissions,
         requires_network=False,
-        allowed_target_types=["artifact"],
+        allowed_target_types=allowed_target_types or ["artifact"],
         timeout_seconds=timeout_seconds,
         error_codes=error_codes,
         idempotent=True,

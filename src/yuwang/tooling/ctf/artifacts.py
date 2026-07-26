@@ -56,11 +56,57 @@ class ArtifactAccess:
     ) -> Artifact:
         """生成派生 Artifact；文件名只保留基名，存储引用由服务端生成。"""
 
+        return self._create(
+            parent.thread_id,
+            filename=filename,
+            content=content,
+            kind=kind,
+            mime_type=mime_type,
+            run_id=run_id or parent.run_id,
+        )
+
+    def create_for_run(
+        self,
+        request: ToolCallRequest | None,
+        *,
+        filename: str,
+        content: bytes,
+        kind: str,
+        mime_type: str | None = None,
+    ) -> Artifact:
+        """为当前 Run 的受限行内输入保存派生结果，不接受外部路径或 Thread ID。"""
+
+        if not request or not request.run_id:
+            raise ValueError("CTF 工具必须绑定当前 Run 才能创建 Artifact")
+        run = self.repository.get_run(request.run_id)
+        if not run:
+            raise ValueError("运行不存在，不能创建 Artifact")
+        return self._create(
+            run.thread_id,
+            filename=filename,
+            content=content,
+            kind=kind,
+            mime_type=mime_type,
+            run_id=run.id,
+        )
+
+    def _create(
+        self,
+        thread_id: UUID,
+        *,
+        filename: str,
+        content: bytes,
+        kind: str,
+        mime_type: str | None,
+        run_id: UUID | None,
+    ) -> Artifact:
+        """统一生成不透明存储引用，调用方不能影响实际落盘路径。"""
+
         safe_name = Path(filename).name
         if safe_name in {"", ".", ".."}:
             raise ValueError("派生 Artifact 文件名无效")
         artifact_id = uuid4()
-        storage_ref = f"{parent.thread_id}/{artifact_id}.blob"
+        storage_ref = f"{thread_id}/{artifact_id}.blob"
         destination = (self.root / storage_ref).resolve()
         if self.root not in destination.parents:
             raise ValueError("派生 Artifact 存储路径不安全")
@@ -69,8 +115,8 @@ class ArtifactAccess:
         return self.repository.save_artifact(
             Artifact(
                 id=artifact_id,
-                thread_id=parent.thread_id,
-                run_id=run_id or parent.run_id,
+                thread_id=thread_id,
+                run_id=run_id,
                 filename=safe_name,
                 kind=kind,
                 sha256=hashlib.sha256(content).hexdigest(),

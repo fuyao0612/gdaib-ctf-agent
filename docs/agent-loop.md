@@ -34,7 +34,7 @@ flowchart LR
 实际节点：`ingest`、`normalize_task`。
 
 - `apps/api/routes/messages.py` 先处理停止、运行中指引、等待补充和等待澄清；只有没有活动
-  Run 时才判断消息是否需要受控执行。
+  Run 时才用保守的确定性规则判断明确执行、模糊请求或自由回复，不额外调用模型。
 - `apps/api/run_interactions.py` 负责补充、澄清和追加指引的请求 ID 幂等、时间线保存、附件
   归属校验与检查点恢复。`apps/api/routes/runs.py` 中的同类接口复用这一用例以保持兼容。
 - `apps/api/context.py` 构造不可变 TaskSpec，保存 Provider/Profile 快照并调度后台任务。

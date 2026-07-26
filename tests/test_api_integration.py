@@ -436,18 +436,21 @@ def test_unified_message_entry_chooses_free_text_or_controlled_run(
             f"/api/v1/threads/{thread['id']}/message",
             json={
                 "request_id": str(uuid4()),
-                "content": "完成这道授权 CTF 题，并验证并报告结果",
-                "authorized_targets": ["http://127.0.0.1:8088/"],
+                "content": (
+                    "请执行任务：使用低风险 encoding_decode 工具解码 Base64 字符串 "
+                    "SGVsbG8=，仅处理该输入并报告结果。"
+                ),
             },
         )
         assert task.status_code == 200
+        assert task.headers["content-type"].startswith("text/event-stream")
         assert "event: execution_started" in task.text
         detail = client.get(f"/api/v1/threads/{thread['id']}").json()
         assert len(detail["runs"]) == 1
         assert detail["messages"][-1]["role"] == "user"
         task_spec = app.state.repository.get_run_task(UUID(detail["runs"][0]["id"]))
         assert task_spec and task_spec.verification_rules == []
-        assert task_spec.authorized_targets == ["http://127.0.0.1:8088/"]
+        assert task_spec.authorized_targets == []
 
 
 def test_semantic_intent_handles_natural_negated_ambiguous_and_contextual_messages(

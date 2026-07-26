@@ -127,7 +127,8 @@ async def test_real_provider_compatibility_when_explicitly_enabled(
 
     provider = _provider_from_saved_config(service, provider_id)
 
-    # 连接测试、普通聊天、严格意图判断和流式输出必须都经过正式客户端。
+    # 连接测试、普通聊天和流式输出必须都经过正式客户端。新消息分派是确定性
+    # 规则，不应额外消耗一次真实模型调用。
     connection = await provider.test_connection()
     assert connection.request_count >= 1
     answer = await provider.generate_text(
@@ -136,7 +137,6 @@ async def test_real_provider_compatibility_when_explicitly_enabled(
     )
     assert answer.strip()
     intent = await classify_new_message(
-        provider,
         "请解释持续集成，不要执行任务。",
         has_attachments=False,
         recent_messages=[],
