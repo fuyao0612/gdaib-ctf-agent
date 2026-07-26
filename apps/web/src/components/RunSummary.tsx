@@ -106,7 +106,7 @@ export function RunProgress({ run, events, audit }: Omit<Props, "report" | "mess
   const current = phases.find((phase) =>
     ["active", "waiting", "interrupted"].includes(phase.state),
   );
-  const model = audit?.model_calls?.at(-1)?.model ?? "等待首次模型调用";
+  const model = audit?.model_calls?.at(-1)?.model ?? run.model ?? "等待首次模型调用";
   const latestKnownTime = Date.parse(
     events.at(-1)?.timestamp ?? run.started_at ?? run.created_at ?? "",
   );
@@ -117,6 +117,7 @@ export function RunProgress({ run, events, audit }: Omit<Props, "report" | "mess
         <div>
           <span className="pulse" />
           <strong>{current?.label ?? "五阶段已完成"}</strong>
+          <small data-testid="run-model">{model}</small>
         </div>
         <time>
           {elapsedSeconds(

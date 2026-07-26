@@ -127,6 +127,21 @@ export default function ProviderForm({
               />
             </label>
             <label>
+              模型上下文窗口（Token）
+              <input
+                type="number"
+                min="32768"
+                placeholder="未声明"
+                value={form.context_window_tokens ?? ""}
+                onChange={(event) =>
+                  onChange({
+                    ...form,
+                    context_window_tokens: event.target.value ? Number(event.target.value) : null,
+                  })
+                }
+              />
+            </label>
+            <label>
               输入价格/百万 Token
               <input
                 type="number"

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from yuwang.agent.state import AgentStateModel, GraphState
 from yuwang.domain.models import (
+    CallStatus,
     EventType,
     ImportantFacts,
     MemoryRecord,
@@ -78,11 +79,25 @@ class AgentFinalizer:
             },
         )
         engine.repository.save_report(run.id, markdown, data)
+        calls = engine.repository.list_model_calls(run.id)
+        actual_call = next(
+            (value for value in reversed(calls) if value.status == CallStatus.SUCCEEDED), None
+        )
+        if actual_call:
+            # Run 是刷新后的运行中展示和审计锚点。收尾时把实际成功调用写回，
+            # 防止备用 Provider 已接管但界面仍显示原始选择。
+            run.provider = actual_call.provider
+            run.model = actual_call.model
+            engine.repository.save_run(run)
         engine.repository.save_message(
             Message(
                 thread_id=run.thread_id,
-                role=MessageRole.ASSISTANT,
+                role=MessageRole.AGENT,
                 content=self.assistant_content(state),
+                run_id=run.id,
+                provider=actual_call.provider if actual_call else None,
+                model=actual_call.model if actual_call else None,
+                model_is_fallback=bool(actual_call and actual_call.provider != run.provider),
             )
         )
         completion_summary = {
