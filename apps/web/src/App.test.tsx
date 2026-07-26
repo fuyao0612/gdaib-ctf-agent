@@ -95,6 +95,39 @@ describe("App", () => {
     expect(await screen.findByText("测试任务")).toBeInTheDocument();
   });
 
+  it("先建立本机会话，再请求受保护的工作台数据", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      requests.push({ url, method });
+      if (url.endsWith("/setup/status"))
+        return Response.json({ configured: true, checks: {}, version: "0.5.0" });
+      if (url.endsWith("/admin/session") && method === "POST")
+        return Response.json({ csrf_token: "csrf-test", expires_at: 1_800_000_000 });
+      if (url.endsWith("/threads")) return Response.json([]);
+      if (url.endsWith("/settings/chat")) return Response.json(preferences);
+      if (url.endsWith("/providers") || url.endsWith("/skills") || url.endsWith("/tools"))
+        return Response.json([]);
+      return Response.json({});
+    });
+
+    render(<App />);
+    await screen.findByText("开始一段新对话");
+    await waitFor(() =>
+      expect(requests.some((request) => request.url.endsWith("/tools"))).toBe(true),
+    );
+
+    const sessionIndex = requests.findIndex(
+      (request) => request.url.endsWith("/admin/session") && request.method === "POST",
+    );
+    expect(sessionIndex).toBeGreaterThanOrEqual(0);
+    expect(requests.some((request) => request.url.endsWith("/admin/session") && request.method === "GET")).toBe(false);
+    for (const path of ["/threads", "/settings/chat", "/providers", "/skills", "/tools"]) {
+      expect(requests.findIndex((request) => request.url.endsWith(path))).toBeGreaterThan(sessionIndex);
+    }
+  });
+
   it("支持使用 Esc 关闭设置弹层", async () => {
     render(<App />);
     await screen.findByText("开始一段新对话");

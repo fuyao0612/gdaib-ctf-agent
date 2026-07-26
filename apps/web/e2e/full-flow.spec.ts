@@ -20,7 +20,13 @@ async function expectNoHorizontalOverflow(page: Page) {
 
 async function configure(page: Page) {
   await page.goto("/");
-  await expect(page.getByRole("dialog", { name: "设置中心" })).toBeVisible();
+  const settings = page.getByRole("dialog", { name: "设置中心" });
+  // 首次配置会自动打开设置中心；已配置环境现在会先建立正常的本机会话，
+  // 因而不会再依赖一次 401 来强制弹窗。后续 E2E 显式打开同一入口。
+  await expect(settings).toBeVisible({ timeout: 1_000 }).catch(() => undefined);
+  if (!(await settings.isVisible()))
+    await page.getByRole("button", { name: "设置中心" }).click();
+  await expect(settings).toBeVisible();
   await expect(page.locator(".settings-content")).toBeVisible();
 
   const providerSection = page.locator(".settings-content > section").first();
