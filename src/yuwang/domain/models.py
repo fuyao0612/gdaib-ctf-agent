@@ -83,6 +83,7 @@ class EventType(StrEnum):
     RUN_WAITING_INPUT = "run_waiting_input"
     INPUT_RECEIVED = "input_received"
     CONTEXT_TRUNCATED = "context_truncated"
+    CONTEXT_COMPACTED = "context_compacted"
     TASK_BRIEF_CREATED = "task_brief_created"
     CLARIFICATION_REQUESTED = "clarification_requested"
     CLARIFICATION_RECEIVED = "clarification_received"
@@ -117,7 +118,7 @@ class Thread(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     title: str = Field(min_length=1, max_length=160)
     mode: ThreadMode = ThreadMode.NORMAL
-    # 旧数据缺少该字段时继续按 Agent 任务恢复；新建会话由 API 显式默认成 chat。
+    # 历史记录可能包含 chat；新建记录始终使用 Agent 任务模式。
     interaction_mode: InteractionMode = InteractionMode.AGENT
     # 对话级模型选择独立于全局默认值。Run 启动时再把实际 Provider 固化为快照，
     # 因此用户切换这里的值绝不会改变已经运行中的任务。
@@ -151,6 +152,11 @@ class Message(DomainModel):
     role: MessageRole
     content: str = Field(min_length=1, max_length=100_000)
     artifact_ids: list[UUID] = Field(default_factory=list)
+    # 新 Agent 消息绑定不可变 Run 与真实模型记录；旧 SQLite JSON 没有这些字段时保持为空。
+    run_id: UUID | None = None
+    provider: str | None = Field(default=None, max_length=160)
+    model: str | None = Field(default=None, max_length=160)
+    model_is_fallback: bool = False
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -159,6 +165,7 @@ class Run(DomainModel):
     thread_id: UUID
     status: RunStatus = RunStatus.QUEUED
     provider: str = "unconfigured"
+    model: str | None = Field(default=None, max_length=160)
     provider_config_id: UUID | None = None
     agent_profile_id: UUID | None = None
     agent_profile_version: int | None = Field(default=None, ge=1)

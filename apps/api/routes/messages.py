@@ -3,23 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from apps.api.context import ApiContext
-from apps.api.routes.chat import prepare_chat_stream
 from apps.api.run_interactions import RunInteractionService
 from apps.api.schemas import MessageCreate, RunCreate, UnifiedMessageCreate
 from yuwang.chat import encode_chat_event
-from yuwang.dispatch import (
-    ActiveMessageRoute,
-    MessageIntent,
-    MessageIntentKind,
-    classify_new_message,
-    route_active_message,
-)
+from yuwang.dispatch import ActiveMessageRoute, route_active_message
 from yuwang.domain.models import ACTIVE_RUN_STATUSES
 
 
@@ -38,75 +32,6 @@ def _response(event_type: str, payload: dict[str, object]) -> StreamingResponse:
     )
 
 
-def _chat_response(
-    context: ApiContext, thread_id: UUID, body: UnifiedMessageCreate
-) -> StreamingResponse:
-    return StreamingResponse(
-        prepare_chat_stream(context, thread_id, body),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-def _clarification_response(
-    context: ApiContext,
-    thread_id: UUID,
-    body: UnifiedMessageCreate,
-    question: str,
-) -> StreamingResponse:
-    """把模型的澄清问题作为普通对话持久化，既可刷新恢复也不会误启动 Run。"""
-
-    try:
-        user_message, existing = context.repository.begin_chat_request(
-            thread_id,
-            body.request_id,
-            body.content,
-            body.artifact_ids,
-            body.retry,
-        )
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    assistant = existing or context.repository.complete_chat_request(
-        body.request_id, thread_id, question
-    )
-
-    async def events() -> AsyncIterator[str]:
-        yield encode_chat_event(
-            "reply_start",
-            {
-                "request_id": str(body.request_id),
-                "user_message": user_message.model_dump(mode="json"),
-            },
-        )
-        yield encode_chat_event("text_delta", {"text": assistant.content})
-        yield encode_chat_event("reply_complete", {"message": assistant.model_dump(mode="json")})
-
-    return StreamingResponse(
-        events(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-async def _classify_new_message(
-    context: ApiContext,
-    thread_id: UUID,
-    body: UnifiedMessageCreate,
-) -> MessageIntent:
-    """新消息分派不调用 Provider；显式任务才会创建进入 Agent 循环的 Run。"""
-
-    context.validate_user_message_artifacts(thread_id, body.artifact_ids)
-    recent_messages = [
-        {"role": str(message.role), "content": message.content[:1000]}
-        for message in context.repository.list_messages(thread_id)[-6:]
-    ]
-    return await classify_new_message(
-        body.content,
-        has_attachments=bool(body.artifact_ids),
-        recent_messages=recent_messages,
-    )
-
-
 def _replay_existing_request(
     context: ApiContext,
     interactions: RunInteractionService,
@@ -121,12 +46,6 @@ def _replay_existing_request(
     """
 
     repository = context.repository
-    try:
-        if repository.has_chat_request(thread_id, body.request_id):
-            return _chat_response(context, thread_id, body)
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-
     runs = repository.list_runs(thread_id)
     for run in reversed(runs):
         if run.stop_request_id == body.request_id:
@@ -213,20 +132,12 @@ def create_message_router(context: ApiContext) -> APIRouter:
             if run.status in ACTIVE_RUN_STATUSES
         ]
         run = active[-1] if active else None
-        intent: MessageIntent | None = None
-        decision: ActiveMessageRoute | MessageIntentKind
+        decision: ActiveMessageRoute | Literal["run"]
         if run:
             decision = route_active_message(body.content, run.status)
         else:
-            intent = await _classify_new_message(context, thread_id, body)
-            decision = intent.kind
-        if decision == "chat":
-            return _chat_response(context, thread_id, body)
-        if decision == "clarify":
-            question = intent.clarification_question if intent else None
-            if not question:
-                return _chat_response(context, thread_id, body)
-            return _clarification_response(context, thread_id, body, question)
+            context.validate_user_message_artifacts(thread_id, body.artifact_ids)
+            decision = "run"
         if decision == "stop":
             user_message = (
                 context.save_user_message(

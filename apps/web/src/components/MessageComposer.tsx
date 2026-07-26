@@ -11,8 +11,12 @@ interface Props {
   providers: ProviderConfig[];
   providerConfigId: string | null;
   uploading: boolean;
-  chatGenerating: boolean;
-  chatCanRetry: boolean;
+  taskSubmitting?: boolean;
+  taskCanRetry?: boolean;
+  /** @deprecated 仅兼容旧组件测试，运行时不再具有聊天语义。 */
+  chatGenerating?: boolean;
+  /** @deprecated 仅兼容旧组件测试，运行时不再具有聊天语义。 */
+  chatCanRetry?: boolean;
   onMessageChange: (value: string) => void;
   onAuthorizedTargetChange: (value: string) => void;
   onProviderChange: (providerId: string) => void;
@@ -20,7 +24,9 @@ interface Props {
   onSend: () => void;
   onStop: () => void;
   onRetry: () => void;
-  onChatRetry: () => void;
+  onTaskRetry?: () => void;
+  /** @deprecated 仅兼容旧组件测试，运行时不再具有聊天语义。 */
+  onChatRetry?: () => void;
   children?: ReactNode;
 }
 
@@ -30,7 +36,7 @@ function inputCopy(run: Run | null) {
     case "running":
       return {
         note: "任务仍在运行：这条消息会作为追加指引按顺序应用。",
-        placeholder: "补充约束、纠偏信息或当前对话的附件；不会扩大原授权范围",
+        placeholder: "补充约束、纠偏信息或当前任务的附件；不会扩大原授权范围",
         send: "追加指引",
       };
     case "waiting_input":
@@ -59,19 +65,22 @@ function inputCopy(run: Run | null) {
       };
     default:
       return {
-        note: "发送消息，系统会自动选择直接回复或受控执行。",
-        placeholder: "给御网智元发送消息…",
+        note: "提交任务后，Agent 会自主选择计划、工具与验证。",
+        placeholder: "交给御网智元处理的任务…",
         send: "发送",
       };
   }
 }
 
 export default function MessageComposer(props: Props) {
+  const taskSubmitting = props.taskSubmitting ?? props.chatGenerating ?? false;
+  const taskCanRetry = props.taskCanRetry ?? props.chatCanRetry ?? false;
+  const onTaskRetry = props.onTaskRetry ?? props.onChatRetry ?? (() => undefined);
   const copy = inputCopy(props.activeRun);
   // 运行控制、计划编辑等操作不应禁用这里的主输入框。只有当前消息请求或附件
   // 尚未上传完成时才暂时不能提交，用户仍可继续编辑下一条内容。
   const sendDisabled =
-    props.uploading || props.chatGenerating || !props.message.trim();
+    props.uploading || taskSubmitting || !props.message.trim();
   const taskIsActive = Boolean(props.activeRun && [
     "queued",
     "running",
@@ -82,7 +91,7 @@ export default function MessageComposer(props: Props) {
   ].includes(props.activeRun.status));
   const stopPending = Boolean(taskIsActive && props.activeRun?.stop_requested);
   const taskCanStop = taskIsActive && !stopPending;
-  const canStop = props.chatGenerating || taskIsActive;
+  const canStop = taskSubmitting || taskIsActive;
 
   return (
     <footer className="composer">
@@ -111,7 +120,7 @@ export default function MessageComposer(props: Props) {
           type="url"
           value={props.authorizedTarget}
           onChange={(event) => props.onAuthorizedTargetChange(event.target.value)}
-          disabled={props.uploading || props.chatGenerating}
+          disabled={props.uploading || taskSubmitting}
           placeholder="本次运行授权目标（可选）"
         />
       )}
@@ -134,7 +143,7 @@ export default function MessageComposer(props: Props) {
             if (!sendDisabled) props.onSend();
           }
         }}
-        disabled={props.chatGenerating}
+        disabled={taskSubmitting}
         placeholder={copy.placeholder}
       />
       <div className="composer-actions">
@@ -144,7 +153,7 @@ export default function MessageComposer(props: Props) {
             aria-label="上传附件"
             type="file"
             accept=".txt,.json,.md,.log,.bin"
-            disabled={props.uploading || props.chatGenerating}
+            disabled={props.uploading || taskSubmitting}
             onChange={(event) => {
               props.onUpload(event.target.files?.[0]);
               // 允许用户在上传失败后重新选择同一个文件；待发送清单只在上传成功后更新。
@@ -154,10 +163,10 @@ export default function MessageComposer(props: Props) {
         </label>
         <span className="authorization">Enter 发送 · Shift+Enter 换行</span>
         <div className="run-actions">
-          {props.chatCanRetry && (
-            <button onClick={props.onChatRetry}>重试回复</button>
+          {taskCanRetry && (
+            <button onClick={onTaskRetry}>重试任务请求</button>
           )}
-          {!props.chatCanRetry && props.activeRun && ["failed", "stopped"].includes(props.activeRun.status) && (
+          {!taskCanRetry && props.activeRun && ["failed", "stopped"].includes(props.activeRun.status) && (
             <button onClick={props.onRetry}>重试</button>
           )}
           {canStop && (
@@ -174,7 +183,7 @@ export default function MessageComposer(props: Props) {
             </button>
           )}
           <button className="primary" disabled={sendDisabled} onClick={props.onSend}>
-            {props.uploading || props.chatGenerating ? "正在发送…" : copy.send}
+            {props.uploading || taskSubmitting ? "正在提交…" : copy.send}
           </button>
         </div>
       </div>

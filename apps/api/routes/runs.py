@@ -321,6 +321,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
         retried = Run(
             thread_id=thread.id,
             provider=previous.provider,
+            model=previous.model,
             provider_config_id=previous.provider_config_id,
             agent_profile_id=profile.profile_id,
             agent_profile_version=profile.version,
@@ -398,8 +399,11 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 "model_cost": state.get("model_cost", 0),
                 "elapsed_seconds": state.get("elapsed_seconds", 0),
                 "context_tokens": state.get("context_tokens", 0),
+                "context_window_tokens": state.get("context_window_tokens", 0),
+                "context_input_budget": state.get("context_input_budget", 0),
                 "observation_chars": state.get("observation_chars", 0),
                 "context_truncations": state.get("context_truncations", 0),
+                "context_compressions": state.get("context_compressions", 0),
             },
             "history": {
                 "model": model_calls[-1].model if model_calls else None,

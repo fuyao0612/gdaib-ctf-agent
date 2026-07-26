@@ -11,7 +11,7 @@ export default function SetupProgress({ authenticated, status }: Props) {
     { label: "管理员会话", ready: authenticated },
     { label: "Provider 已连接", ready: status?.checks.provider ?? false },
     { label: "默认 Agent 可用", ready: status?.checks.agent ?? false },
-    { label: "可以开始对话", ready: status?.configured ?? false },
+    { label: "可以开始任务", ready: status?.configured ?? false },
   ];
 
   return (
@@ -27,7 +27,7 @@ export default function SetupProgress({ authenticated, status }: Props) {
       </ol>
       <small>
         {status?.configured
-          ? "准备完成。关闭设置后即可创建对话。"
+          ? "准备完成。关闭设置后即可创建任务。"
           : "按顺序完成即可；所有状态均来自服务端真实配置。"}
       </small>
     </div>

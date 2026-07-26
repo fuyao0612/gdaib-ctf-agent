@@ -316,9 +316,13 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         open_local_session(reopened)
         detail = reopened.get(f"/api/v1/threads/{thread['id']}").json()
         assert detail["messages"] and detail["runs"] and detail["artifacts"]
-        assert detail["messages"][-1]["role"] == "assistant"
+        assert detail["messages"][-1]["role"] == "agent"
+        assert detail["messages"][-1]["run_id"] == run_id
+        assert detail["messages"][-1]["model"] == provider["model"]
+        assert detail["messages"][-1]["model_is_fallback"] is False
 
 
+@pytest.mark.skip(reason="普通聊天 API 已由纯任务入口替代")
 def test_plain_chat_is_natural_persistent_and_does_not_create_run(
     tmp_path, provider_server
 ):
@@ -409,6 +413,7 @@ def test_plain_chat_is_natural_persistent_and_does_not_create_run(
         assert restored["runs"] == []
 
 
+@pytest.mark.skip(reason="消息不再按语义分流到聊天通道")
 def test_unified_message_entry_chooses_free_text_or_controlled_run(
     tmp_path, provider_server
 ):
@@ -453,6 +458,7 @@ def test_unified_message_entry_chooses_free_text_or_controlled_run(
         assert task_spec.authorized_targets == []
 
 
+@pytest.mark.skip(reason="每条新消息均直接创建 Agent Run")
 def test_semantic_intent_handles_natural_negated_ambiguous_and_contextual_messages(
     tmp_path, provider_server
 ):
@@ -499,6 +505,7 @@ def test_semantic_intent_handles_natural_negated_ambiguous_and_contextual_messag
         assert "event: execution_started" in follow_up.text
 
 
+@pytest.mark.skip(reason="Provider 选择仅通过 Agent Run 验证")
 def test_thread_provider_choice_persists_for_chat_and_unified_run_snapshot(
     tmp_path, provider_server
 ):
@@ -666,6 +673,7 @@ def test_unified_run_keeps_its_own_origin_when_a_later_message_is_saved(
         assert task.origin_message_id == UUID(payload["request_id"])
 
 
+@pytest.mark.skip(reason="聊天重试协议已移除")
 def test_chat_failure_retry_is_idempotent_and_never_saves_partial_reply(
     tmp_path, provider_server
 ):
@@ -1518,3 +1526,33 @@ def test_service_lifespan_restores_enabled_mcp_tools_after_restart(tmp_path):
     with TestClient(restarted):
         restored = restarted.state.registry.get(f"mcp.{server.id}.echo")
         assert restored.spec.source == f"mcp:{server.id}"
+
+
+def test_every_new_message_starts_an_agent_run_and_chat_routes_are_removed(
+    tmp_path, provider_server
+):
+    app = configured_app(tmp_path)
+    app.state.registry.register(FakeEchoTool())
+    with TestClient(app) as client:
+        open_local_session(client)
+        provider = create_provider(client, provider_server)
+        for content in ("你好，请说明 SQLite 迁移的作用。", "如何复核发布清单？"):
+            thread = client.post("/api/v1/threads", json={"title": "纯任务入口"}).json()
+            response = client.post(
+                f"/api/v1/threads/{thread['id']}/message",
+                json={
+                    "request_id": str(uuid4()),
+                    "content": content,
+                    "provider_config_id": provider["id"],
+                },
+            )
+            assert response.status_code == 200
+            assert "event: execution_started" in response.text
+            detail = client.get(f"/api/v1/threads/{thread['id']}").json()
+            assert len(detail["runs"]) == 1
+            assert detail["runs"][0]["provider_config_id"] == provider["id"]
+            assert detail["messages"][0]["role"] == "user"
+
+        assert client.post(f"/api/v1/threads/{thread['id']}/chat", json={}).status_code == 404
+        assert client.get("/api/v1/settings/chat").status_code == 404
+        assert client.get("/api/v1/admin/settings/chat").status_code == 404

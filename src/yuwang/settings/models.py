@@ -103,6 +103,9 @@ class ProviderConfigInput(BaseModel):
     fallback_order: int | None = Field(default=None, ge=0, le=100)
     timeout_seconds: float = Field(default=60, ge=1, le=600)
     max_retries: int = Field(default=2, ge=0, le=8)
+    # 厂商或部署明确给出的模型上下文窗口。空值表示使用平台上限，不能据此
+    # 把用户设置抬高到未知模型能力之外。
+    context_window_tokens: int | None = Field(default=None, ge=32_768, le=2_000_000)
     input_price_per_million: float = Field(default=0, ge=0, le=1_000_000)
     output_price_per_million: float = Field(default=0, ge=0, le=1_000_000)
     structured_mode: StructuredMode = "auto"
@@ -136,6 +139,7 @@ class ProviderConfig(BaseModel):
     fallback_order: int | None
     timeout_seconds: float
     max_retries: int
+    context_window_tokens: int | None = Field(default=None, ge=32_768, le=2_000_000)
     input_price_per_million: float = 0
     output_price_per_million: float = 0
     structured_mode: StructuredMode = "auto"
@@ -162,6 +166,7 @@ class ProviderConfig(BaseModel):
             fallback_order=self.fallback_order,
             timeout_seconds=self.timeout_seconds,
             max_retries=self.max_retries,
+            context_window_tokens=self.context_window_tokens,
             input_price_per_million=self.input_price_per_million,
             output_price_per_million=self.output_price_per_million,
             structured_mode=self.structured_mode,
@@ -190,6 +195,7 @@ class ProviderConfigView(BaseModel):
     fallback_order: int | None
     timeout_seconds: float
     max_retries: int
+    context_window_tokens: int | None
     input_price_per_million: float
     output_price_per_million: float
     structured_mode: StructuredMode
@@ -209,24 +215,5 @@ class AgentDefaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
     budget: Budget = Field(default_factory=Budget)
     provider_retry_budget: int = Field(default=2, ge=0, le=10)
-    context_token_budget: int = Field(default=32000, ge=1024, le=2_000_000)
+    context_token_budget: int = Field(default=262_144, ge=32_768, le=2_000_000)
     observation_char_budget: int = Field(default=20000, ge=1000, le=1_000_000)
-
-
-class ChatDefaults(BaseModel):
-    """普通聊天偏好；不包含密钥，也不改变 AgentProfile 的执行语义。"""
-
-    model_config = ConfigDict(extra="forbid")
-    default_provider_id: UUID | None = None
-    default_mode: Literal["chat", "agent"] = "chat"
-    system_prompt: str = Field(
-        default="你是一个可靠、简洁的中文助手。直接回答用户问题，不展示隐藏思维链。",
-        max_length=20_000,
-    )
-    stream_enabled: bool = True
-    recent_message_limit: int = Field(default=30, ge=2, le=200)
-    context_token_limit: int = Field(default=32_000, ge=1024, le=2_000_000)
-    attachment_char_limit: int = Field(default=20_000, ge=1000, le=200_000)
-    sidebar_expanded: bool = True
-    audit_expanded: bool = False
-    theme: Literal["light"] = "light"

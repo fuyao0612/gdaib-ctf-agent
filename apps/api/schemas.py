@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field, field_validator
 
 from yuwang.domain.models import (
     AgentPlan,
-    InteractionMode,
     ThreadMode,
     ThreadToolSelectionMode,
     VerificationRule,
@@ -26,7 +25,6 @@ class ThreadCreate(BaseModel):
     mode: ThreadMode = ThreadMode.NORMAL
     agent_profile_id: UUID | None = None
     plan_mode: Literal["auto", "approval"] = "auto"
-    interaction_mode: InteractionMode = InteractionMode.CHAT
     provider_config_id: UUID | None = None
     skill_ids: list[UUID] = Field(default_factory=list, max_length=20)
     tool_selection_mode: ThreadToolSelectionMode = "inherit"
@@ -36,7 +34,6 @@ class ThreadCreate(BaseModel):
 class ThreadUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=160)
     archived: bool | None = None
-    interaction_mode: InteractionMode | None = None
     provider_config_id: UUID | None = None
     acknowledge_provider_fallback: bool = False
     skill_ids: list[UUID] | None = Field(default=None, max_length=20)
@@ -49,14 +46,11 @@ class MessageCreate(BaseModel):
     artifact_ids: list[UUID] = Field(default_factory=list)
 
 
-class ChatCreate(MessageCreate):
+class UnifiedMessageCreate(MessageCreate):
+    """工作台唯一的任务提交契约；每条新消息都会创建受控 Run。"""
+
     request_id: UUID
     provider_config_id: UUID | None = None
-    retry: bool = False
-
-
-class UnifiedMessageCreate(ChatCreate):
-    """工作台唯一的发送契约；是否创建 Run 由服务端判断。"""
 
     # 目标授权不能从自然语言任务中推断。聊天入口需要显式携带它，
     # 才能让受控 Run 与保留的 /turns 接口具有相同的安全语义。

@@ -1,7 +1,6 @@
 """按业务边界拆分的 FastAPI 路由。"""
 
 from .agent_profiles import create_agent_profile_router
-from .chat import create_chat_router
 from .evaluations import create_evaluation_router
 from .health import create_health_router
 from .mcp_servers import create_mcp_server_router
@@ -15,7 +14,6 @@ from .threads import create_thread_router
 
 __all__ = [
     "create_agent_profile_router",
-    "create_chat_router",
     "create_evaluation_router",
     "create_health_router",
     "create_message_router",

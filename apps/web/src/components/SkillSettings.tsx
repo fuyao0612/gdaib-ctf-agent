@@ -78,7 +78,7 @@ export default function SkillSettings(props: Props) {
       await api.deleteSkill(props.csrf, selected.id);
       await props.onRefresh();
       choose(null);
-      props.onNotice("Skill 已删除，引用它的对话已取消选择");
+      props.onNotice("Skill 已删除，引用它的任务已取消选择");
     } catch (cause) {
       props.onError(String(cause));
     } finally {

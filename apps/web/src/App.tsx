@@ -12,7 +12,7 @@ import {
   StatusBadge,
 } from "./components/RunViews";
 import ThreadSidebar from "./components/ThreadSidebar";
-import { useChatActions } from "./hooks/useChatActions";
+import { useTaskActions } from "./hooks/useTaskActions";
 import { useWorkbenchData } from "./hooks/useWorkbenchData";
 import { useRunControlActions } from "./hooks/useRunControlActions";
 import type {
@@ -37,7 +37,6 @@ export default function App() {
     audit,
     control,
     memories,
-    chatDefaults,
     setDetail,
     setEvents,
     setActiveRun,
@@ -45,7 +44,6 @@ export default function App() {
     setControl,
     setMemories,
     loadThreads,
-    refreshSettings,
     loadControl,
     selectThread,
     connect,
@@ -63,12 +61,9 @@ export default function App() {
   const [skills, setSkills] = useState<SkillDefinition[]>([]);
   const [tools, setTools] = useState<ToolSpec[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
-  const [newTitle, setNewTitle] = useState("新对话");
+  const [newTitle, setNewTitle] = useState("新任务");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  // 审计抽屉的默认值只服务于“新 Run 首次出现”。设置页的异步刷新不能
-  // 覆盖用户刚刚做出的打开或关闭选择，否则慢网络下会出现抽屉闪回的问题。
-  const inspectorDefaultRunRef = useRef<string | null>(null);
   const inspectorUserRunRef = useRef<string | null>(null);
   const [sidebarExpanded, setSidebarExpanded] = useState(
     () => window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false",
@@ -87,7 +82,7 @@ export default function App() {
     loadControl,
     connect,
   });
-  const chat = useChatActions({
+  const taskActions = useTaskActions({
     detail,
     providerConfigId: detail?.provider_config_id ?? null,
     setDetail,
@@ -223,22 +218,9 @@ export default function App() {
     );
   }, [sidebarExpanded]);
 
-  useEffect(() => {
-    if (!chatDefaults) return;
-    setSidebarExpanded(chatDefaults.sidebar_expanded);
-    if (
-      activeRunId &&
-      inspectorDefaultRunRef.current !== activeRunId &&
-      inspectorUserRunRef.current !== activeRunId
-    ) {
-      inspectorDefaultRunRef.current = activeRunId;
-      setInspectorOpen(chatDefaults.audit_expanded);
-    }
-  }, [activeRunId, chatDefaults]);
-
   async function createThread() {
     // 新 Thread 不能继承旧会话尚未完成的请求、草稿或上传响应。
-    chat.reset();
+    taskActions.reset();
     setMessage("");
     setAuthorizedTarget("");
     setPendingArtifacts([]);
@@ -284,7 +266,7 @@ export default function App() {
       .filter(Boolean);
     // 网络失败时保留文字和待发送附件，让用户能确认并重试；只有统一消息
     // 接口确认受理后才清空草稿，避免形成“附件好像上传/发送了”的错觉。
-    if (await chat.send(content, artifacts, authorizedTargets)) {
+    if (await taskActions.send(content, artifacts, authorizedTargets)) {
       setMessage("");
       setPendingArtifacts([]);
       setAuthorizedTarget("");
@@ -355,7 +337,7 @@ export default function App() {
   async function retryMessage() {
     // 首次发送失败时草稿会保留；同一 request_id 重试成功后必须同步清空，
     // 否则用户可能以为尚未发出而再次创建一条新请求。
-    if (await chat.retry()) {
+    if (await taskActions.retry()) {
       setMessage("");
       setPendingArtifacts([]);
     }
@@ -426,7 +408,7 @@ export default function App() {
   }
 
   async function renameThread(thread: Thread) {
-    const title = window.prompt("输入新的对话名称", thread.title)?.trim();
+    const title = window.prompt("输入新的任务名称", thread.title)?.trim();
     if (!title || title === thread.title) return;
     await api.updateThread(thread.id, { title });
     await loadThreads();
@@ -483,7 +465,7 @@ export default function App() {
           </button>
         </div>
         <button className="primary full" onClick={() => setCreateOpen(true)}>
-          ＋ 新建对话
+          ＋ 新建任务
         </button>
         <button
           className="settings-button full"
@@ -491,13 +473,13 @@ export default function App() {
         >
           ⚙ 设置中心
         </button>
-        <div className="section-label">历史对话</div>
+        <div className="section-label">任务历史</div>
         <ThreadSidebar
           threads={threads}
           selectedId={detail?.id}
           onSelect={(id) => {
             setError("");
-            chat.reset();
+            taskActions.reset();
             currentThreadIdRef.current = id;
             setMessage("");
             setPendingArtifacts([]);
@@ -529,11 +511,11 @@ export default function App() {
               </button>
             )}
             <div className="topbar-title" data-testid="thread-heading">
-              <span className="eyebrow">THREAD</span>
-              <h2>{detail?.title ?? "选择或创建一个对话"}</h2>
+              <span className="eyebrow">TASK</span>
+              <h2>{detail?.title ?? "选择或创建一个任务"}</h2>
               {detail && (
                 <small>
-                  {activeRun ? "正在执行受控任务" : "发送消息，系统会自动选择处理方式"}
+                  {activeRun ? "任务正在运行" : "提交任务后由 Agent 自主执行"}
                 </small>
               )}
             </div>
@@ -562,12 +544,12 @@ export default function App() {
         {!detail ? (
           <section className="empty">
             <div className="radar">⌁</div>
-            <h2>开始一段新对话</h2>
+            <h2>开始一个新任务</h2>
             <p>
-              直接发送消息。需要计划、工具和验证时，系统会自动开始受控执行。
+              创建任务后，由 Agent 决定计划、工具和验证步骤。
             </p>
             <button className="primary" onClick={() => setCreateOpen(true)}>
-              创建第一个对话
+              创建第一个任务
             </button>
           </section>
         ) : (
@@ -580,8 +562,7 @@ export default function App() {
               audit={audit}
               control={control}
               busy={busy}
-              chatDraft={chat.draft}
-              chatFailure={chat.failure}
+              taskFailure={taskActions.failure}
               onEditPlan={(plan, version, reason) =>
                 void editPlan(plan, version, reason)
               }
@@ -599,30 +580,30 @@ export default function App() {
               providers={providers}
               providerConfigId={detail.provider_config_id}
               uploading={uploading}
-              chatGenerating={chat.generating}
-              chatCanRetry={Boolean(chat.failure?.retryable)}
+              taskSubmitting={taskActions.submitting}
+              taskCanRetry={Boolean(taskActions.failure?.retryable)}
               onMessageChange={setMessage}
               onAuthorizedTargetChange={setAuthorizedTarget}
               onProviderChange={(providerId) => void selectProvider(providerId)}
               onUpload={(file) => void upload(file)}
               onSend={() => void send()}
               onStop={() =>
-                taskCanStop ? void chat.stopRun() : chat.cancelResponse()
+                taskCanStop ? void taskActions.stopRun() : taskActions.cancelResponse()
               }
               onRetry={() => void retry()}
-              onChatRetry={() => void retryMessage()}
+              onTaskRetry={() => void retryMessage()}
             >
               <SkillSelector
                 skills={skills}
                 value={detail.skill_ids ?? []}
-                disabled={uploading || chat.generating}
+                disabled={uploading || taskActions.submitting}
                 onChange={(skillIds) => void selectSkills(skillIds)}
               />
               <ToolSelector
                 tools={tools}
                 mode={detail.tool_selection_mode ?? "inherit"}
                 value={detail.tool_ids ?? []}
-                disabled={uploading || chat.generating}
+                disabled={uploading || taskActions.submitting}
                 onChange={(mode, toolIds) => void selectTools(mode, toolIds)}
               />
             </MessageComposer>
@@ -667,7 +648,6 @@ export default function App() {
           initialSetup={initialSetup}
           onClose={() => setSettingsOpen(false)}
           onChanged={async () => {
-            await refreshSettings();
             await refreshProviders();
             await refreshSkills();
             await refreshTools();

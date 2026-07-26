@@ -87,9 +87,9 @@ describe("App", () => {
 
   it("新建对话只要求名称，不展示模式选择", async () => {
     render(<App />);
-    await screen.findByText("开始一段新对话");
-    fireEvent.click(screen.getByText("创建第一个对话"));
-    expect(screen.getByLabelText("对话名称")).toBeInTheDocument();
+    await screen.findByText("开始一个新任务");
+    fireEvent.click(screen.getByText("创建第一个任务"));
+    expect(screen.getByLabelText("任务名称")).toBeInTheDocument();
     expect(screen.queryByLabelText("默认回复方式")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
     expect(await screen.findByText("测试任务")).toBeInTheDocument();
@@ -113,7 +113,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    await screen.findByText("开始一段新对话");
+    await screen.findByText("开始一个新任务");
     await waitFor(() =>
       expect(requests.some((request) => request.url.endsWith("/tools"))).toBe(true),
     );
@@ -123,14 +123,14 @@ describe("App", () => {
     );
     expect(sessionIndex).toBeGreaterThanOrEqual(0);
     expect(requests.some((request) => request.url.endsWith("/admin/session") && request.method === "GET")).toBe(false);
-    for (const path of ["/threads", "/settings/chat", "/providers", "/skills", "/tools"]) {
+    for (const path of ["/threads", "/providers", "/skills", "/tools"]) {
       expect(requests.findIndex((request) => request.url.endsWith(path))).toBeGreaterThan(sessionIndex);
     }
   });
 
   it("支持使用 Esc 关闭设置弹层", async () => {
     render(<App />);
-    await screen.findByText("开始一段新对话");
+    await screen.findByText("开始一个新任务");
     fireEvent.click(screen.getByRole("button", { name: /设置中心/ }));
     expect(screen.getByRole("dialog", { name: "设置中心" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
@@ -238,18 +238,12 @@ describe("App", () => {
       completion_mode: "advisory", validation_status: "pending", evidence_level: "none",
       attempt: 1, stop_requested: false, created_at: now, started_at: now, finished_at: null,
     };
-    let publicPreferenceRequests = 0;
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/setup/status")) return Response.json({ configured: true, checks: {}, version: "0.5.0" });
       if (url.endsWith("/admin/session")) return Response.json({ authenticated: true, csrf_token: "csrf-test" });
       if (url.endsWith("/providers") || url.endsWith("/agent-profiles")) return Response.json([]);
       if (url.endsWith("/admin/settings/agent")) return Response.json({});
-      if (url.endsWith("/admin/settings/chat")) return Response.json(preferences);
-      if (url.endsWith("/settings/chat")) {
-        publicPreferenceRequests += 1;
-        return Response.json(preferences);
-      }
       if (url.endsWith("/threads")) return Response.json([thread("t-inspector", "审计抽屉")]);
       if (url.endsWith("/threads/t-inspector/memories")) return Response.json([]);
       if (url.endsWith("/threads/t-inspector"))
@@ -268,9 +262,7 @@ describe("App", () => {
     expect(document.querySelector(".inspector.open")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /设置中心/ }));
-    const saveChat = await screen.findByRole("button", { name: "保存聊天设置" });
-    fireEvent.click(saveChat);
-    await waitFor(() => expect(publicPreferenceRequests).toBeGreaterThan(1));
+    await screen.findByRole("dialog", { name: "设置中心" });
     expect(document.querySelector(".inspector.open")).toBeInTheDocument();
   });
 
@@ -452,14 +444,13 @@ describe("App", () => {
     const input = await screen.findByLabelText("消息");
     fireEvent.change(input, { target: { value: "保留范围" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(await screen.findByRole("button", { name: "重试回复" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "重试任务请求" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "停止任务" })).toBeEnabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "重试回复" }));
+    fireEvent.click(screen.getByRole("button", { name: "重试任务请求" }));
     await waitFor(() => expect(requestBodies).toHaveLength(2));
     expect(requestBodies[1]).toMatchObject({
       request_id: requestBodies[0].request_id,
-      retry: true,
     });
     expect(await screen.findByText("保留范围")).toBeInTheDocument();
   });

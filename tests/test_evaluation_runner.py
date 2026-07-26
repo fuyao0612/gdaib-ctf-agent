@@ -99,6 +99,7 @@ async def test_evaluation_runner_uses_agent_events_and_tool_snapshots(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="评测普通聊天路径已由 Agent Run 统一替代")
 async def test_evaluation_runner_executes_chat_and_persists_provider_metrics(tmp_path):
     provider = ChatMetricsProvider()
     config = ProviderConfig(

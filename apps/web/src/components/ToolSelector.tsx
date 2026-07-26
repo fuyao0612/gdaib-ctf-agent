@@ -18,7 +18,7 @@ export default function ToolSelector({ tools, mode, value, disabled, onChange }:
       <div>
         <label>
           <select
-            aria-label="本次对话工具范围"
+            aria-label="本次任务工具范围"
             value={mode}
             disabled={disabled}
             onChange={(event) => onChange(event.target.value as ThreadToolSelectionMode, [])}

@@ -1,4 +1,4 @@
-/** 创建对话弹窗；表单内容较高时自身滚动，按钮始终可访问。 */
+/** 创建任务弹窗；表单内容较高时自身滚动，按钮始终可访问。 */
 interface Props {
   title: string;
   busy: boolean;
@@ -13,7 +13,7 @@ export default function CreateThreadDialog(props: Props) {
       className="modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="创建对话"
+      aria-label="创建任务"
     >
       <form
         className="modal"
@@ -22,11 +22,11 @@ export default function CreateThreadDialog(props: Props) {
           props.onSubmit();
         }}
       >
-        <h2>创建对话</h2>
+        <h2>创建任务</h2>
         <label>
-          对话名称
+          任务名称
           <input
-            aria-label="对话名称"
+            aria-label="任务名称"
             value={props.title}
             onChange={(event) => props.onTitleChange(event.target.value)}
           />

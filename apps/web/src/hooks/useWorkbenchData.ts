@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type {
-  ChatDefaults,
   Event,
   MemoryRecord,
   Report,
@@ -30,7 +29,6 @@ export function useWorkbenchData() {
   const [audit, setAudit] = useState<RunAudit | null>(null);
   const [control, setControl] = useState<RunControl | null>(null);
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
-  const [chatDefaults, setChatDefaults] = useState<ChatDefaults | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
   const streamRunRef = useRef("");
   const latestSequenceRef = useRef(0);
@@ -44,11 +42,6 @@ export function useWorkbenchData() {
     const values = await api.listThreads();
     setThreads(values);
     return values;
-  }, []);
-
-  const refreshSettings = useCallback(async () => {
-    const preferences = await api.chatPreferences();
-    setChatDefaults(preferences);
   }, []);
 
   const loadControl = useCallback(async (runId: string) => {
@@ -214,11 +207,7 @@ export function useWorkbenchData() {
       // 首次打开本机 Web 没有 HttpOnly Cookie 是正常状态。直接建立会话，
       // 避免先用受保护的 GET 探测而在控制台制造 401。
       await api.createAdminSession();
-      const [values, preferences] = await Promise.all([
-        loadThreads(),
-        api.chatPreferences(),
-      ]);
-      setChatDefaults(preferences);
+      const values = await loadThreads();
       const remembered = window.localStorage?.getItem("yuwang.currentThreadId");
       if (remembered && values.some((item) => item.id === remembered))
         await selectThread(remembered);
@@ -239,7 +228,6 @@ export function useWorkbenchData() {
     audit,
     control,
     memories,
-    chatDefaults,
     setDetail,
     setEvents,
     setActiveRun,
@@ -247,7 +235,6 @@ export function useWorkbenchData() {
     setControl,
     setMemories,
     loadThreads,
-    refreshSettings,
     loadControl,
     selectThread,
     connect,
