@@ -8,6 +8,8 @@ import type {
   AgentProfileSummary,
   Artifact,
   Event,
+  EvaluationRecord,
+  EvaluationStatistics,
   MemoryRecord,
   ProviderConfig,
   ProviderConfigInput,
@@ -68,6 +70,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   setupStatus: () => request<SetupStatus>("/setup/status"),
   tools: () => request<ToolSpec[]>("/tools"),
+  evaluations: (query: Record<string, string> = {}) => {
+    const parameters = new URLSearchParams(
+      Object.entries(query).filter(([, value]) => value),
+    );
+    return request<EvaluationRecord[]>(`/evaluations${parameters.size ? `?${parameters}` : ""}`);
+  },
+  evaluationStatistics: (query: Record<string, string> = {}) => {
+    const parameters = new URLSearchParams(
+      Object.entries(query).filter(([, value]) => value),
+    );
+    return request<EvaluationStatistics>(
+      `/evaluations/statistics${parameters.size ? `?${parameters}` : ""}`,
+    );
+  },
   listThreads: () => request<Thread[]>("/threads"),
   listAgentProfiles: () => request<AgentProfileSummary[]>("/agent-profiles"),
   createThread: (title: string, skillIds: string[] = []) =>

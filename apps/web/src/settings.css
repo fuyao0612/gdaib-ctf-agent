@@ -287,6 +287,73 @@
   border-top: 1px solid var(--line);
 }
 
+.evaluation-results {
+  min-width: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.evaluation-filters,
+.evaluation-statistics,
+.evaluation-row dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.evaluation-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.evaluation-filters select {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #d7dce3;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.evaluation-statistics {
+  margin: 12px 0;
+}
+
+.evaluation-statistics div,
+.evaluation-row dl > div {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.evaluation-statistics dt,
+.evaluation-row dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.evaluation-statistics dd,
+.evaluation-row dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.evaluation-list { display: grid; gap: 7px; }
+.evaluation-row { min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+.evaluation-row summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; cursor: pointer; }
+.evaluation-row summary small { grid-column: 1 / -1; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.evaluation-row dl { margin: 10px 0 0; }
+.evaluation-status { padding: 2px 6px; border-radius: 99px; font-size: 10px; }
+.status-passed { color: #477568; background: #edf6f2; }
+.status-failed { color: #95444d; background: #fbf0f1; }
+.status-skipped { color: #687381; background: #f0f2f5; }
+.evaluation-empty { margin: 12px 0 0; color: var(--muted); font-size: 11px; }
+
 .tool-list,
 .mcp-server-list {
   display: grid;
@@ -626,6 +693,12 @@
   }
 
   .tool-details dl {
+    grid-template-columns: 1fr;
+  }
+
+  .evaluation-filters,
+  .evaluation-statistics,
+  .evaluation-row dl {
     grid-template-columns: 1fr;
   }
 
