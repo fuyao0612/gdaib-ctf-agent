@@ -540,6 +540,10 @@ class EvaluationRunner:
             return failed
         if "公开任务说明" in assertion:
             return passed if has_task_snapshot else failed
+        if "原始请求" in assertion or "不扩大工具权限" in assertion:
+            return passed if has_task_snapshot else failed
+        if "不宣称外部验证" in assertion:
+            return passed if run.validation_status != "validated" else failed
         if "工具快照" in assertion:
             return passed if has_tool_snapshot else failed
         if "Agent" in assertion and "快照" in assertion:

@@ -12,14 +12,14 @@ from fastapi.responses import StreamingResponse
 from apps.api.context import ApiContext
 from apps.api.run_interactions import RunInteractionService
 from apps.api.schemas import MessageCreate, RunCreate, UnifiedMessageCreate
-from yuwang.chat import encode_chat_event
 from yuwang.dispatch import ActiveMessageRoute, route_active_message
 from yuwang.domain.models import ACTIVE_RUN_STATUSES
+from yuwang.sse import encode_sse_event
 
 
 def _stream(event_type: str, payload: dict[str, object]) -> AsyncIterator[str]:
     async def events() -> AsyncIterator[str]:
-        yield encode_chat_event(event_type, payload)
+        yield encode_sse_event(event_type, payload)
 
     return events()
 
