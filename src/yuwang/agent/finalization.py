@@ -83,6 +83,15 @@ class AgentFinalizer:
         actual_call = next(
             (value for value in reversed(calls) if value.status == CallStatus.SUCCEEDED), None
         )
+        selected_provider = run.provider
+        selected_model = run.model
+        model_is_fallback = bool(
+            actual_call
+            and (
+                actual_call.provider != selected_provider
+                or actual_call.model != selected_model
+            )
+        )
         if actual_call:
             # Run 是刷新后的运行中展示和审计锚点。收尾时把实际成功调用写回，
             # 防止备用 Provider 已接管但界面仍显示原始选择。
@@ -97,7 +106,7 @@ class AgentFinalizer:
                 run_id=run.id,
                 provider=actual_call.provider if actual_call else None,
                 model=actual_call.model if actual_call else None,
-                model_is_fallback=bool(actual_call and actual_call.provider != run.provider),
+                model_is_fallback=model_is_fallback,
             )
         )
         completion_summary = {

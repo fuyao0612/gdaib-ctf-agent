@@ -180,7 +180,7 @@ def create_message_router(context: ApiContext) -> APIRouter:
                     "user_message": user_message.model_dump(mode="json"),
                 },
             )
-        if not run:  # 新消息只会走 chat/run/clarify；其余分支必须存在活动 Run。
+        if not run:  # 其余受控分支必须存在活动 Run。
             return _response("reply_failed", {"message": "当前没有可处理的运行", "retryable": True})
         if decision == "guidance":
             result = interactions.queue_guidance(
