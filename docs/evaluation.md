@@ -4,7 +4,7 @@
 
 ## 用例
 
-内置基线目前包含 39 条声明式用例，覆盖普通聊天、任务执行、上下文、恢复、Provider 生命周期、权限和验证语义。每个用例都声明分类、难度、授权目标、预算、最大尝试次数、输入和可审计断言。用例本身不包含 Flag、密钥或预制成功答案。
+内置基线目前包含 39 条声明式任务用例，覆盖基础问答、任务执行、上下文、恢复、Provider 生命周期、权限和验证语义。每个用例都声明分类、难度、授权目标、预算、最大尝试次数、输入和可审计断言。用例本身不包含 Flag、密钥或预制成功答案。
 
 先只查看清单，不会产生模型调用：
 
@@ -49,8 +49,8 @@ python -m yuwang.evaluation run --smoke --provider-id <Provider UUID> --progress
 docker compose exec api python -m yuwang.evaluation run --smoke --attempts 1 --provider-id <Provider UUID> --database /data/yuwang.db --artifacts /data/artifacts
 ```
 
-普通聊天用例会经正式消息持久化和 Provider 文本协议执行，不创建 Run；评测记录保存线程追踪链接及
-真实请求次数、Token 和费用。无法由持久化状态确定性证明的语义断言会记录为 `skipped`，绝不计为成功。
+所有用例均经正式消息、Run、Provider 快照、Agent 循环、事件和结果持久化执行。无工具任务可完成，
+但必须保持 `validation_status=unverified`，无法由持久化状态确定性证明的语义断言会记录为 `skipped`，绝不计为成功。
 备用链等需要人为注入故障条件的用例仍会明确跳过，不能伪造失败或恢复结果。
 
 ## 结果与回放

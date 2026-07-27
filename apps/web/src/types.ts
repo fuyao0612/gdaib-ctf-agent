@@ -1,6 +1,6 @@
 /** 与后端公开 JSON 契约一一对应的工作台类型。 */
 export type Mode = "normal" | "competition";
-/** 历史数据兼容字段；新建任务不再选择交互模式。 */
+/** @deprecated 历史数据兼容字段；新建任务不再选择或使用交互模式。 */
 export type InteractionMode = "chat" | "agent";
 export type PlanMode = "auto" | "approval";
 export type SettingsMode = "beginner" | "advanced";

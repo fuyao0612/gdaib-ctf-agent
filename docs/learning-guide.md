@@ -1,13 +1,13 @@
 # v0.5.0 代码阅读与学习指南
 
-本文面向第一次接触御网智元的开发者。建议先跑通一次对话，再按“浏览器 → API → Agent → Provider → 存储”的方向阅读；这样每个抽象都能对应到界面中的真实行为。
+本文面向第一次接触御网智元的开发者。建议先跑通一次任务，再按“浏览器 → API → Agent → Provider → 存储”的方向阅读；这样每个抽象都能对应到界面中的真实行为。
 
 ## 新成员先做什么
 
 第一次接触项目时，不建议从最长的状态机或 SQLite 文件开始。按下面顺序大约一小时即可建立全局认识：
 
 1. 按 [README](../README.md) 启动系统，完成 Provider 和默认 Agent 配置。
-2. 发送一次普通问题和一次明确受控执行请求，同时打开浏览器开发者工具的 Network 面板，观察 `message` 请求和 `events/stream`。
+2. 发送一次无工具任务和一次工具任务，同时打开浏览器开发者工具的 Network 面板，观察 `message` 请求和 `events/stream`。
 3. 阅读 `apps/web/src/types.ts` 和 `apps/web/src/api.ts`，先认识前后端共同使用的数据形状。
 4. 阅读 `apps/web/src/App.tsx` 与 `hooks/useWorkbenchData.ts`，再看 `MessageComposer.tsx`、`RunSummary.tsx` 和 `SettingsCenter.tsx`。
 5. 先读 `apps/api/routes/messages.py` 与 `apps/api/run_interactions.py`，再进入
@@ -29,9 +29,9 @@ sequenceDiagram
     participant S as SQLite
     U->>W: 输入消息并发送
     W->>A: POST /threads/{id}/message
-    A->>A: 按活动 Run 状态分派：回复、执行、指引、补充、澄清或停止
-    A->>S: 执行时保存 user Message、Run 与配置快照；介入时保存消息和控制记录
-    A-->>W: reply_*、execution_started 或交互确认事件
+    A->>A: 按活动 Run 状态分派：创建任务、指引、补充、澄清或停止
+    A->>S: 新任务保存 user Message、Run 与配置快照；介入时保存消息和控制记录
+    A-->>W: execution_started 或交互确认事件
     W->>A: 受控执行时建立 SSE 事件流
     A->>E: 后台执行不可变 TaskSpec
     E->>S: 构建上下文、读取记忆
@@ -46,8 +46,8 @@ sequenceDiagram
 关键入口如下：
 
 1. `apps/web/src/App.tsx` 只协调共享状态与网络动作；`components/` 分别承载任务导航、对话/审计、消息输入、Provider 和 Agent 配置，`api.ts` 统一 Cookie、CSRF 和错误处理。
-2. `apps/api/main.py` 只装配应用；`routes/messages.py` 用当前 Run 状态和保守规则决定自由回复、
-   受控执行、追加指引、补充、澄清或停止。`run_interactions.py` 收敛人工介入的幂等与恢复；
+2. `apps/api/main.py` 只装配应用；`routes/messages.py` 用当前 Run 状态处理创建任务、
+   追加指引、补充、澄清或停止。`run_interactions.py` 收敛人工介入的幂等与恢复；
    `context.py` 的 `start_run()` 把“保存消息后的快照”和“启动运行”收敛为一个用例。
 3. `src/yuwang/agent/engine.py` 是稳定运行门面；`nodes.py` 放单步业务节点，`runner.py` 装配 LangGraph 并协调运行/恢复，`finalization.py` 处理报告和记忆收尾，`state.py` 定义可持久化图状态。
 4. `src/yuwang/model_providers/providers.py` 负责协议适配、错误分类、重试与备用模型，不能决定任务成功。
@@ -57,11 +57,11 @@ sequenceDiagram
 
 发送入口在 `MessageComposer.tsx`，它只收集文本和附件。真正的共享状态与网络动作在 `App.tsx`：
 
-1. `send()` 调用 `useChatActions.send()`，不再让组件选择聊天或任务模式。
-2. `api.message()` 调用 `POST /api/v1/threads/{thread_id}/message`，使用 fetch-SSE 接收自由回复、
+1. `send()` 调用 `useTaskActions.send()`，不让组件选择聊天或任务模式。
+2. `api.message()` 调用 `POST /api/v1/threads/{thread_id}/message`，使用 fetch-SSE 接收
    `execution_started`、`guidance_queued`、`input_received` 或 `clarification_received`。
    `api.ts` 自动携带同源 Cookie、写请求 CSRF、JSON 头和统一错误解析。
-3. `routes/messages.py` 在没有活动 Run 时，对明确受控意图先调用 `save_user_message()` 校验附件
+3. `routes/messages.py` 在没有活动 Run 时，先调用 `save_user_message()` 校验附件
    归属和竞赛模式，再调用 `ApiContext.start_run()` 固化 `TaskSpec`、AgentProfile 与 Provider 快照。
    有活动 Run 时，由 `RunInteractionService` 以同一个请求 ID 保存时间线消息、控制记录和检查点。
 4. API 使用 `ApiContext.schedule()` 启动后台协程或恢复协程。HTTP 请求不用等待模型完成，因此页面
