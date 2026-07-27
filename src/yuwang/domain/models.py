@@ -419,6 +419,8 @@ class MemoryRecord(DomainModel):
     thread_id: UUID
     kind: Literal["thread_summary", "run_summary", "important_fact", "user_input"]
     content: str = Field(min_length=1, max_length=100_000)
+    # 摘要游标、版本与公开引用等持久化元数据。历史 JSON 缺少字段时安全为空。
+    metadata: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     source_run_id: UUID | None = None
     created_at: datetime = Field(default_factory=utcnow)
