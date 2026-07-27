@@ -10,10 +10,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from yuwang.agent import AgentEngine
-from yuwang.chat import build_chat_messages
 from yuwang.domain.models import (
     EventType,
-    InteractionMode,
     Message,
     MessageRole,
     ModelCall,
@@ -23,11 +21,10 @@ from yuwang.domain.models import (
     Thread,
     ToolCall,
     ToolSnapshot,
-    utcnow,
 )
-from yuwang.model_providers import ModelProvider, ProviderCallMetrics, ProviderError
+from yuwang.model_providers import ModelProvider, ProviderCallMetrics
 from yuwang.policy import PolicyEngine
-from yuwang.settings import AgentDefaults, AgentProfileInput, AgentProfileVersion, ProviderConfig
+from yuwang.settings import AgentProfileInput, AgentProfileVersion, ProviderConfig
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolRegistry, ToolSpec
 
@@ -190,115 +187,6 @@ class EvaluationRunner:
         )
         return self._persist_result(case, result, attempt, started_at=run.created_at, run=persisted)
 
-    async def _run_chat_case(
-        self, case: EvaluationCase, *, attempt: int
-    ) -> EvaluationResult:
-        """走正式消息和 Provider 文本协议执行普通聊天，不为聊天伪造 Run。"""
-
-        assert self.provider is not None
-        started_at = utcnow()
-        thread = self.repository.save_thread(
-            Thread(
-                title=f"评测聊天：{case.name}",
-                interaction_mode=InteractionMode.CHAT,
-                provider_config_id=self.provider_config.id if self.provider_config else None,
-            )
-        )
-        defaults = AgentDefaults()
-        metrics: list[ProviderCallMetrics] = []
-        responses: list[Message] = []
-        try:
-            for content in case.user_messages:
-                self.repository.save_message(
-                    Message(thread_id=thread.id, role=MessageRole.USER, content=content)
-                )
-                prompt = build_chat_messages(
-                    self.repository.list_messages(thread.id),
-                    recent_limit=30,
-                    token_limit=defaults.context_token_budget,
-                )
-                answer = await self.provider.generate_text(
-                    prompt,
-                    system_prompt="你是一个可靠、简洁的中文 Agent。",
-                    timeout=self.provider_config.timeout_seconds if self.provider_config else None,
-                )
-                assistant = self.repository.save_message(
-                    Message(thread_id=thread.id, role=MessageRole.ASSISTANT, content=answer)
-                )
-                responses.append(assistant)
-                metric = getattr(self.provider, "last_call_metrics", None)
-                if isinstance(metric, ProviderCallMetrics):
-                    metrics.append(metric)
-        except ProviderError:
-            result = EvaluationResult(
-                case_id=case.case_id,
-                status="failed",
-                thread_id=thread.id,
-                assertions=tuple(
-                    EvaluationAssertionResult(
-                        assertion=value,
-                        status="failed",
-                        detail="正式 Provider 聊天调用失败",
-                    )
-                    for value in case.assertions
-                ),
-                reason="普通聊天的 Provider 调用失败",
-            )
-            return self._persist_result(
-                case,
-                result,
-                attempt,
-                started_at=started_at,
-                run=None,
-                metrics=metrics,
-                trace_path=f"/api/v1/threads/{thread.id}",
-                failure_category="provider_failure",
-            )
-        except Exception:
-            result = EvaluationResult(
-                case_id=case.case_id,
-                status="failed",
-                thread_id=thread.id,
-                assertions=tuple(
-                    EvaluationAssertionResult(
-                        assertion=value,
-                        status="failed",
-                        detail="聊天评测内部执行失败",
-                    )
-                    for value in case.assertions
-                ),
-                reason="普通聊天评测内部执行失败",
-            )
-            return self._persist_result(
-                case,
-                result,
-                attempt,
-                started_at=started_at,
-                run=None,
-                metrics=metrics,
-                trace_path=f"/api/v1/threads/{thread.id}",
-                failure_category="internal_error",
-            )
-
-        assertions = self._evaluate_chat_assertions(case, thread, responses)
-        status = self._result_status(assertions)
-        result = EvaluationResult(
-            case_id=case.case_id,
-            status=status,
-            thread_id=thread.id,
-            assertions=assertions,
-            reason=None if status == "passed" else "存在尚不能确定性验证的聊天语义断言",
-        )
-        return self._persist_result(
-            case,
-            result,
-            attempt,
-            started_at=started_at,
-            run=None,
-            metrics=metrics,
-            trace_path=f"/api/v1/threads/{thread.id}",
-        )
-
     def _skipped(self, case: EvaluationCase, reason: str, attempt: int) -> EvaluationResult:
         result = EvaluationResult(
             case_id=case.case_id,
@@ -386,64 +274,6 @@ class EvaluationRunner:
     ) -> EvaluationStatus:
         statuses = {item.status for item in assertions}
         return "failed" if "failed" in statuses else "skipped" if "skipped" in statuses else "passed"
-
-    def _evaluate_chat_assertions(
-        self,
-        case: EvaluationCase,
-        thread: Thread,
-        responses: Sequence[Message],
-    ) -> tuple[EvaluationAssertionResult, ...]:
-        """只对聊天生命周期能客观证明的声明给出通过结论。"""
-
-        has_no_run = not self.repository.list_runs(thread.id)
-        has_response = bool(responses and responses[-1].content.strip())
-        results: list[EvaluationAssertionResult] = []
-        for assertion in case.assertions:
-            if assertion == "不创建 Run":
-                results.append(
-                    EvaluationAssertionResult(
-                        assertion=assertion,
-                        status="passed" if has_no_run else "failed",
-                        detail="聊天消息未创建受控 Run" if has_no_run else "聊天意外创建了 Run",
-                    )
-                )
-            elif "自然语言回复" in assertion:
-                results.append(
-                    EvaluationAssertionResult(
-                        assertion=assertion,
-                        status="passed" if has_response else "failed",
-                        detail="已持久化非空助手回复" if has_response else "未持久化助手回复",
-                    )
-                )
-            elif "不宣称外部验证" in assertion:
-                results.append(
-                    EvaluationAssertionResult(
-                        assertion=assertion,
-                        status="passed" if has_no_run else "failed",
-                        detail="普通聊天未进入验证或报告路径",
-                    )
-                )
-            elif "provider_config_id" in assertion:
-                results.append(
-                    EvaluationAssertionResult(
-                        assertion=assertion,
-                        status="passed" if self.provider_config else "skipped",
-                        detail=(
-                            "评测调用使用显式注入的 Provider 配置"
-                            if self.provider_config
-                            else "未注入可审计 Provider 配置"
-                        ),
-                    )
-                )
-            else:
-                results.append(
-                    EvaluationAssertionResult(
-                        assertion=assertion,
-                        status="skipped",
-                        detail="当前聊天结果无法由确定性记录验证其语义",
-                    )
-                )
-        return tuple(results)
 
     @staticmethod
     def _failure_category(
