@@ -116,9 +116,6 @@ class EvaluationRunner:
             return self._skipped(case, "评测用例已停用", attempt)
         if self.provider is None:
             return self._skipped(case, "未显式注入已配置的真实 Provider", attempt)
-        if case.expected_outcome == "fallback":
-            return self._skipped(case, "当前运行器未注入可控故障条件，不能伪造 Provider 失败", attempt)
-
         thread = self.repository.save_thread(Thread(title=f"评测：{case.name}"))
         messages = [
             self.repository.save_message(
@@ -234,11 +231,13 @@ class EvaluationRunner:
             if calls
             else sum(item.cost for item in metrics)
         )
-        provider = self.provider_config.name if self.provider_config else (
-            run.provider if run else (metrics[-1].provider if metrics else None)
+        # Run 收尾时会固定真实成功调用的 Provider/模型；评测索引必须复用它，
+        # 不能回填用户选择的配置快照，否则备用模型会在结果页被误报。
+        provider = run.provider if run else (
+            metrics[-1].provider if metrics else (self.provider_config.name if self.provider_config else None)
         )
-        model = self.provider_config.model if self.provider_config else (
-            metrics[-1].model if metrics else None
+        model = run.model if run else (
+            metrics[-1].model if metrics else (self.provider_config.model if self.provider_config else None)
         )
         record = EvaluationRecord(
             case_id=case.case_id,
@@ -366,8 +365,6 @@ class EvaluationRunner:
         )
         if assertion == "创建 Run":
             return passed
-        if assertion == "不创建 Run":
-            return failed
         if "公开任务说明" in assertion:
             return passed if has_task_snapshot else failed
         if "原始请求" in assertion or "不扩大工具权限" in assertion:

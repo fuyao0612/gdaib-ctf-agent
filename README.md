@@ -224,9 +224,7 @@ Python、Node.js、npm、Docker、`.env`、端口、依赖、数据目录和健�
 flowchart LR
     U["用户"] --> W["React Web"]
     W --> A["统一消息 API"]
-    A --> D{"保守分派"}
-    D -->|自由回复| P["模型 Provider"]
-    D -->|受控执行| G["Agent 五阶段"]
+    A --> G["受控 Agent Run"]
     G --> P["模型 Provider"]
     G --> T["受控工具与验证"]
     G --> S["SQLite 审计与检查点"]
@@ -235,7 +233,7 @@ flowchart LR
 ```
 
 - Web 通过同源 HttpOnly 会话访问 API；写请求还需要内存中的 CSRF 令牌。
-- API 先决定消息是自由回复还是受控执行；仅后者会固化任务、Provider 和 Agent 快照并启动 Run。
+- 没有活动 Run 时，每条输入都固化为用户消息、任务、Provider 与 Agent 快照，并创建受控 Agent Run。
 - Agent 按预算准备、规划、执行、验证、收尾；Provider 只负责结构化模型调用。
 - Event（事件）先持久化再通过 SSE 推送。刷新或重启后以数据库为准恢复。
 - evidence 模式必须有工具证据并通过确定性规则；模型不能自行宣布成功。

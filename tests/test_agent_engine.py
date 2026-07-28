@@ -972,6 +972,29 @@ async def test_context_truncation_event_explains_original_and_kept_counts(tmp_pa
     assert "first" in summary.content and "assistant before" in summary.content
 
 
+def test_overlong_single_input_emits_one_compaction_event_per_checkpoint(tmp_path):
+    profile = profile_for(
+        planning_strategy="direct",
+        completion_mode="advisory",
+        workflow={"preset": "direct"},
+        memory_policy={"persist_important_facts": False},
+    )
+    repository, engine = build_engine(tmp_path, "advisory", profile)
+    repository.save_agent_defaults(AgentDefaults(context_token_budget=32_768))
+    thread = repository.save_thread(Thread(title="single input compaction"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="约束" + "中" * 90_000))
+
+    engine._context(state, "first")
+    engine._context(state, "same checkpoint")
+
+    events = [
+        event for event in repository.list_events(run.id) if event.type == EventType.CONTEXT_COMPACTED
+    ]
+    assert len(events) == 1
+    assert events[0].payload["reason"] in {"forced_90_percent", "deterministic_safety_clip"}
+
+
 def test_budget_guards_and_stop(tmp_path):
     repository, engine = build_engine(tmp_path)
     thread = repository.save_thread(Thread(title="budget"))

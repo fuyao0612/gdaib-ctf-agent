@@ -152,9 +152,9 @@ class SQLiteSettingsStore(SQLiteStore):
         if not row:
             return AgentDefaults()
         data = json.loads(row["data"])
-        # v0.5.0 之前允许保存 32000。读取时先升级到最接近的公开 32K
-        # 预设，避免历史 SQLite 在 API 初始化前就因新范围校验而无法启动。
-        if int(data.get("context_token_budget", MIN_CONTEXT_TOKEN_BUDGET)) < MIN_CONTEXT_TOKEN_BUDGET:
+        # 仅迁移 v0.5.0 明确保存的 32000。缺失字段必须交给当前模型默认值
+        # 262144，不能在升级时被误写为 32K；其他无效值仍由模型校验报告。
+        if data.get("context_token_budget") == 32_000:
             data["context_token_budget"] = MIN_CONTEXT_TOKEN_BUDGET
             with self.connect() as writable:
                 writable.execute(

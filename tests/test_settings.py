@@ -172,6 +172,28 @@ def test_legacy_context_budget_is_migrated_before_validation(tmp_path):
     assert repository.get_agent_defaults().context_token_budget == 32_768
 
 
+def test_legacy_context_migration_is_idempotent_and_preserves_missing_or_new_values(tmp_path):
+    repository = SQLiteRepository(tmp_path / "settings-migration.db")
+    with repository.connect() as db:
+        db.execute(
+            "INSERT INTO app_settings(key,data) VALUES('agent_defaults',?)",
+            ('{"budget":{},"provider_retry_budget":2,"context_token_budget":32000}',),
+        )
+    assert repository.get_agent_defaults().context_token_budget == 32_768
+    assert repository.get_agent_defaults().context_token_budget == 32_768
+
+    with repository.connect() as db:
+        db.execute("DELETE FROM app_settings WHERE key='agent_defaults'")
+        db.execute(
+            "INSERT INTO app_settings(key,data) VALUES('agent_defaults',?)",
+            ('{"budget":{},"provider_retry_budget":2}',),
+        )
+    assert repository.get_agent_defaults().context_token_budget == 262_144
+
+    repository.save_agent_defaults(AgentDefaults(context_token_budget=64_000))
+    assert repository.get_agent_defaults().context_token_budget == 64_000
+
+
 def test_provider_snapshot_is_encrypted_and_immutable(tmp_path):
     repository = SQLiteRepository(tmp_path / "snapshots.db")
     service = SettingsService(repository, SecretCipher(Fernet.generate_key().decode()))

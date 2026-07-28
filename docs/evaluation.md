@@ -18,7 +18,7 @@ python -m yuwang.evaluation list
 
 ```powershell
 # 只运行一个用例，默认一次尝试
-python -m yuwang.evaluation run --case intent-explicit-task --provider-id <Provider UUID>
+python -m yuwang.evaluation run --case task-explicit-request --provider-id <Provider UUID>
 
 # 运行日常 smoke 子集，可按需增加重复次数
 python -m yuwang.evaluation run --smoke --attempts 3 --provider-id <Provider UUID>
@@ -49,9 +49,10 @@ python -m yuwang.evaluation run --smoke --provider-id <Provider UUID> --progress
 docker compose exec api python -m yuwang.evaluation run --smoke --attempts 1 --provider-id <Provider UUID> --database /data/yuwang.db --artifacts /data/artifacts
 ```
 
-所有用例均经正式消息、Run、Provider 快照、Agent 循环、事件和结果持久化执行。无工具任务可完成，
-但必须保持 `validation_status=unverified`，无法由持久化状态确定性证明的语义断言会记录为 `skipped`，绝不计为成功。
-备用链等需要人为注入故障条件的用例仍会明确跳过，不能伪造失败或恢复结果。
+所有用例均经正式消息、Run、Provider 快照、Agent 循环、事件和结果持久化执行；没有普通聊天、
+意图分派或直接文本 Provider 路径。无工具任务可完成，但必须保持 `validation_status=unverified`；
+无法由持久化状态确定性证明的断言只能标记为 `skipped`，绝不计为成功。Provider 故障的真实验收
+只记录真实发生的调用结果，不人为伪造备用切换。
 
 ## 结果与回放
 

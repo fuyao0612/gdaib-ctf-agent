@@ -13,10 +13,6 @@ interface Props {
   uploading: boolean;
   taskSubmitting?: boolean;
   taskCanRetry?: boolean;
-  /** @deprecated 仅兼容旧组件测试，运行时不再具有聊天语义。 */
-  chatGenerating?: boolean;
-  /** @deprecated 仅兼容旧组件测试，运行时不再具有聊天语义。 */
-  chatCanRetry?: boolean;
   onMessageChange: (value: string) => void;
   onAuthorizedTargetChange: (value: string) => void;
   onProviderChange: (providerId: string) => void;
@@ -25,8 +21,6 @@ interface Props {
   onStop: () => void;
   onRetry: () => void;
   onTaskRetry?: () => void;
-  /** @deprecated 仅兼容旧组件测试，运行时不再具有聊天语义。 */
-  onChatRetry?: () => void;
   children?: ReactNode;
 }
 
@@ -73,9 +67,9 @@ function inputCopy(run: Run | null) {
 }
 
 export default function MessageComposer(props: Props) {
-  const taskSubmitting = props.taskSubmitting ?? props.chatGenerating ?? false;
-  const taskCanRetry = props.taskCanRetry ?? props.chatCanRetry ?? false;
-  const onTaskRetry = props.onTaskRetry ?? props.onChatRetry ?? (() => undefined);
+  const taskSubmitting = props.taskSubmitting ?? false;
+  const taskCanRetry = props.taskCanRetry ?? false;
+  const onTaskRetry = props.onTaskRetry ?? (() => undefined);
   const copy = inputCopy(props.activeRun);
   // 运行控制、计划编辑等操作不应禁用这里的主输入框。只有当前消息请求或附件
   // 尚未上传完成时才暂时不能提交，用户仍可继续编辑下一条内容。

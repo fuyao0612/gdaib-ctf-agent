@@ -420,6 +420,31 @@ class DefaultContextBuilder:
             truncated = True
             compaction_reason = "deterministic_safety_clip"
             reasons.append(compaction_reason)
+        # 没有可归档旧消息时，强制裁剪仍必须产生可持久化、可去重的压缩检查点。
+        # 指纹只依赖本次用于模型的确定性上下文，不包含时间或运行时对象地址。
+        if compacted and summary_digest is None:
+            summary_digest = hashlib.sha256(
+                json.dumps(
+                    {
+                        "reason": compaction_reason,
+                        "task": state.task.model_dump(mode="json"),
+                        "message_ids": [str(message.id) for message in messages],
+                        "observations": [
+                            {
+                                "call_id": str(observation.call_id),
+                                "summary": observation.summary,
+                                "success": observation.success,
+                            }
+                            for observation in state.observations
+                        ],
+                        "supplemental_inputs": state.supplemental_inputs,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ).encode()
+            ).hexdigest()
+            summary_version = summary_digest[:12]
         return ContextBuildResult(
             prompt=prompt,
             estimated_tokens=max(1, self.estimate_tokens(prompt)),
@@ -541,7 +566,21 @@ class DefaultContextBuilder:
         if len(entries) <= 3:
             return entries
         middle = entries[len(entries) // 2]
-        return list(dict.fromkeys([entries[0], middle, entries[-1]]))
+        # 用户约束常位于长历史中间，不能因首尾采样被吞没。优先保留第一条显式
+        # 约束；最终仍有固定上限，避免确定性摘要线性增长。
+        constraint = next(
+            (
+                entry
+                for entry in entries
+                if any(marker in entry for marker in ("约束", "不得", "仅", "只能", "只允许"))
+            ),
+            None,
+        )
+        return list(
+            dict.fromkeys(
+                entry for entry in [entries[0], middle, constraint, entries[-1]] if entry is not None
+            )
+        )[:4]
 
     @staticmethod
     def _bounded_text(value: str, limit: int) -> str:

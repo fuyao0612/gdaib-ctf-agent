@@ -9,7 +9,7 @@ def test_builtin_evaluation_cases_cover_p0_p1_without_ctf_or_executable_payloads
     assert len({case.case_id for case in cases}) == len(cases)
     assert {
         "基础任务",
-        "意图判断",
+        "任务语义",
         "多步任务",
         "用户纠偏",
         "长上下文",
