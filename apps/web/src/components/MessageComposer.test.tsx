@@ -58,8 +58,6 @@ function renderComposer(status: RunStatus) {
       providers={[provider]}
       providerConfigId={provider.id}
       uploading={false}
-      chatGenerating={false}
-      chatCanRetry={false}
       onMessageChange={onMessageChange}
       onAuthorizedTargetChange={vi.fn()}
       onProviderChange={vi.fn()}
@@ -67,7 +65,6 @@ function renderComposer(status: RunStatus) {
       onSend={onSend}
       onStop={vi.fn()}
       onRetry={vi.fn()}
-      onChatRetry={vi.fn()}
     />,
   );
   return { onMessageChange, onSend };
@@ -86,8 +83,6 @@ describe("统一消息输入框", () => {
         providers={[provider]}
         providerConfigId={provider.id}
         uploading={false}
-        chatGenerating={false}
-        chatCanRetry={false}
         onMessageChange={vi.fn()}
         onAuthorizedTargetChange={onAuthorizedTargetChange}
         onProviderChange={onProviderChange}
@@ -95,7 +90,6 @@ describe("统一消息输入框", () => {
         onSend={vi.fn()}
         onStop={vi.fn()}
         onRetry={vi.fn()}
-        onChatRetry={vi.fn()}
       />,
     );
 
@@ -151,8 +145,6 @@ describe("统一消息输入框", () => {
         providers={[provider]}
         providerConfigId={provider.id}
         uploading
-        chatGenerating={false}
-        chatCanRetry={false}
         onMessageChange={vi.fn()}
         onAuthorizedTargetChange={vi.fn()}
         onProviderChange={vi.fn()}
@@ -160,7 +152,6 @@ describe("统一消息输入框", () => {
         onSend={onSend}
         onStop={vi.fn()}
         onRetry={vi.fn()}
-        onChatRetry={vi.fn()}
       />,
     );
 
@@ -182,8 +173,8 @@ describe("统一消息输入框", () => {
         providers={[provider]}
         providerConfigId={provider.id}
         uploading={false}
-        chatGenerating
-        chatCanRetry={false}
+        taskSubmitting
+        taskCanRetry={false}
         onMessageChange={vi.fn()}
         onAuthorizedTargetChange={vi.fn()}
         onProviderChange={vi.fn()}
@@ -191,7 +182,6 @@ describe("统一消息输入框", () => {
         onSend={vi.fn()}
         onStop={vi.fn()}
         onRetry={vi.fn()}
-        onChatRetry={vi.fn()}
       />,
     );
 
@@ -210,8 +200,8 @@ describe("统一消息输入框", () => {
         providers={[provider]}
         providerConfigId={provider.id}
         uploading={false}
-        chatGenerating={false}
-        chatCanRetry
+        taskSubmitting={false}
+        taskCanRetry
         onMessageChange={vi.fn()}
         onAuthorizedTargetChange={vi.fn()}
         onProviderChange={vi.fn()}
@@ -219,7 +209,6 @@ describe("统一消息输入框", () => {
         onSend={vi.fn()}
         onStop={vi.fn()}
         onRetry={vi.fn()}
-        onChatRetry={vi.fn()}
       />,
     );
 

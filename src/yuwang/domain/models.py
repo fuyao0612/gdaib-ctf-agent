@@ -25,6 +25,8 @@ class ThreadMode(StrEnum):
 
 
 class InteractionMode(StrEnum):
+    """Deprecated SQLite compatibility marker; new flows always create Agent Runs."""
+
     CHAT = "chat"
     AGENT = "agent"
 
@@ -118,7 +120,7 @@ class Thread(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     title: str = Field(min_length=1, max_length=160)
     mode: ThreadMode = ThreadMode.NORMAL
-    # 历史记录可能包含 chat；新建记录始终使用 Agent 任务模式。
+    # Deprecated：仅用于读取历史 SQLite JSON，UI 与新建流程均不再使用。
     interaction_mode: InteractionMode = InteractionMode.AGENT
     # 对话级模型选择独立于全局默认值。Run 启动时再把实际 Provider 固化为快照，
     # 因此用户切换这里的值绝不会改变已经运行中的任务。
@@ -417,6 +419,8 @@ class MemoryRecord(DomainModel):
     thread_id: UUID
     kind: Literal["thread_summary", "run_summary", "important_fact", "user_input"]
     content: str = Field(min_length=1, max_length=100_000)
+    # 摘要游标、版本与公开引用等持久化元数据。历史 JSON 缺少字段时安全为空。
+    metadata: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     source_run_id: UUID | None = None
     created_at: datetime = Field(default_factory=utcnow)

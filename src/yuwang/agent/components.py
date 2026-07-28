@@ -311,14 +311,26 @@ class DefaultContextBuilder:
             recent_count = max(1, min(policy.recent_message_limit, 16))
             older = messages[:-recent_count]
             if older and run and policy.include_thread_summary:
-                summary = self._compact_thread_summary(older)
-                summary_digest = hashlib.sha256(summary.encode()).hexdigest()
-                summary_version = summary_digest[:12]
                 previous = [
                     item
                     for item in self.repository.list_memories(run.thread_id, enabled_only=False)
                     if item.kind == "thread_summary"
                 ]
+                saved = previous[-1] if previous else None
+                cursor = str(saved.metadata.get("cursor_message_id", "")) if saved else ""
+                cursor_index = next(
+                    (index for index, item in enumerate(older) if str(item.id) == cursor), -1
+                )
+                additions = older[cursor_index + 1 :] if cursor_index >= 0 else older
+                if saved and not additions:
+                    summary = saved.content
+                else:
+                    summary = self._merge_thread_summary(
+                        saved.content if saved and cursor_index >= 0 else None,
+                        additions,
+                    )
+                summary_digest = hashlib.sha256(summary.encode()).hexdigest()
+                summary_version = summary_digest[:12]
                 if not previous or previous[-1].content != summary:
                     for previous_memory in previous:
                         self.repository.delete_memory(previous_memory.id)
@@ -327,6 +339,11 @@ class DefaultContextBuilder:
                             thread_id=run.thread_id,
                             kind="thread_summary",
                             content=summary,
+                            metadata={
+                                "cursor_message_id": str(older[-1].id),
+                                "summary_digest": summary_digest,
+                                "summary_version": summary_version,
+                            },
                         )
                     )
                     all_memories = [
@@ -403,6 +420,31 @@ class DefaultContextBuilder:
             truncated = True
             compaction_reason = "deterministic_safety_clip"
             reasons.append(compaction_reason)
+        # 没有可归档旧消息时，强制裁剪仍必须产生可持久化、可去重的压缩检查点。
+        # 指纹只依赖本次用于模型的确定性上下文，不包含时间或运行时对象地址。
+        if compacted and summary_digest is None:
+            summary_digest = hashlib.sha256(
+                json.dumps(
+                    {
+                        "reason": compaction_reason,
+                        "task": state.task.model_dump(mode="json"),
+                        "message_ids": [str(message.id) for message in messages],
+                        "observations": [
+                            {
+                                "call_id": str(observation.call_id),
+                                "summary": observation.summary,
+                                "success": observation.success,
+                            }
+                            for observation in state.observations
+                        ],
+                        "supplemental_inputs": state.supplemental_inputs,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ).encode()
+            ).hexdigest()
+            summary_version = summary_digest[:12]
         return ContextBuildResult(
             prompt=prompt,
             estimated_tokens=max(1, self.estimate_tokens(prompt)),
@@ -488,6 +530,20 @@ class DefaultContextBuilder:
                 lines.append("- 无可确认的公开事实")
         return cls._bounded_text("\n".join(lines), THREAD_SUMMARY_CHAR_LIMIT)
 
+    @classmethod
+    def _merge_thread_summary(
+        cls, previous: str | None, additions: list[Message]
+    ) -> str:
+        """只汇总游标后的旧消息，已有摘要不再回读原始历史。"""
+
+        update = cls._compact_thread_summary(additions)
+        if not previous:
+            return update
+        # 为新增约束预留独立空间，不能在最终首尾裁剪时被旧摘要吞没。
+        retained = cls._bounded_text(previous, 1_000)
+        increment = cls._bounded_text(update, THREAD_SUMMARY_CHAR_LIMIT - 1_060)
+        return f"{retained}\n\n增量更新：\n{increment}"
+
     @staticmethod
     def _summary_bucket(message: Message, content: str) -> str:
         normalized = content.casefold()
@@ -507,9 +563,24 @@ class DefaultContextBuilder:
     def _representative_entries(entries: list[str]) -> list[str]:
         """每类保留开头和结尾的代表项，避免活跃线程继续线性增长。"""
 
-        if len(entries) <= 2:
+        if len(entries) <= 3:
             return entries
-        return [entries[0], entries[-1]]
+        middle = entries[len(entries) // 2]
+        # 用户约束常位于长历史中间，不能因首尾采样被吞没。优先保留第一条显式
+        # 约束；最终仍有固定上限，避免确定性摘要线性增长。
+        constraint = next(
+            (
+                entry
+                for entry in entries
+                if any(marker in entry for marker in ("约束", "不得", "仅", "只能", "只允许"))
+            ),
+            None,
+        )
+        return list(
+            dict.fromkeys(
+                entry for entry in [entries[0], middle, constraint, entries[-1]] if entry is not None
+            )
+        )[:4]
 
     @staticmethod
     def _bounded_text(value: str, limit: int) -> str:

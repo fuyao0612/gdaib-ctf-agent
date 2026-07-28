@@ -691,6 +691,45 @@ async def test_direct_workflow_uses_one_model_call_for_an_advisory_answer(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("actual_provider", "actual_model", "expected_fallback"),
+    [
+        ("primary", "primary-model", False),
+        ("fallback", "fallback-model", True),
+        ("primary", "primary-model-revision", True),
+    ],
+)
+async def test_final_message_records_actual_model_and_fallback_status(
+    tmp_path, actual_provider, actual_model, expected_fallback
+):
+    profile = profile_for(
+        planning_strategy="direct",
+        completion_mode="advisory",
+        workflow={"preset": "direct"},
+        memory_policy={"persist_important_facts": False},
+    )
+    repository, engine = build_engine(tmp_path, "advisory", profile)
+    engine.provider.name = actual_provider
+    engine.provider.model = actual_model
+    thread = repository.save_thread(Thread(title="actual-model"))
+    run = repository.save_run(
+        Run(thread_id=thread.id, provider="primary", model="primary-model")
+    )
+
+    await engine.run(run.id, TaskSpec(body="answer directly"))
+
+    finished = repository.get_run(run.id)
+    message = repository.list_messages(thread.id)[-1]
+    assert finished and (finished.provider, finished.model) == (actual_provider, actual_model)
+    assert (message.run_id, message.provider, message.model) == (
+        run.id,
+        actual_provider,
+        actual_model,
+    )
+    assert message.model_is_fallback is expected_fallback
+
+
+@pytest.mark.asyncio
 async def test_direct_replan_does_not_add_a_planner_model_call(tmp_path):
     profile = profile_for(
         planning_strategy="direct",
@@ -931,6 +970,29 @@ async def test_context_truncation_event_explains_original_and_kept_counts(tmp_pa
         item for item in repository.list_memories(thread.id) if item.kind == "thread_summary"
     )
     assert "first" in summary.content and "assistant before" in summary.content
+
+
+def test_overlong_single_input_emits_one_compaction_event_per_checkpoint(tmp_path):
+    profile = profile_for(
+        planning_strategy="direct",
+        completion_mode="advisory",
+        workflow={"preset": "direct"},
+        memory_policy={"persist_important_facts": False},
+    )
+    repository, engine = build_engine(tmp_path, "advisory", profile)
+    repository.save_agent_defaults(AgentDefaults(context_token_budget=32_768))
+    thread = repository.save_thread(Thread(title="single input compaction"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="约束" + "中" * 90_000))
+
+    engine._context(state, "first")
+    engine._context(state, "same checkpoint")
+
+    events = [
+        event for event in repository.list_events(run.id) if event.type == EventType.CONTEXT_COMPACTED
+    ]
+    assert len(events) == 1
+    assert events[0].payload["reason"] in {"forced_90_percent", "deterministic_safety_clip"}
 
 
 def test_budget_guards_and_stop(tmp_path):

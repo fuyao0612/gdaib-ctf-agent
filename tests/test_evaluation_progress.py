@@ -18,8 +18,8 @@ def evaluation_case(case_id: str = "resume-case") -> EvaluationCase:
         name="恢复测试",
         category="测试",
         user_messages=("请回复",),
-        expected_outcome="chat",
-        assertions=("返回自然语言回复",),
+        expected_outcome="task",
+        assertions=("创建 Run",),
         max_attempts=2,
     )
 

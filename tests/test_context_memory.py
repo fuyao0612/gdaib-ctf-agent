@@ -224,6 +224,97 @@ def test_context_compacts_older_messages_and_falls_back_under_token_pressure(tmp
     assert result.estimated_tokens <= result.input_token_budget
 
 
+def test_context_summary_advances_cursor_without_reprocessing_old_messages(tmp_path):
+    repository = SQLiteRepository(tmp_path / "incremental-summary.db")
+    repository.save_agent_defaults(AgentDefaults(context_token_budget=32_768))
+    thread = repository.save_thread(Thread(title="incremental summary"))
+    for index in range(5):
+        repository.save_message(
+            Message(
+                thread_id=thread.id,
+                role=MessageRole.USER,
+                content=f"约束 {index}：不得扩大授权范围。" + "中" * 15_000,
+            )
+        )
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="生成任务摘要"))
+    profile = AgentProfileVersion(
+        **AgentProfileInput(
+            name="incremental profile", context_policy={"recent_message_limit": 2}
+        ).model_dump(),
+        version=1,
+    )
+    builder = DefaultContextBuilder(repository, tmp_path)
+    builder.build(state, profile, "first")
+    first = next(item for item in repository.list_memories(thread.id) if item.kind == "thread_summary")
+    first_cursor = first.metadata["cursor_message_id"]
+
+    repository.save_message(
+        Message(
+            thread_id=thread.id,
+            role=MessageRole.USER,
+            content="新增中间约束：只能读取 docs。" + "中" * 15_000,
+        )
+    )
+    repository.save_message(
+        Message(
+            thread_id=thread.id,
+            role=MessageRole.USER,
+            content="最新任务进度。" + "中" * 15_000,
+        )
+    )
+    repository.save_message(
+        Message(
+            thread_id=thread.id,
+            role=MessageRole.USER,
+            content="保持最近消息。" + "中" * 15_000,
+        )
+    )
+    builder.build(state, profile, "second")
+    second = next(item for item in repository.list_memories(thread.id) if item.kind == "thread_summary")
+    assert second.metadata["cursor_message_id"] != first_cursor
+    assert "增量更新" in second.content
+    assert "新增中间约束" in second.content
+    unchanged = builder.build(state, profile, "third")
+    assert unchanged.summary_digest == second.metadata["summary_digest"]
+
+
+def test_context_summary_handles_a_thousand_messages_without_losing_middle_constraint(tmp_path):
+    repository = SQLiteRepository(tmp_path / "thousand-history.db")
+    repository.save_agent_defaults(AgentDefaults(context_token_budget=32_768))
+    thread = repository.save_thread(Thread(title="thousand history"))
+    for index in range(1_000):
+        content = f"历史 {index}：保持审计。" + "中" * 120
+        if index == 500:
+            content = "关键中间约束：只能读取 docs，不得修改源码。" + "中" * 120
+        repository.save_message(Message(thread_id=thread.id, role=MessageRole.USER, content=content))
+    run = repository.save_run(Run(thread_id=thread.id))
+    profile = AgentProfileVersion(
+        **AgentProfileInput(name="thousand history", context_policy={"recent_message_limit": 4}).model_dump(),
+        version=1,
+    )
+    result = DefaultContextBuilder(repository, tmp_path).build(
+        AgentStateModel(run_id=run.id, task=TaskSpec(body="汇总历史")), profile, "test"
+    )
+    summary = next(item for item in repository.list_memories(thread.id) if item.kind == "thread_summary")
+    assert result.compacted and result.kept_message_count == 4
+    assert "关键中间约束" in summary.content
+
+
+def test_overlong_single_input_has_stable_compaction_fingerprint(tmp_path):
+    repository = SQLiteRepository(tmp_path / "single-input.db")
+    repository.save_agent_defaults(AgentDefaults(context_token_budget=32_768))
+    thread = repository.save_thread(Thread(title="single input"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(run_id=run.id, task=TaskSpec(body="超长中文输入" + "中" * 90_000))
+    profile = AgentProfileVersion(**AgentProfileInput(name="single input").model_dump(), version=1)
+    builder = DefaultContextBuilder(repository, tmp_path)
+    first = builder.build(state, profile, "test")
+    second = builder.build(state, profile, "test")
+    assert first.compacted and first.summary_digest and first.summary_version
+    assert first.summary_digest == second.summary_digest
+
+
 def test_large_text_attachment_uses_reference_and_bounded_untrusted_summary(tmp_path):
     root = tmp_path / "artifacts"
     repository = SQLiteRepository(tmp_path / "large-attachment.db")

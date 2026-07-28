@@ -1,4 +1,4 @@
-"""统一消息入口的确定性控制命令和模型语义意图判断。"""
+"""活动 Run 的确定性控制命令路由。"""
 
 from __future__ import annotations
 

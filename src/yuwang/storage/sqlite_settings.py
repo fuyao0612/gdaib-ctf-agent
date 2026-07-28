@@ -10,6 +10,8 @@ from yuwang.settings.profiles import AgentProfileVersion
 from yuwang.settings.skills import SkillDefinition
 from yuwang.storage.sqlite_common import SQLiteStore
 
+MIN_CONTEXT_TOKEN_BUDGET = 32_768
+
 
 class SQLiteSettingsStore(SQLiteStore):
     def save_skill(self, value: SkillDefinition) -> SkillDefinition:
@@ -147,7 +149,19 @@ class SQLiteSettingsStore(SQLiteStore):
             row = db.execute(
                 "SELECT data FROM app_settings WHERE key='agent_defaults'"
             ).fetchone()
-        return AgentDefaults.model_validate_json(row["data"]) if row else AgentDefaults()
+        if not row:
+            return AgentDefaults()
+        data = json.loads(row["data"])
+        # 仅迁移 v0.5.0 明确保存的 32000。缺失字段必须交给当前模型默认值
+        # 262144，不能在升级时被误写为 32K；其他无效值仍由模型校验报告。
+        if data.get("context_token_budget") == 32_000:
+            data["context_token_budget"] = MIN_CONTEXT_TOKEN_BUDGET
+            with self.connect() as writable:
+                writable.execute(
+                    "INSERT OR REPLACE INTO app_settings(key,data) VALUES('agent_defaults',?)",
+                    (json.dumps(data, ensure_ascii=False),),
+                )
+        return AgentDefaults.model_validate(data)
 
     def save_agent_defaults(self, value: AgentDefaults) -> None:
         with self.connect() as db:

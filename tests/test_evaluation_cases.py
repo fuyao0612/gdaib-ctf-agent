@@ -8,8 +8,8 @@ def test_builtin_evaluation_cases_cover_p0_p1_without_ctf_or_executable_payloads
     assert len(cases) >= 30
     assert len({case.case_id for case in cases}) == len(cases)
     assert {
-        "普通聊天",
-        "意图判断",
+        "基础任务",
+        "任务语义",
         "多步任务",
         "用户纠偏",
         "长上下文",
@@ -36,8 +36,8 @@ def test_evaluation_case_rejects_unknown_fields_and_invalid_identifiers():
             name="无效",
             category="测试",
             user_messages=("测试",),
-            expected_outcome="chat",
-            assertions=("不创建 Run",),
+            expected_outcome="task",
+            assertions=("创建 Run",),
         )
     except ValueError as error:
         assert "case_id" in str(error)

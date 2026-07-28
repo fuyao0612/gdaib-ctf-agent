@@ -77,10 +77,6 @@ interface ConversationProps {
   control: RunControl | null;
   busy: boolean;
   taskFailure?: { message: string; retryable: boolean } | null;
-  /** @deprecated 旧测试契约；任务界面不会渲染自由回复草稿。 */
-  chatDraft?: string;
-  /** @deprecated 旧测试契约；任务界面不会渲染聊天失败状态。 */
-  chatFailure?: { message: string; retryable: boolean } | null;
   onEditPlan: (plan: import("../types").AgentPlan, version: number, reason: string) => void;
   onDecidePlan: (
     decision: "approve" | "reject",

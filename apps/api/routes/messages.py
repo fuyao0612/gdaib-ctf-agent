@@ -12,14 +12,14 @@ from fastapi.responses import StreamingResponse
 from apps.api.context import ApiContext
 from apps.api.run_interactions import RunInteractionService
 from apps.api.schemas import MessageCreate, RunCreate, UnifiedMessageCreate
-from yuwang.chat import encode_chat_event
 from yuwang.dispatch import ActiveMessageRoute, route_active_message
 from yuwang.domain.models import ACTIVE_RUN_STATUSES
+from yuwang.sse import encode_sse_event
 
 
 def _stream(event_type: str, payload: dict[str, object]) -> AsyncIterator[str]:
     async def events() -> AsyncIterator[str]:
-        yield encode_chat_event(event_type, payload)
+        yield encode_sse_event(event_type, payload)
 
     return events()
 
@@ -42,7 +42,7 @@ def _replay_existing_request(
 
     网络重连时原请求可能已经让 Run 完成或停止；若仅依据“现在是否有活跃
     Run”判断，就会把重发误认为新的聊天或第二个任务。每种受控输入都有已
-    持久化的来源关系，先查询它们再做新的意图判断。
+            持久化的来源关系，先查询它们再处理新的受控输入。
     """
 
     repository = context.repository
@@ -180,7 +180,7 @@ def create_message_router(context: ApiContext) -> APIRouter:
                     "user_message": user_message.model_dump(mode="json"),
                 },
             )
-        if not run:  # 新消息只会走 chat/run/clarify；其余分支必须存在活动 Run。
+        if not run:  # 其余受控分支必须存在活动 Run。
             return _response("reply_failed", {"message": "当前没有可处理的运行", "retryable": True})
         if decision == "guidance":
             result = interactions.queue_guidance(
