@@ -292,6 +292,14 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         assert "调整：协议服务生成的计划" in report.json()["markdown"]
         audit = client.get(f"/api/v1/runs/{run_id}/audit").json()
         assert audit["model_calls"] and audit["tool_calls"] and audit["evidence"]
+        assert audit["steps"]
+        assert audit["usage"]["logical_model_calls"] == len(audit["model_calls"])
+        assert audit["usage"]["provider_requests"] >= audit["usage"]["logical_model_calls"]
+        trajectory = client.get(f"/api/v1/runs/{run_id}/trajectory.json")
+        assert trajectory.status_code == 200
+        assert trajectory.json()["schema_version"] == "2.0"
+        assert trajectory.json()["steps"] == audit["steps"]
+        assert all("storage_ref" not in item for item in trajectory.json()["artifacts"])
         assert audit["profile"]["planning_strategy"] == "dynamic"
         assert audit["profile"]["workflow_preset"] == "verified"
         assert audit["profile"]["context_policy"]["include_memories"] is True

@@ -644,6 +644,45 @@ textarea:disabled {
   color: var(--accent);
 }
 
+.execution-trace,
+.trajectory-replay {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.execution-trace h3 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.execution-timeline {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.execution-step {
+  border-left: 3px solid #8c9aa5;
+  padding: 8px 10px;
+  background: #f7f8fa;
+  overflow: hidden;
+}
+
+.execution-step.success { border-left-color: #4f9173; }
+.execution-step.error, .execution-step.timeout, .execution-step.stopped { border-left-color: #bd6870; }
+.execution-step.running { border-left-color: #4f7fa8; }
+.execution-step header { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.execution-step header span { color: #45565f; }
+.execution-step header time { margin-left: auto; color: #66747c; }
+.execution-step p { margin: 5px 0; overflow-wrap: anywhere; }
+.execution-step pre { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-links, .trajectory-replay > p { color: #66747c; font-size: 13px; }
+.step-error { color: #9d3943; overflow-wrap: anywhere; }
+.trajectory-replay input { display: block; max-width: 100%; margin-top: 6px; }
+
 .task-plan-control {
   display: grid;
   gap: 10px;

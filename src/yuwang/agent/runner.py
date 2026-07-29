@@ -28,6 +28,7 @@ from yuwang.agent.state import (
     RunStopped,
 )
 from yuwang.domain.models import CallStatus, EventType, Run, RunStatus, TaskSpec
+from yuwang.reports.trace import RunTraceService
 
 if TYPE_CHECKING:
     from yuwang.agent.engine import AgentEngine
@@ -299,7 +300,10 @@ class AgentRunCoordinator:
             run,
             task,
             engine.repository.list_events(run.id),
-            {"failure_analysis": analysis.model_dump(mode="json")},
+            {
+                "failure_analysis": analysis.model_dump(mode="json"),
+                "trace": RunTraceService(engine.repository).snapshot(run.id),
+            },
         )
         engine.repository.save_report(run.id, markdown, data)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from yuwang.domain.models import Event, Run, TaskSpec
 from yuwang.policy import redact, redact_data
@@ -38,12 +38,11 @@ class ReportGenerator:
     def generate(
         self, run: Run, task: TaskSpec, events: list[Event], metrics: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
+        trace_value = metrics.get("trace")
+        trace = cast(dict[str, Any], trace_value) if isinstance(trace_value, dict) else {}
         replans = [event.summary for event in events if str(event.type) == "replanned"]
-        evidence = [
-            event.summary
-            for event in events
-            if str(event.type) in {"tool_finished", "artifact_created"}
-        ]
+        # 关键证据只能来自 EvidenceRecord；工具完成或 Artifact 创建本身不是证据。
+        evidence: list[str] = []
         for record in metrics.get("evidence_records", []):
             if isinstance(record, dict):
                 evidence.append(
@@ -55,14 +54,24 @@ class ReportGenerator:
         plan_steps = plan_data.get("steps", []) if isinstance(plan_data, dict) else []
         validation_status = str(metrics.get("validation_status", run.validation_status))
         evidence_level = str(metrics.get("evidence_level", run.evidence_level))
-        failure_analysis = metrics.get("failure_analysis")
-        if not isinstance(failure_analysis, dict):
-            failure_analysis = None
+        raw_failure_analysis = metrics.get("failure_analysis")
+        failure_analysis = (
+            cast(dict[str, Any], raw_failure_analysis)
+            if isinstance(raw_failure_analysis, dict)
+            else None
+        )
         failure_summary = (
             str(failure_analysis.get("summary", "")).strip() if failure_analysis else ""
         )
+        raw_unified_metrics = trace.get("metrics")
+        unified_metrics = (
+            cast(dict[str, Any], raw_unified_metrics)
+            if isinstance(raw_unified_metrics, dict)
+            else {}
+        )
+        trace_steps = trace.get("steps") if isinstance(trace.get("steps"), list) else []
         data = {
-            "schema_version": "1.0",
+            "schema_version": "2.0",
             "run_id": str(run.id),
             "task_summary": redact(task.body[:500]),
             "execution_status": str(run.status),
@@ -80,17 +89,24 @@ class ReportGenerator:
             if str(run.status) == "completed"
             else (failure_summary or run.error or "运行未完成"),
             "plan": plan_steps,
+            "execution_mode": trace.get("execution_mode", "计划执行"),
+            "steps": trace_steps,
             "adjustments": replans,
             "evidence": evidence,
             "tool_metrics": {
-                "calls": metrics.get("tool_calls", 0),
-                "failures": metrics.get("tool_failures", 0),
+                "calls": unified_metrics.get("tool_calls", metrics.get("tool_calls", 0)),
+                "failures": unified_metrics.get("tool_failures", metrics.get("tool_failures", 0)),
             },
             "model_metrics": {
-                "calls": metrics.get("model_calls", 0),
-                "tokens": metrics.get("tokens", 0),
+                "calls": unified_metrics.get("logical_model_calls", metrics.get("model_calls", 0)),
+                "logical_model_calls": unified_metrics.get("logical_model_calls", metrics.get("model_calls", 0)),
+                "provider_requests": unified_metrics.get("provider_requests", metrics.get("model_calls", 0)),
+                "input_tokens": unified_metrics.get("input_tokens", 0),
+                "output_tokens": unified_metrics.get("output_tokens", 0),
+                "tokens": unified_metrics.get("total_tokens", metrics.get("tokens", 0)),
             },
-            "duration_ms": metrics.get("duration_ms", 0),
+            "metrics": unified_metrics,
+            "duration_ms": unified_metrics.get("duration_ms", metrics.get("duration_ms", 0)),
             "errors": [run.error] if run.error else [],
             "failure_analysis": failure_analysis,
             "policy_checks": policy,
@@ -144,14 +160,14 @@ class ReportGenerator:
                 ),
                 "",
                 "## 计划与调整",
-                *([f"- {item}" for item in data["plan"]] or ["- 未生成计划"]),
+                *([f"- {item}" for item in data["plan"]] or [f"- {data['execution_mode']}"]),
                 *[f"- 调整：{item}" for item in replans],
                 "",
                 "## 关键证据",
                 *([f"- {item}" for item in evidence] or ["- 无"]),
                 "",
                 "## 指标与审计",
-                f"- 模型调用：{data['model_metrics']['calls']}，Token：{data['model_metrics']['tokens']}",
+                f"- 逻辑模型调用：{data['model_metrics']['logical_model_calls']}，实际 Provider 请求：{data['model_metrics']['provider_requests']}，Token：{data['model_metrics']['tokens']}",
                 f"- 工具调用：{data['tool_metrics']['calls']}，失败：{data['tool_metrics']['failures']}",
                 *[f"- 策略：{item}" for item in policy],
             ]

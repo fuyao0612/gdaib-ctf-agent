@@ -31,11 +31,14 @@ from yuwang.domain.models import (
     EvidenceCandidate,
     EvidenceLevel,
     EvidenceRecord,
+    ExecutionStep,
     Observation,
     RunStatus,
     ToolCall,
     ValidationStatus,
 )
+from yuwang.policy import redact, redact_data
+from yuwang.reports.trace import RunTraceService
 from yuwang.tooling import ToolCallRequest, ToolProgress
 
 if TYPE_CHECKING:
@@ -369,6 +372,26 @@ class WorkflowNodes:
             target_scope=state.task.authorized_targets,
             approval_fingerprint=state.approved_risk_action_fingerprint,
         )
+        goal = state.action.summary
+        if state.plan and state.plan.steps:
+            goal = state.plan.steps[min(max(state.step - 1, 0), len(state.plan.steps) - 1)]
+        public_arguments = redact_data(state.action.tool_input)
+        assert isinstance(public_arguments, dict)
+        # ToolCall 负责完整审计；ExecutionStep 只保存脱敏后的公开叙述，页面刷新后
+        # 仍能以稳定 call_id 原位更新同一张行动/观察卡片。
+        engine.repository.save_execution_step(
+            ExecutionStep(
+                run_id=state.run_id,
+                sequence=engine.repository.next_execution_step_sequence(state.run_id),
+                call_id=call_id,
+                goal=redact(goal),
+                action_kind="tool_call",
+                action_summary=redact(state.action.summary),
+                tool_id=tool.spec.id,
+                tool_name=tool.spec.display_name,
+                arguments=public_arguments,
+            )
+        )
         engine.repository.save_tool_call(
             ToolCall(
                 id=call_id,
@@ -460,14 +483,14 @@ class WorkflowNodes:
         # Flag 格式检查只会产生“候选”证据，不会把格式匹配误报成赛题平台验证成功。
         candidate = result.structured_output.get("candidate")
         validation = result.structured_output.get("validation_status")
+        evidence_ids: list[UUID] = []
         if (
             result.success
             and tool.spec.id == "ctf.flag_candidate_verify"
             and isinstance(candidate, str)
             and isinstance(validation, str)
         ):
-            engine.repository.save_evidence(
-                EvidenceRecord(
+            evidence = EvidenceRecord(
                     run_id=state.run_id,
                     candidate=candidate,
                     source_call_id=call_id,
@@ -475,6 +498,27 @@ class WorkflowNodes:
                     verified=False,
                     verification_summary="候选 Flag，尚未经过赛题平台验证",
                     rule_kind="flag_format",
+            )
+            engine.repository.save_evidence(evidence)
+            evidence_ids.append(evidence.id)
+        current_step = engine.repository.get_execution_step_by_call(state.run_id, call_id)
+        if current_step:
+            observation_status = (
+                "success" if result.success else "timeout" if result.timed_out else "stopped"
+                if result.cancelled else "error"
+            )
+            engine.repository.save_execution_step(
+                current_step.model_copy(
+                    update={
+                        "observation_status": observation_status,
+                        "observation_summary": redact(result.summary),
+                        "preview": RunTraceService.preview(output, result.summary),
+                        "error": redact(result.error.message) if result.error else None,
+                        "artifact_ids": artifact_ids,
+                        "evidence_ids": evidence_ids,
+                        "finished_at": result.finished_at,
+                        "duration_ms": result.duration_ms,
+                    }
                 )
             )
         engine.events.emit(
@@ -496,11 +540,19 @@ class WorkflowNodes:
         engine = self.engine
         state = engine._state(raw)
         latest = state.observations[-1]
+        step = engine.repository.get_execution_step_by_call(state.run_id, latest.call_id)
+        decision = (
+            "工具已返回关键观察，将根据该结果继续下一步。"
+            if latest.success
+            else "工具未成功完成，将调整策略或结束本次运行。"
+        )
+        if step:
+            engine.repository.save_execution_step(step.model_copy(update={"decision": decision}))
         engine.events.emit(
             state.run_id,
             EventType.STATUS_UPDATE,
-            "工具结果已作为不可信观察记录",
-            {"call_id": str(latest.call_id), "success": latest.success},
+            latest.summary,
+            {"call_id": str(latest.call_id), "success": latest.success, "decision": decision},
         )
         return engine._result("observe", state)
 
