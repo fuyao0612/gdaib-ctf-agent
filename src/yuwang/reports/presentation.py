@@ -90,6 +90,15 @@ def present_tool_observation(
             facts.append(f"相关片段：{', '.join(values)}")
         return ToolObservationPresentation("；".join(facts), facts, {"count": count, "artifact_count": artifact_count})
 
+    if tool_id == "builtin.file_metadata":
+        size = safe_output.get("size", "未知")
+        mime_type = safe_output.get("mime_type", "未知类型")
+        digest = str(safe_output.get("sha256", ""))[:12]
+        facts = [f"文件大小：{size} B", f"类型：{mime_type}"]
+        if digest:
+            facts.append(f"SHA-256 摘要：{digest}")
+        return ToolObservationPresentation("；".join(facts), facts, {"size": size, "mime_type": mime_type})
+
     raw_summary = str(safe_output.get("summary") or safe_output.get("message") or "已获得结构化工具结果")
     return ToolObservationPresentation(
         summary=redact(raw_summary)[:1000],

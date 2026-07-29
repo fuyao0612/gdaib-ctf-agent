@@ -232,7 +232,7 @@ test("统一消息可自动执行并保留控制、报告、审计、停止与�
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.getByTestId("result-completed")).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".message.agent").last()).toBeVisible();
-  await expect(page.getByText("展开结论、证据与任务报告")).toBeVisible();
+  await expect(page.getByText("查看完整报告、证据与复现步骤")).toBeVisible();
 
   const auditButton = page.getByRole("button", {
     name: "运行审计",
@@ -278,7 +278,7 @@ test("统一消息可自动执行并保留控制、报告、审计、停止与�
   const inspector = page.locator(".inspector.open");
   await expect(inspector).toBeVisible();
   await expect(inspector).toContainText(
-    "file_metadata 执行成功",
+    /文件大小：\d+ B/,
     { timeout: 20_000 },
   );
   await page.getByRole("button", { name: "关闭运行审计" }).click();
