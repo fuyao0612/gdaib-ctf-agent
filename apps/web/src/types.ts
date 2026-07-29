@@ -159,6 +159,11 @@ export interface FlagCandidate {
   validation_status?: string;
   platform_verified: boolean;
   verification_summary?: string;
+  location?: string;
+  discovery_source?: string;
+  verification_scope?: "none" | "format" | "deterministic_rule" | "platform";
+  deterministic_validation_status?: "not_run" | "passed" | "failed";
+  platform_validation_status?: "not_run" | "passed" | "failed";
 }
 export interface ReportData extends Record<string, unknown> {
   final_answer?: string;
@@ -497,6 +502,9 @@ export interface ExecutionStep {
   arguments: Record<string, unknown>;
   observation_status: "running" | "success" | "error" | "timeout" | "blocked" | "stopped";
   observation_summary: string | null;
+  observation_facts?: string[];
+  observation_details?: Record<string, unknown>;
+  reproduction_hint?: string | null;
   preview: string | null;
   error: string | null;
   decision: string | null;

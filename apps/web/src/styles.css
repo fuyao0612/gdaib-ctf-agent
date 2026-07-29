@@ -1205,6 +1205,7 @@ textarea:disabled {
   .sidebar-collapsed .sidebar {
     display: flex;
     pointer-events: none;
+    transform: translateX(-105%);
   }
 
   .topbar {

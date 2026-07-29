@@ -287,6 +287,17 @@ export default function App() {
     }
   }
 
+  function selectThreadFromSidebar(id: string) {
+    setError("");
+    taskActions.reset();
+    currentThreadIdRef.current = id;
+    setMessage("");
+    setPendingArtifacts([]);
+    if (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 700px)").matches)
+      setSidebarExpanded(false);
+    void selectThread(id);
+  }
+
   async function selectSkills(skillIds: string[]) {
     if (!detail) return;
     const current = detail.skill_ids ?? [];
@@ -477,14 +488,7 @@ export default function App() {
         <ThreadSidebar
           threads={threads}
           selectedId={detail?.id}
-          onSelect={(id) => {
-            setError("");
-            taskActions.reset();
-            currentThreadIdRef.current = id;
-            setMessage("");
-            setPendingArtifacts([]);
-            void selectThread(id);
-          }}
+          onSelect={selectThreadFromSidebar}
           onRename={(thread) => void renameThread(thread)}
           onToggleArchive={(thread) => void toggleArchive(thread)}
           onDelete={(thread) => void removeThread(thread)}
@@ -515,7 +519,7 @@ export default function App() {
               <h2>{detail?.title ?? "选择或创建一个任务"}</h2>
               {detail && (
                 <small>
-                  {activeRun ? "任务正在运行" : "提交任务后由 Agent 自主执行"}
+                  {activeRun?.status === "completed" ? "任务已完成" : activeRun?.status === "failed" ? "任务失败" : activeRun?.status === "stopped" ? "任务已停止" : activeRun?.status === "waiting_input" ? "等待输入" : activeRun ? "执行中" : "提交任务后由 Agent 自主执行"}
                 </small>
               )}
             </div>

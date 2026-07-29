@@ -8,6 +8,8 @@ import {
   presentPhases,
   publicProgressSummary,
   tokenUsageLabel,
+  candidateSourceLabel,
+  flagFormatStatusLabel,
 } from "./run-presentation";
 
 interface Props {
@@ -65,10 +67,11 @@ function finalAnswer(run: Run, report: Report | null, messages: Message[]): stri
   );
 }
 
-function verifiedLabel(run: Run): string {
+function verifiedLabel(run: Run, candidates: FlagCandidate[]): string {
   if (run.validation_status === "validated") return "已通过配置的验证";
   if (run.validation_status === "partial") return "已完成结构化校验，未完成外部验证";
-  if (run.validation_status === "unverified") return "模型生成，未经外部验证";
+  if (run.validation_status === "unverified")
+    return candidates.length ? "已发现候选，尚未完成外部验证" : "结果未经外部验证";
   if (run.validation_status === "failed") return "验证失败";
   return "尚未完成验证";
 }
@@ -112,7 +115,7 @@ export function ExecutionTimeline({ steps }: { steps: ExecutionStep[] }) {
           <p><b>目标：</b>{step.goal}</p>
           <p><b>行动：</b>{step.tool_name ?? step.action_kind}，{step.action_summary}</p>
           <p><b>关键观察：</b>{step.observation_summary ?? "正在等待工具返回"}</p>
-          <p><b>下一步：</b>{step.decision ?? "等待下一次公开决策"}</p>
+          <p><b>下一步：</b>{(step.decision ?? "等待下一次公开决策").replace(/^(下一步：\s*)+/, "").replace(/^(结束：\s*)+/, "")}</p>
           <div className="step-links">证据 {step.evidence_ids.length} · Artifact {step.artifact_ids.length}</div>
           <details>
             <summary>查看参数与结果预览</summary>
@@ -126,7 +129,7 @@ export function ExecutionTimeline({ steps }: { steps: ExecutionStep[] }) {
   );
 }
 
-export function RunProgress({ run, events, audit }: Omit<Props, "report" | "messages">) {
+export function RunProgress({ run, events, audit, report = null }: Omit<Props, "messages" | "report"> & { report?: Report | null }) {
   const [now, setNow] = useState(0);
   const active = [
     "queued",
@@ -146,7 +149,10 @@ export function RunProgress({ run, events, audit }: Omit<Props, "report" | "mess
     ["active", "waiting", "interrupted"].includes(phase.state),
   );
   const model = audit?.model_calls?.at(-1)?.model ?? run.model ?? "等待首次模型调用";
-  const executionSteps = audit?.steps ?? [];
+  const reportSteps = report?.data.timeline;
+  const executionSteps = ["completed", "failed", "stopped"].includes(run.status) && Array.isArray(reportSteps)
+    ? reportSteps as ExecutionStep[]
+    : audit?.steps ?? [];
   const latestKnownTime = Date.parse(
     events.at(-1)?.timestamp ?? run.started_at ?? run.created_at ?? "",
   );
@@ -219,7 +225,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
     <section className={`result-card result-${run.status}`} data-testid={`result-${run.status}`}>
       <header>
         <div><span aria-hidden="true">{run.status === "completed" ? "✓" : run.status.startsWith("waiting_") || run.status === "paused" ? "…" : "!"}</span><h3>{copy.title}</h3></div>
-        <small>{verifiedLabel(run)}</small>
+        <small>{verifiedLabel(run, candidates)}</small>
       </header>
       <p className="result-next">{copy.next}</p>
       {run.status === "completed" && (
@@ -233,8 +239,9 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
           <strong>Flag 候选与验证状态</strong>
           {candidates.map((candidate) => (
             <p key={`${candidate.candidate}-${candidate.source_call_id ?? ""}`}>
-              {candidate.candidate}：格式校验 {candidate.format_status ?? candidate.validation_status ?? "未校验"}；
-              {candidate.platform_verified ? "赛题平台验证通过" : "尚未经过赛题平台验证"}
+              {candidate.candidate}：格式校验 {flagFormatStatusLabel(candidate.format_status ?? candidate.validation_status)}；
+              来源 {candidateSourceLabel(candidate.discovery_source ?? candidate.source_kind)}；
+              {candidate.platform_verified ? "赛题平台验证通过" : "尚未经过赛题平台验证（未执行）"}
             </p>
           ))}
         </section>
@@ -252,7 +259,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
           <pre>{run.status === "failed" ? reason : answer}</pre>
         </div>
         <dl className="result-details">
-          <div><dt>证据摘要</dt><dd>{evidenceSummary.length ? evidenceSummary.join("；") : "暂无可展示证据"}</dd></div>
+          <div><dt>证据摘要</dt><dd>{evidenceSummary.length ? evidenceSummary.join("；") : candidates.length ? "已发现 Flag 候选及其工具来源，但尚无确定性验证记录" : "暂无已持久化证据"}</dd></div>
           <div><dt>消耗</dt><dd>模型 {audit?.usage.model_calls ?? 0} 次 · 工具 {audit?.usage.tool_calls ?? 0} 次 · Token {tokenUsageLabel(audit)} · {elapsedSeconds(run, events, audit)} 秒</dd></div>
           <div><dt>{run.status === "completed" ? "完成说明" : "原因"}</dt><dd>{reason}</dd></div>
         </dl>

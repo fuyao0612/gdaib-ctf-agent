@@ -144,3 +144,21 @@ export function evidenceLevelLabel(level: string): string {
     external: "外部证据",
   }[level] ?? level;
 }
+
+export function flagFormatStatusLabel(status: string | undefined): string {
+  return {
+    not_checked: "未校验",
+    format_matched: "格式匹配",
+    format_failed: "格式不匹配",
+  }[status ?? ""] ?? "未校验";
+}
+
+export function candidateSourceLabel(source: string | undefined): string {
+  return {
+    evidence: "验证记录",
+    execution_step: "工具执行步骤",
+    tool_call: "工具调用",
+    final_answer: "最终答案回退",
+    encoding_decode: "编码解码工具",
+  }[source ?? ""] ?? "已持久化记录";
+}
