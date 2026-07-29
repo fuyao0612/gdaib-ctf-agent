@@ -33,7 +33,8 @@ def completion_summary(validation_status: str) -> str:
 
 
 def _is_ctf_report(task: TaskSpec, trace: dict[str, Any], evidence_records: list[Any]) -> tuple[bool, str]:
-    steps = trace.get("steps") if isinstance(trace.get("steps"), list) else []
+    raw_steps = trace.get("steps")
+    steps: list[Any] = raw_steps if isinstance(raw_steps, list) else []
     if str(task.scenario).casefold() == "ctf":
         return True, "任务场景明确为 CTF"
     if any(isinstance(step, dict) and str(step.get("tool_id", "")).startswith("ctf.") for step in steps):
@@ -63,7 +64,9 @@ class ReportGenerator:
         replans = [event.summary for event in events if str(event.type) == "replanned"]
         # 关键证据只能来自 EvidenceRecord；工具完成或 Artifact 创建本身不是证据。
         evidence: list[str] = []
-        for record in metrics.get("evidence_records", []):
+        raw_evidence_records = metrics.get("evidence_records")
+        evidence_records: list[Any] = raw_evidence_records if isinstance(raw_evidence_records, list) else []
+        for record in evidence_records:
             if isinstance(record, dict):
                 evidence.append(
                     f"候选证据 {record.get('source_call_id')} {record.get('location')}："
@@ -89,10 +92,11 @@ class ReportGenerator:
             if isinstance(raw_unified_metrics, dict)
             else {}
         )
-        trace_steps = trace.get("steps") if isinstance(trace.get("steps"), list) else []
-        evidence_records = metrics.get("evidence_records", [])
-        is_ctf, report_kind_reason = _is_ctf_report(task, trace, evidence_records if isinstance(evidence_records, list) else [])
-        artifacts = trace.get("artifacts") if isinstance(trace.get("artifacts"), list) else []
+        raw_trace_steps = trace.get("steps")
+        trace_steps: list[Any] = raw_trace_steps if isinstance(raw_trace_steps, list) else []
+        is_ctf, report_kind_reason = _is_ctf_report(task, trace, evidence_records)
+        raw_artifacts = trace.get("artifacts")
+        artifacts: list[Any] = raw_artifacts if isinstance(raw_artifacts, list) else []
         timeline = [step for step in trace_steps if isinstance(step, dict)]
         flag_candidates = [
             {
