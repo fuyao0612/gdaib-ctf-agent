@@ -84,7 +84,57 @@ def test_final_answer_flag_is_reported_without_evidence_record() -> None:
     assert data["flag_candidates"][0]["candidate"] == "flag{persisted_answer}"
     assert data["flag_candidates"][0]["platform_verified"] is False
     assert "未发现 Flag 候选" not in markdown
-    assert "尚未进行外部平台验证" in markdown
+    assert "尚未完成外部验证" in markdown
+
+
+def test_report_keeps_custom_prefix_candidate_and_deduplicates_sources() -> None:
+    run = Run(thread_id=uuid4())
+    task = TaskSpec(body="完成授权 CTF", scenario="ctf")
+    call_id = str(uuid4())
+    _, data = ReportGenerator().generate(
+        run,
+        task,
+        [],
+        {
+            "validation_status": "unverified",
+            "trace": {
+                "steps": [{
+                    "sequence": 1, "call_id": call_id, "tool_id": "ctf.encoding_decode",
+                    "observation_summary": "解码完成", "preview": "GDAIB{custom_prefix}",
+                }],
+                "tool_calls": [{"id": call_id, "result_summary": "GDAIB{custom_prefix}"}],
+                "metrics": {}, "artifacts": [],
+            },
+            "evidence_records": [{
+                "candidate": "GDAIB{custom_prefix}", "source_call_id": call_id,
+                "source_step": 1, "location": "/candidates/0/value",
+                "discovery_source": "encoding_decode", "format_status": "not_checked",
+                "verification_scope": "none", "verified": False,
+                "verification_summary": "工具输出发现候选值，尚未执行验证",
+            }],
+        },
+    )
+    candidate = data["flag_candidates"][0]
+    assert candidate["candidate"] == "GDAIB{custom_prefix}"
+    assert candidate["source_call_id"] == call_id
+    assert candidate["location"] == "/candidates/0/value"
+    assert len(candidate["sources"]) == 1
+    assert candidate["platform_verified"] is False
+
+
+def test_unverified_general_report_does_not_claim_a_flag_candidate() -> None:
+    run = Run(thread_id=uuid4())
+    task = TaskSpec(body="总结普通文本", scenario="general")
+    _, data = ReportGenerator().generate(
+        run, task, [], {
+            "validation_status": "unverified", "final_answer": "普通结论",
+            "trace": {"steps": [], "metrics": {}, "artifacts": []},
+        },
+    )
+    assert data["validation_label"] == "结果未经外部验证"
+    assert data["flag_candidates"] == []
+    for key in ("mode", "status", "result", "plan", "execution_mode", "evidence", "duration_ms", "errors", "policy_checks"):
+        assert key in data
 
 
 def test_historical_ctf_trace_recovers_legacy_artifacts_and_uses_real_request_parameters(tmp_path) -> None:

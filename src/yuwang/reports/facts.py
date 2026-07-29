@@ -10,7 +10,9 @@ from urllib.parse import parse_qsl, urlsplit
 from yuwang.domain.models import Event, Run, TaskSpec
 from yuwang.policy import redact, redact_data
 
-_FLAG = re.compile(r"(?i)\b(?:flag|ctf)\{[^\s{}]{1,300}\}")
+# The prefix is intentionally bounded.  It accepts common competition-specific prefixes
+# without treating arbitrary JSON objects or template syntax as a Flag candidate.
+_FLAG = re.compile(r"(?i)(?<![A-Za-z0-9_-])[A-Za-z][A-Za-z0-9_-]{0,39}\{[^\s{}]{1,300}\}")
 _CTF_HEADER = re.compile(r"^X-CTF-[A-Za-z0-9-]+$")
 
 
@@ -18,10 +20,14 @@ def _items(value: object) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
-def _status(value: str) -> str:
+def _status(value: str, has_candidate: bool, has_answer: bool) -> str:
     return {
         "pending": "待验证",
-        "unverified": "发现候选，尚未进行外部平台验证",
+        "unverified": (
+            "已发现候选，尚未完成外部验证" if has_candidate
+            else "结果未经外部验证" if has_answer
+            else "尚未完成验证"
+        ),
         "partial": "已通过格式或结构化校验，尚未进行外部平台验证",
         "validated": "已通过确定性外部验证",
         "failed": "验证失败",
@@ -113,7 +119,7 @@ class ReportFacts:
             if is_ctf else "未发现 CTF 专用持久化事实"
         )
         candidates = cls._candidates(evidence, timeline, tool_calls, final_answer)
-        artifacts = _items(trace.get("artifacts"))
+        artifacts = cls._artifacts(_items(trace.get("artifacts")), timeline, tool_calls)
         clues = [
             {"step": step.get("sequence"), "call_id": step.get("call_id"), "summary": step.get("observation_summary")}
             for step in timeline if step.get("observation_summary")
@@ -128,7 +134,10 @@ class ReportFacts:
             report_kind_reason=reason,
             execution_status=str(run.status),
             validation_status=str(metrics.get("validation_status", run.validation_status)),
-            validation_label=_status(str(metrics.get("validation_status", run.validation_status))),
+            validation_label=_status(
+                str(metrics.get("validation_status", run.validation_status)),
+                bool(candidates), bool(final_answer),
+            ),
             task_summary=redact(task.body[:500]), final_answer=redact(final_answer) if final_answer else None,
             timeline=timeline, artifacts=artifacts, candidates=candidates, key_clues=clues,
             reproduction_steps=reproduction,
@@ -149,20 +158,65 @@ class ReportFacts:
     ) -> list[dict[str, Any]]:
         values: dict[str, dict[str, Any]] = {}
 
-        def add(candidate: str, kind: str, call_id: object = None, step: object = None, verified: bool = False, format_ok: bool = False, summary: str = "") -> None:
+        def add(
+            candidate: str, kind: str, call_id: object = None, step: object = None,
+            *, location: str | None = None, trusted: bool = False, format_status: str = "not_checked",
+            verification_scope: str = "none", deterministic_status: str = "not_run",
+            platform_status: str = "not_run", summary: str = "",
+        ) -> None:
             candidate = candidate.strip()
-            if not _FLAG.fullmatch(candidate):
+            if not _FLAG.fullmatch(candidate) and not trusted:
                 return
-            current = values.setdefault(candidate, {"candidate": candidate, "source_kind": kind, "source_call_id": str(call_id) if call_id else None, "source_step": step, "format_status": "format_matched" if format_ok else "not_checked", "platform_verified": verified, "verification_summary": summary or "发现候选，尚未经过外部平台验证", "sources": []})
-            current["sources"].append({"kind": kind, "call_id": str(call_id) if call_id else None, "step": step})
-            current["platform_verified"] = bool(current["platform_verified"] or verified)
-            if format_ok:
-                current["format_status"] = "format_matched"
-            if verified:
-                current["verification_summary"] = summary or "已通过确定性外部验证"
+            source = {
+                "kind": kind, "call_id": str(call_id) if call_id else None,
+                "step": step, "location": location,
+            }
+            current = values.setdefault(candidate, {
+                "candidate": candidate, "source_kind": kind,
+                "source_call_id": str(call_id) if call_id else None,
+                "source_step": step, "location": location,
+                "discovery_source": kind, "format_status": format_status,
+                "verification_scope": verification_scope,
+                "deterministic_validation_status": deterministic_status,
+                "platform_validation_status": platform_status,
+                "platform_verified": platform_status == "passed",
+                "verification_summary": summary or "工具输出发现候选值，尚未执行验证",
+                "sources": [],
+            })
+            if not any(item.get("call_id") == source["call_id"] and source["call_id"] for item in current["sources"]):
+                current["sources"].append(source)
+            if current["format_status"] != "format_matched" and format_status == "format_matched":
+                current["format_status"] = format_status
+            if deterministic_status == "passed":
+                current["deterministic_validation_status"] = "passed"
+                current["verification_scope"] = "deterministic_rule"
+            if platform_status == "passed":
+                current["platform_validation_status"] = "passed"
+                current["platform_verified"] = True
+                current["verification_scope"] = "platform"
+            if summary:
+                current["verification_summary"] = summary
 
         for record in evidence:
-            add(str(record.get("candidate", "")), "evidence", record.get("source_call_id"), None, bool(record.get("verified")), record.get("rule_kind") == "flag_format", str(record.get("verification_summary", "")))
+            scope = str(record.get("verification_scope") or "")
+            rule_kind = str(record.get("rule_kind") or "")
+            # Legacy EvidenceRecord.verified means a deterministic rule in this project,
+            # never a competition-platform receipt.
+            deterministic = str(record.get("deterministic_validation_status") or (
+                "passed" if record.get("verified") and scope != "platform" else "not_run"
+            ))
+            platform = str(record.get("platform_validation_status") or (
+                "passed" if scope == "platform" and record.get("verified") else "not_run"
+            ))
+            add(
+                str(record.get("candidate", "")), str(record.get("discovery_source") or "evidence"),
+                record.get("source_call_id"), record.get("source_step"),
+                location=str(record.get("location") or "") or None, trusted=True,
+                format_status=str(record.get("format_status") or ("format_matched" if rule_kind == "flag_format" else "not_checked")),
+                verification_scope=scope or ("deterministic_rule" if deterministic == "passed" else "none"),
+                deterministic_status=deterministic, platform_status=platform,
+                summary=str(record.get("verification_summary", "")),
+            )
         for step in timeline:
             for candidate in _FLAG.findall(" ".join(str(step.get(key, "")) for key in ("observation_summary", "preview"))):
                 add(candidate, "execution_step", step.get("call_id"), step.get("sequence"))
@@ -172,6 +226,27 @@ class ReportFacts:
         for candidate in _FLAG.findall(final_answer or ""):
             add(candidate, "final_answer")
         return list(values.values())
+
+    @staticmethod
+    def _artifacts(
+        artifacts: list[dict[str, Any]], timeline: list[dict[str, Any]],
+        tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        sources: dict[str, tuple[object, object]] = {}
+        for step in timeline:
+            for artifact_id in step.get("artifact_ids", []):
+                sources.setdefault(str(artifact_id), (step.get("sequence"), step.get("call_id")))
+        for call in tool_calls:
+            for artifact_id in call.get("artifact_ids", []):
+                sources.setdefault(str(artifact_id), (None, call.get("id")))
+        return [
+            {
+                **artifact,
+                "source_step": sources.get(str(artifact.get("id")), (None, None))[0],
+                "source_call_id": sources.get(str(artifact.get("id")), (None, None))[1],
+            }
+            for artifact in artifacts
+        ]
 
     @staticmethod
     def _normalize_timeline(timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -217,6 +292,7 @@ class ReportFacts:
             "sequence": index, "call_id": step.get("call_id"), "tool_id": step.get("tool_id"),
             "action": step.get("action_summary") or step.get("goal"), "arguments": arguments,
             "expected": step.get("observation_summary"),
+            "artifact_ids": step.get("artifact_ids", []),
         }
         if step.get("tool_id") == "builtin.localhost_http_probe":
             parsed = urlsplit(str(arguments.get("url", "")))

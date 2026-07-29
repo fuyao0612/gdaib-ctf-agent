@@ -77,6 +77,13 @@ class ReportGenerator:
     @staticmethod
     def _data(run: Run, facts: ReportFacts, metrics: dict[str, Any]) -> dict[str, Any]:
         model = facts.metrics
+        # Historical Run records are immutable.  A report can still derive its display
+        # evidence level from the persisted successful tool-backed candidate source.
+        report_evidence_level = (
+            "external"
+            if any(item.get("source_call_id") for item in facts.candidates)
+            else metrics.get("evidence_level", run.evidence_level)
+        )
         data = {
             "schema_version": "2.1", "report_kind": facts.report_kind,
             "report_kind_reason": facts.report_kind_reason, "run_id": str(run.id),
@@ -85,16 +92,28 @@ class ReportGenerator:
             "validation_label": facts.validation_label,
             # Keep the established public fields while schema 2.1 adds structured facts.
             "trust_notice": trust_notice(facts.validation_status),
-            "evidence_level": metrics.get("evidence_level", run.evidence_level),
+            "evidence_level": report_evidence_level,
             "completion_mode": metrics.get("completion_mode", run.completion_mode),
+            # Schema 2.1 retains these schema 2.0 keys as read-only compatibility views.
+            "mode": str(getattr(run, "mode", "agent")),
+            "result": completion_summary(facts.validation_status),
+            "plan": metrics.get("plan", {}).get("steps", []) if isinstance(metrics.get("plan"), dict) else [],
+            "execution_mode": metrics.get("trace", {}).get("execution_mode", "计划执行") if isinstance(metrics.get("trace"), dict) else "计划执行",
             "final_answer": facts.final_answer,
             "structured_output": metrics.get("structured_output"),
             "flag_candidates": facts.candidates, "timeline": facts.timeline, "steps": facts.timeline,
-            "key_clues": facts.key_clues, "verification_evidence": metrics.get("evidence_records", []),
+            "key_clues": facts.key_clues,
+            "evidence": [item.get("summary") for item in facts.key_clues if item.get("summary")],
+            "verification_evidence": metrics.get("evidence_records", []),
             "artifacts": facts.artifacts, "reproduction_steps": facts.reproduction_steps,
             "failed_attempts": facts.failed_attempts, "policy_summary": facts.policy_summary,
             "adjustments": facts.adjustments,
-            "metrics": model, "model_metrics": {
+            "metrics": model,
+            "duration_ms": model.get("duration_ms", metrics.get("duration_ms", 0)),
+            "errors": [run.error] if run.error else [],
+            "policy_checks": [item["summary"] for item in facts.policy_summary],
+            "model_metrics": {
+                "calls": model.get("logical_model_calls", metrics.get("model_calls", 0)),
                 "logical_model_calls": model.get("logical_model_calls", metrics.get("model_calls", 0)),
                 "provider_requests": model.get("provider_requests", metrics.get("model_calls", 0)),
                 "input_tokens": model.get("input_tokens", 0), "output_tokens": model.get("output_tokens", 0),
@@ -140,7 +159,12 @@ class ReportGenerator:
             summary = analysis.get("summary") if isinstance(analysis, dict) else None
             lines += ["", "## 失败复盘", f"- {summary or '运行失败，未记录额外复盘摘要。'}"]
         lines += ["", "## 八、Artifact 清单"]
-        lines += [f"- {item.get('filename')}；{item.get('mime_type')}；{item.get('size')} B；SHA-256 {str(item.get('sha256', ''))[:12]}；下载：{item.get('download_url')}" for item in facts.artifacts] or ["- 无关联 Artifact。"]
+        lines += [
+            f"- {item.get('filename')}；{item.get('mime_type')}；{item.get('size')} B；"
+            f"SHA-256 {str(item.get('sha256', ''))[:12]}；来源步骤：{item.get('source_step') or '未记录'}；"
+            f"source_call_id：{item.get('source_call_id') or '未记录'}；下载：{item.get('download_url')}"
+            for item in facts.artifacts
+        ] or ["- 无关联 Artifact。"]
         lines += ["", "## 九、资源消耗与审计", f"- 逻辑模型调用：{data['model_metrics']['logical_model_calls']}，实际 Provider 请求：{data['model_metrics']['provider_requests']}；Token：{data['model_metrics']['tokens']}", f"- 工具调用：{data['tool_metrics']['calls']}；失败：{data['tool_metrics']['failures']}"]
         lines += [f"- 策略：{item['summary']}（{item['count']} 次）" for item in facts.policy_summary]
         lines += ["", "## 十、限制与未验证事项", *[f"- {value}" for value in data["limitations"]]]

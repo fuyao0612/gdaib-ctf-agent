@@ -394,6 +394,9 @@ class ExecutionStep(DomainModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
     observation_status: Literal["running", "success", "error", "timeout", "blocked", "stopped"] = "running"
     observation_summary: str | None = Field(default=None, max_length=1000)
+    observation_facts: list[str] = Field(default_factory=list, max_length=20)
+    observation_details: dict[str, Any] = Field(default_factory=dict)
+    reproduction_hint: str | None = Field(default=None, max_length=1000)
     preview: str | None = Field(default=None, max_length=4000)
     error: str | None = Field(default=None, max_length=1000)
     decision: str | None = Field(default=None, max_length=500)
@@ -413,6 +416,12 @@ class EvidenceRecord(DomainModel):
     verified: bool
     verification_summary: str
     rule_kind: str | None = None
+    source_step: int | None = Field(default=None, ge=1)
+    discovery_source: str = "evidence"
+    format_status: Literal["not_checked", "format_matched", "format_failed"] = "not_checked"
+    verification_scope: Literal["none", "format", "deterministic_rule", "platform"] = "none"
+    deterministic_validation_status: Literal["not_run", "passed", "failed"] = "not_run"
+    platform_validation_status: Literal["not_run", "passed", "failed"] = "not_run"
     created_at: datetime = Field(default_factory=utcnow)
 
 

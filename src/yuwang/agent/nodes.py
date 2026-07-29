@@ -510,23 +510,43 @@ class WorkflowNodes:
         candidate = result.structured_output.get("candidate")
         validation = result.structured_output.get("validation_status")
         evidence_ids: list[UUID] = []
-        if (
-            result.success
-            and tool.spec.id == "ctf.flag_candidate_verify"
-            and isinstance(candidate, str)
-            and isinstance(validation, str)
-        ):
-            evidence = EvidenceRecord(
-                    run_id=state.run_id,
-                    candidate=candidate,
-                    source_call_id=call_id,
-                    location="/candidate",
-                    verified=False,
-                    verification_summary="候选 Flag，尚未经过赛题平台验证",
-                    rule_kind="flag_format",
+        if result.success and tool.spec.id in {"ctf.flag_candidate_verify", "ctf.encoding_decode"}:
+            structured_candidates = (
+                [candidate]
+                if isinstance(candidate, str)
+                else result.structured_output.get("candidates", [])
             )
-            engine.repository.save_evidence(evidence)
-            evidence_ids.append(evidence.id)
+            if not isinstance(structured_candidates, list):
+                structured_candidates = []
+            for candidate_index, candidate_value in enumerate(structured_candidates):
+                candidate_text = (
+                    candidate_value.get("value")
+                    if isinstance(candidate_value, dict)
+                    else candidate_value
+                )
+                if not isinstance(candidate_text, str) or not candidate_text.strip():
+                    continue
+                is_format_tool = tool.spec.id == "ctf.flag_candidate_verify"
+                evidence = EvidenceRecord(
+                    run_id=state.run_id,
+                    candidate=candidate_text.strip(),
+                    source_call_id=call_id,
+                    location=("/candidate" if is_format_tool else f"/candidates/{candidate_index}/value"),
+                    verified=False,
+                    verification_summary=(
+                        "候选 Flag 已通过格式校验，尚未进行确定性或平台验证"
+                        if is_format_tool and validation == "format_matched"
+                        else "工具输出发现候选值，尚未执行格式、确定性或平台验证"
+                    ),
+                    rule_kind="flag_format" if is_format_tool else None,
+                    discovery_source=("tool_call" if is_format_tool else "encoding_decode"),
+                    format_status=("format_matched" if is_format_tool and validation == "format_matched" else "not_checked"),
+                    verification_scope=("format" if is_format_tool and validation == "format_matched" else "none"),
+                    deterministic_validation_status="not_run",
+                    platform_validation_status="not_run",
+                )
+                engine.repository.save_evidence(evidence)
+                evidence_ids.append(evidence.id)
         current_step = engine.repository.get_execution_step_by_call(state.run_id, call_id)
         if current_step:
             observation_status = (
@@ -538,6 +558,9 @@ class WorkflowNodes:
                     update={
                         "observation_status": observation_status,
                         "observation_summary": presentation.summary,
+                        "observation_facts": presentation.facts,
+                        "observation_details": presentation.status_details,
+                        "reproduction_hint": presentation.reproduction_hint,
                         "preview": RunTraceService.preview(output, result.summary),
                         "error": redact(result.error.message) if result.error else None,
                         "artifact_ids": artifact_ids,
@@ -702,6 +725,15 @@ class WorkflowNodes:
 
         for observation in reversed(state.observations):
             output = observation.output
+            candidates = output.get("candidates")
+            if observation.success and observation.tool_name == "ctf.encoding_decode" and isinstance(candidates, list):
+                for index, item in enumerate(candidates):
+                    value = item.get("value") if isinstance(item, dict) else item
+                    if isinstance(value, str) and value.strip():
+                        return EvidenceCandidate(
+                            value=value.strip(), source_call_id=observation.call_id,
+                            location=f"/candidates/{index}/value",
+                        )
             if (
                 observation.success
                 and observation.tool_name == "ctf.flag_candidate_verify"
