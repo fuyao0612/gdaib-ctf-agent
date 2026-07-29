@@ -38,6 +38,7 @@ from yuwang.domain.models import (
     ValidationStatus,
 )
 from yuwang.policy import redact, redact_data
+from yuwang.reports.presentation import present_tool_observation
 from yuwang.reports.trace import RunTraceService
 from yuwang.tooling import ToolCallRequest, ToolProgress
 
@@ -50,6 +51,23 @@ class WorkflowNodes:
 
     def __init__(self, engine: AgentEngine) -> None:
         self.engine = engine
+
+    def _link_previous_decision(self, state: Any, action: AgentAction) -> None:
+        """将下一次已选择的公开动作关联到最近未收口的工具步骤。"""
+
+        for step in reversed(self.engine.repository.list_execution_steps(state.run_id)):
+            if step.finished_at is None or step.decision:
+                continue
+            if action.kind == "call_tool":
+                decision = f"下一步：{action.summary}"
+            elif action.kind == "replan":
+                decision = f"重新规划：{action.summary}"
+            elif action.kind == "request_input":
+                decision = f"等待补充：{action.summary}"
+            else:
+                decision = f"结束：{action.summary}"
+            self.engine.repository.save_execution_step(step.model_copy(update={"decision": redact(decision)}))
+            return
 
     def _archive_large_tool_output(
         self,
@@ -249,6 +267,7 @@ class WorkflowNodes:
         state = engine._state(raw)
         action = await engine.select_action(state)
         state.action = AgentAction.model_validate(action)
+        self._link_previous_decision(state, state.action)
         fingerprint = engine._fingerprint(state.action)
         repeats = state.action_fingerprints.count(fingerprint)
         state.action_fingerprints.append(fingerprint)
@@ -372,9 +391,9 @@ class WorkflowNodes:
             target_scope=state.task.authorized_targets,
             approval_fingerprint=state.approved_risk_action_fingerprint,
         )
+        # 全局工作流计数不等于计划步骤序号；没有持久化的可靠关联时，直接使用
+        # 当前动作的公开摘要作为目标，避免把多个工具错误映射到计划最后一步。
         goal = state.action.summary
-        if state.plan and state.plan.steps:
-            goal = state.plan.steps[min(max(state.step - 1, 0), len(state.plan.steps) - 1)]
         public_arguments = redact_data(state.action.tool_input)
         assert isinstance(public_arguments, dict)
         # ToolCall 负责完整审计；ExecutionStep 只保存脱敏后的公开叙述，页面刷新后
@@ -447,6 +466,13 @@ class WorkflowNodes:
                 "工具已生成派生 Artifact",
                 {"artifact_id": artifact_id, "call_id": str(call_id)},
             )
+        presentation = present_tool_observation(
+            tool.spec.id,
+            success=result.success,
+            output=output,
+            error=result.error.message if result.error else None,
+            artifact_count=len(artifact_ids),
+        )
         engine.repository.save_tool_call(
             ToolCall(
                 id=call_id,
@@ -470,7 +496,7 @@ class WorkflowNodes:
             tool_name=state.action.tool_name,
             success=result.success,
             output=output,
-            summary=result.summary,
+            summary=presentation.summary,
             error=result.error.message if result.error else None,
         )
         if state.observations and engine._observation_digest(
@@ -511,7 +537,7 @@ class WorkflowNodes:
                 current_step.model_copy(
                     update={
                         "observation_status": observation_status,
-                        "observation_summary": redact(result.summary),
+                        "observation_summary": presentation.summary,
                         "preview": RunTraceService.preview(output, result.summary),
                         "error": redact(result.error.message) if result.error else None,
                         "artifact_ids": artifact_ids,
@@ -524,7 +550,7 @@ class WorkflowNodes:
         engine.events.emit(
             state.run_id,
             EventType.TOOL_FINISHED,
-            result.summary,
+            presentation.summary,
             {
                 "call_id": str(call_id),
                 "tool": state.action.tool_name,
@@ -540,19 +566,11 @@ class WorkflowNodes:
         engine = self.engine
         state = engine._state(raw)
         latest = state.observations[-1]
-        step = engine.repository.get_execution_step_by_call(state.run_id, latest.call_id)
-        decision = (
-            "工具已返回关键观察，将根据该结果继续下一步。"
-            if latest.success
-            else "工具未成功完成，将调整策略或结束本次运行。"
-        )
-        if step:
-            engine.repository.save_execution_step(step.model_copy(update={"decision": decision}))
         engine.events.emit(
             state.run_id,
             EventType.STATUS_UPDATE,
             latest.summary,
-            {"call_id": str(latest.call_id), "success": latest.success, "decision": decision},
+            {"call_id": str(latest.call_id), "success": latest.success},
         )
         return engine._result("observe", state)
 
