@@ -29,6 +29,17 @@ class AgentFinalizer:
     def __init__(self, engine: AgentEngine) -> None:
         self.engine = engine
 
+    @staticmethod
+    def render_report_template(template: str, markdown: str, values: dict[str, object]) -> str:
+        """兼容历史默认模板，避免把已含 H1 的报告再嵌套为第二个标题。"""
+
+        if template.strip() == "# {task}\n\n{observations}":
+            return markdown
+        observations = markdown
+        if observations.startswith("# "):
+            observations = observations.split("\n", 1)[1].lstrip("\n")
+        return SafeTemplateRenderer.render(template, {**values, "observations": observations})
+
     async def generate_report(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
@@ -69,14 +80,14 @@ class AgentFinalizer:
                 "trace": RunTraceService(engine.repository).snapshot(run.id),
             },
         )
-        markdown = SafeTemplateRenderer.render(
+        markdown = self.render_report_template(
             engine.profile.report_template,
+            markdown,
             {
                 "task": state.task.body,
                 "scenario": state.task.scenario,
                 "thread_summary": "",
                 "current_plan": state.plan.model_dump(mode="json") if state.plan else "",
-                "observations": markdown,
                 "remaining_budget": state.remaining_budget,
             },
         )

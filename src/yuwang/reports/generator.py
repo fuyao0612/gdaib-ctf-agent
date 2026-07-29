@@ -32,6 +32,26 @@ def completion_summary(validation_status: str) -> str:
     }.get(validation_status, "执行已结束，验证状态未知")
 
 
+def _is_ctf_report(task: TaskSpec, trace: dict[str, Any], evidence_records: list[Any]) -> tuple[bool, str]:
+    steps = trace.get("steps") if isinstance(trace.get("steps"), list) else []
+    if str(task.scenario).casefold() == "ctf":
+        return True, "任务场景明确为 CTF"
+    if any(isinstance(step, dict) and str(step.get("tool_id", "")).startswith("ctf.") for step in steps):
+        return True, "运行使用了 CTF 专用工具"
+    if any(isinstance(item, dict) and item.get("rule_kind") == "flag_format" for item in evidence_records):
+        return True, "存在 Flag 格式校验证据"
+    return False, "未发现 CTF 场景、工具或 Flag 证据"
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        normalized = value.strip()
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
+
+
 class ReportGenerator:
     """把运行、事件和计量快照渲染成可下载的 Markdown/JSON 报告。"""
 
@@ -49,7 +69,7 @@ class ReportGenerator:
                     f"候选证据 {record.get('source_call_id')} {record.get('location')}："
                     f"{record.get('verification_summary')}"
                 )
-        policy = [event.summary for event in events if str(event.type) == "policy_checked"]
+        policy = _dedupe([event.summary for event in events if str(event.type) == "policy_checked"])
         plan_data = metrics.get("plan") or {}
         plan_steps = plan_data.get("steps", []) if isinstance(plan_data, dict) else []
         validation_status = str(metrics.get("validation_status", run.validation_status))
@@ -70,8 +90,31 @@ class ReportGenerator:
             else {}
         )
         trace_steps = trace.get("steps") if isinstance(trace.get("steps"), list) else []
+        evidence_records = metrics.get("evidence_records", [])
+        is_ctf, report_kind_reason = _is_ctf_report(task, trace, evidence_records if isinstance(evidence_records, list) else [])
+        artifacts = trace.get("artifacts") if isinstance(trace.get("artifacts"), list) else []
+        timeline = [step for step in trace_steps if isinstance(step, dict)]
+        flag_candidates = [
+            {
+                "candidate": item.get("candidate"), "source_call_id": item.get("source_call_id"),
+                "validation_status": "format_matched" if item.get("rule_kind") == "flag_format" else "unverified",
+                "platform_verified": bool(item.get("verified", False)),
+            }
+            for item in evidence_records if isinstance(item, dict) and item.get("candidate")
+        ]
+        key_clues = _dedupe([
+            str(step.get("observation_summary")) for step in timeline
+            if step.get("observation_summary")
+        ])
+        reproduction_steps = [
+            f"{index}. {step.get('action_summary', step.get('goal', '执行已记录动作'))}"
+            for index, step in enumerate(timeline, 1)
+        ]
+        failed_attempts = [step for step in timeline if step.get("observation_status") in {"error", "timeout", "blocked", "stopped"}]
         data = {
             "schema_version": "2.0",
+            "report_kind": "ctf" if is_ctf else "general",
+            "report_kind_reason": report_kind_reason,
             "run_id": str(run.id),
             "task_summary": redact(task.body[:500]),
             "execution_status": str(run.status),
@@ -91,6 +134,13 @@ class ReportGenerator:
             "plan": plan_steps,
             "execution_mode": trace.get("execution_mode", "计划执行"),
             "steps": trace_steps,
+            "timeline": timeline,
+            "key_clues": key_clues,
+            "verification_evidence": evidence_records,
+            "artifacts": artifacts,
+            "flag_candidates": flag_candidates,
+            "reproduction_steps": reproduction_steps,
+            "failed_attempts": failed_attempts,
             "adjustments": replans,
             "evidence": evidence,
             "tool_metrics": {
@@ -110,66 +160,54 @@ class ReportGenerator:
             "errors": [run.error] if run.error else [],
             "failure_analysis": failure_analysis,
             "policy_checks": policy,
+            "policy_summary": [{"summary": item, "count": sum(event.summary == item for event in events if str(event.type) == "policy_checked")} for item in policy],
+            "limitations": [trust_notice(validation_status)],
         }
         sanitized_data = redact_data(data)
         assert isinstance(sanitized_data, dict)
         data = sanitized_data
+        artifact_lines = [
+            f"- {item.get('filename')} · {item.get('kind')} · {item.get('size')} B · SHA-256 {str(item.get('sha256', ''))[:12]}"
+            for item in artifacts
+        ] or ["- 无"]
+        lines = [
+            "# 御网智元 CTF 解题报告" if is_ctf else "# 御网智元运行报告",
+            "",
+            "## 一、任务与结论" if is_ctf else "## 任务与结论",
+            f"- 运行：`{run.id}`",
+            f"- 状态：**{run.status}**；验证状态：`{data['validation_status']}`",
+            f"- 报告类型：{'CTF' if is_ctf else '通用任务'}（{report_kind_reason}）",
+            f"- 任务：{data['task_summary']}",
+            "",
+            "## 二、Flag 与验证状态" if is_ctf else "## 执行摘要",
+        ]
+        if is_ctf:
+            lines.extend([f"- 候选 Flag：`{item['candidate']}`；格式校验：{item['validation_status']}；赛题平台验证：{'已通过' if item['platform_verified'] else '未执行'}" for item in flag_candidates] or ["- 未获得 Flag 候选。"])
+        else:
+            lines.append(str(data["result"]))
+        lines.extend([
+            "", "## 三、详细执行过程" if is_ctf else "## 执行过程",
+            *[
+                f"### 步骤 {step.get('sequence')}\n- 目标：{step.get('goal')}\n- 行动：{step.get('action_summary')}\n- 关键观察：{step.get('observation_summary') or '无'}\n- 下一步：{step.get('decision') or '未记录后续公开决策'}"
+                for step in timeline
+            ],
+            *( ["", "## 四、关键线索与证据", *[f"- {item}" for item in key_clues]] if is_ctf else [] ),
+            "", "## 可复现步骤", *reproduction_steps,
+            "", "## Artifact 清单", *artifact_lines,
+            "", "## 资源消耗与审计",
+            f"- 逻辑模型调用：{data['model_metrics']['logical_model_calls']}，实际 Provider 请求：{data['model_metrics']['provider_requests']}，Token：{data['model_metrics']['tokens']}",
+            f"- 工具调用：{data['tool_metrics']['calls']}，失败：{data['tool_metrics']['failures']}",
+            *[f"- 策略：{item['summary']}（{item['count']} 次）" for item in data['policy_summary']],
+            "", "## 限制与未验证事项", *[f"- {item}" for item in data['limitations']],
+        ])
+        if data.get("failure_analysis"):
+            lines.extend([
+                "", "## 失败复盘", str(data["failure_analysis"].get("summary", "")),
+                *[f"- 建议：{item}" for item in data["failure_analysis"].get("next_steps", [])],
+            ])
+        if replans:
+            lines.extend(["", "## 计划与调整", *[f"- 调整：{item}" for item in replans]])
         markdown = "\n".join(
-            [
-                "# 御网智元运行报告",
-                "",
-                f"- 运行：`{run.id}`",
-                f"- 模式：`{task.mode}`",
-                f"- 状态：**{run.status}**",
-                f"- 执行状态：`{data['execution_status']}`",
-                f"- 完成模式：`{data['completion_mode']}`",
-                f"- 验证状态：`{data['validation_status']}`",
-                f"- 证据等级：`{data['evidence_level']}`",
-                f"- 可信提示：**{data['trust_notice']}**",
-                f"- 任务：{data['task_summary']}",
-                "",
-                "## 执行摘要",
-                data["result"],
-                *([str(data["final_answer"])] if data["final_answer"] else []),
-                *(
-                    [
-                        "",
-                        "## 失败复盘",
-                        str(data["failure_analysis"].get("summary", "")),
-                        "",
-                        "### 可能原因",
-                        *(
-                            [
-                                f"- {item}"
-                                for item in data["failure_analysis"].get("causes", [])
-                            ]
-                            or ["- 未提供额外原因"]
-                        ),
-                        "",
-                        "### 建议下一步",
-                        *(
-                            [
-                                f"- {item}"
-                                for item in data["failure_analysis"].get("next_steps", [])
-                            ]
-                            or ["- 根据运行审计调整后重试"]
-                        ),
-                    ]
-                    if data.get("failure_analysis")
-                    else []
-                ),
-                "",
-                "## 计划与调整",
-                *([f"- {item}" for item in data["plan"]] or [f"- {data['execution_mode']}"]),
-                *[f"- 调整：{item}" for item in replans],
-                "",
-                "## 关键证据",
-                *([f"- {item}" for item in evidence] or ["- 无"]),
-                "",
-                "## 指标与审计",
-                f"- 逻辑模型调用：{data['model_metrics']['logical_model_calls']}，实际 Provider 请求：{data['model_metrics']['provider_requests']}，Token：{data['model_metrics']['tokens']}",
-                f"- 工具调用：{data['tool_metrics']['calls']}，失败：{data['tool_metrics']['failures']}",
-                *[f"- 策略：{item}" for item in policy],
-            ]
+            lines
         )
         return redact(markdown), data
