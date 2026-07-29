@@ -28,6 +28,7 @@ from yuwang.agent.state import (
     RunStopped,
 )
 from yuwang.domain.models import CallStatus, EventType, Run, RunStatus, TaskSpec
+from yuwang.policy import redact
 from yuwang.reports.trace import RunTraceService
 
 if TYPE_CHECKING:
@@ -39,6 +40,16 @@ class AgentRunCoordinator:
 
     def __init__(self, engine: AgentEngine) -> None:
         self.engine = engine
+
+    def _close_latest_step(self, run_id: UUID, reason: str) -> None:
+        """终态没有下一次动作时，用真实终止原因收口最后一个公开步骤。"""
+
+        for step in reversed(self.engine.repository.list_execution_steps(run_id)):
+            if step.finished_at is not None and not step.decision:
+                self.engine.repository.save_execution_step(
+                    step.model_copy(update={"decision": redact(f"结束：{reason}")})
+                )
+                return
 
     def build_graph(self, entry_point: str = "ingest") -> Any:
         """根据 AgentProfile 的安全预设创建当前运行图。"""
@@ -229,6 +240,7 @@ class AgentRunCoordinator:
             run = engine.repository.get_run(run.id) or run
             run = self._restore_validation_snapshot(run)
             run.transition(RunStatus.STOPPED, str(exc))
+            self._close_latest_step(run.id, str(exc))
             engine.repository.save_run(run)
             engine.events.emit(
                 run.id,
@@ -240,6 +252,7 @@ class AgentRunCoordinator:
             run = engine.repository.get_run(run.id) or run
             run = self._restore_validation_snapshot(run)
             run.transition(RunStatus.PAUSED, str(exc))
+            self._close_latest_step(run.id, str(exc))
             engine.repository.save_run(run)
             engine.events.emit(
                 run.id,
@@ -252,6 +265,7 @@ class AgentRunCoordinator:
             run = self._restore_validation_snapshot(run)
             if run.status in {RunStatus.QUEUED, RunStatus.RUNNING}:
                 run.transition(RunStatus.STOPPED, "用户请求停止并取消进行中的模型调用")
+                self._close_latest_step(run.id, run.error or "用户请求停止")
                 engine.repository.save_run(run)
                 engine.events.emit(
                     run.id,
@@ -284,6 +298,7 @@ class AgentRunCoordinator:
         engine = self.engine
         fallback = deterministic_failure_analysis(error)
         run.transition(RunStatus.FAILED, fallback.summary[:500])
+        self._close_latest_step(run.id, run.error or fallback.summary)
         engine.repository.save_run(run)
         analysis = await self._failure_analysis(run, task, error, fallback)
         engine.events.emit(
