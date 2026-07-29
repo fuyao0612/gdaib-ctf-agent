@@ -113,6 +113,7 @@ const report: Report = {
   data: {
     final_answer: "已验证答案",
     evidence: ["参考工具返回匹配结果"],
+    flag_candidates: [{ candidate: "flag{demo}", validation_status: "format_matched", platform_verified: false }],
   },
 };
 
@@ -182,6 +183,13 @@ describe("统一任务结果卡片", () => {
 
   it("将部分验证作为独立状态标签", () => {
     expect(validationStatusLabel("partial")).toBe("部分验证");
+  });
+
+  it("在完整报告前展示候选 Flag 与平台验证边界", () => {
+    render(<ResultCard run={makeRun("completed")} events={events} audit={audit} report={report} messages={[]} />);
+    expect(screen.getByTestId("flag-candidates")).toHaveTextContent("flag{demo}");
+    expect(screen.getByTestId("flag-candidates")).toHaveTextContent("尚未经过赛题平台验证");
+    expect(screen.getByText("查看完整报告、证据与复现步骤")).toBeInTheDocument();
   });
 
   it("空失败原因优先展示报告中的失败复盘", () => {

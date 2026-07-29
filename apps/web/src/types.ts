@@ -148,9 +148,21 @@ export interface ThreadDetail extends Thread {
   runs: Run[];
   artifacts: Artifact[];
 }
+export interface FlagCandidate {
+  candidate: string;
+  source_call_id?: string;
+  validation_status: string;
+  platform_verified: boolean;
+}
+export interface ReportData extends Record<string, unknown> {
+  final_answer?: string;
+  evidence?: string[];
+  flag_candidates?: FlagCandidate[];
+  failure_analysis?: { summary?: string; causes?: string[]; next_steps?: string[] };
+}
 export interface Report {
   markdown: string;
-  data: Record<string, unknown>;
+  data: ReportData;
 }
 export interface AgentPlan {
   summary: string;

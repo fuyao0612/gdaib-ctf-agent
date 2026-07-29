@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { api } from "../api";
-import type { Event, ExecutionStep, Message, Report, Run, RunAudit } from "../types";
+import type { Event, ExecutionStep, FlagCandidate, Message, Report, Run, RunAudit } from "../types";
 import {
   elapsedSeconds,
   presentPhases,
@@ -85,6 +85,13 @@ function conciseAnswer(value: string): string {
   const limit = 420;
   if (value.length <= limit) return value;
   return `${value.slice(0, limit).trimEnd()}…`;
+}
+
+function flagCandidates(report: Report | null): FlagCandidate[] {
+  const values = report?.data.flag_candidates;
+  return Array.isArray(values) ? values.filter((value): value is FlagCandidate =>
+    Boolean(value && typeof value.candidate === "string" && typeof value.validation_status === "string"),
+  ) : [];
 }
 
 const STEP_STATUS_LABEL: Record<ExecutionStep["observation_status"], string> = {
@@ -197,6 +204,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
   const evidenceSummary = [...evidence, ...auditEvidence].slice(0, 3);
   const answer = finalAnswer(run, report, messages);
   const failureSummary = failureAnalysisSummary(report, events);
+  const candidates = flagCandidates(report);
   const reason =
     (run.status === "failed" ? failureSummary : null) ??
     nonEmpty(run.error) ??
@@ -216,6 +224,17 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
           <p>{conciseAnswer(answer)}</p>
         </section>
       )}
+      {candidates.length > 0 && (
+        <section className="result-conclusion" data-testid="flag-candidates">
+          <strong>Flag 候选与验证状态</strong>
+          {candidates.map((candidate) => (
+            <p key={`${candidate.candidate}-${candidate.source_call_id ?? ""}`}>
+              {candidate.candidate}：格式校验 {candidate.validation_status}；
+              {candidate.platform_verified ? "赛题平台验证通过" : "尚未经过赛题平台验证"}
+            </p>
+          ))}
+        </section>
+      )}
       {run.status === "failed" && (
         <section className="result-conclusion" data-testid="failure-analysis">
           <strong>失败复盘</strong>
@@ -223,7 +242,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
         </section>
       )}
       <details className="full-report">
-        <summary>展开结论、证据与任务报告</summary>
+        <summary>查看完整报告、证据与复现步骤</summary>
         <div className="result-answer">
           <strong>{run.status === "failed" ? "失败复盘" : "结论"}</strong>
           <pre>{run.status === "failed" ? reason : answer}</pre>
