@@ -47,14 +47,30 @@ set "EXIT_CODE=%ERRORLEVEL%"
 
 if not "%EXIT_CODE%"=="0" (
     echo.
-    echo [ERROR] Startup failed. Review the build or configuration details above; this window stays open.
-    pause
-    exit /b %EXIT_CODE%
+    powershell.exe -NoLogo -NoProfile -Command "try { $response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8000/api/v1/health' -TimeoutSec 2; if ($response.StatusCode -eq 200) { exit 0 }; exit 1 } catch { exit 1 }"
+    if not errorlevel 1 (
+        echo [OK] A local development service is already running.
+        echo Opening http://127.0.0.1:5173 ...
+        start "" "http://127.0.0.1:5173"
+    ) else (
+        echo [WARN] Docker startup failed. Trying local development mode...
+        echo        This fallback is useful when Docker Hub or an HTTPS proxy is unavailable.
+        powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0yuwang.ps1" start -Development -OpenBrowser
+        set "EXIT_CODE=%ERRORLEVEL%"
+        if not "%EXIT_CODE%"=="0" (
+            echo.
+            echo [ERROR] Docker and local development startup both failed.
+            echo Review the details above. This window stays open.
+            pause
+            exit /b %EXIT_CODE%
+        )
+    )
 )
 
 echo.
 echo [OK] Service is ready. The actual Web address is shown above.
 echo If the browser did not open, use that address from this window.
-echo Closing this window does not stop Docker. Use .\yuwang.ps1 stop to stop it.
+echo Closing this window does not stop Docker. Use .\yuwang.ps1 stop to stop Docker,
+echo or .\yuwang.ps1 stop -Development to stop local development mode.
 pause
 exit /b 0
