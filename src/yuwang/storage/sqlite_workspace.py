@@ -117,6 +117,13 @@ class SQLiteWorkspaceStore(SQLiteStore):
             ).fetchall()
         return [self._load(Artifact, row["data"]) for row in rows]
 
+    def list_run_artifacts(self, run_id: UUID | str) -> list[Artifact]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM artifacts WHERE run_id=? ORDER BY created_at", (str(run_id),)
+            ).fetchall()
+        return [self._load(Artifact, row["data"]) for row in rows]
+
     def save_memory(self, value: MemoryRecord) -> MemoryRecord:
         with self.connect() as db:
             db.execute(

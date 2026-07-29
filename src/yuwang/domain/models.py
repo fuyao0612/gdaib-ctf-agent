@@ -380,6 +380,30 @@ class ToolCall(DomainModel):
     artifact_ids: list[UUID] = Field(default_factory=list)
 
 
+class ExecutionStep(DomainModel):
+    """面向用户的公开执行步骤，不保存模型隐藏推理或完整工具输出。"""
+
+    run_id: UUID
+    sequence: int = Field(ge=1)
+    call_id: UUID | None = None
+    goal: str = Field(min_length=1, max_length=500)
+    action_kind: str = Field(min_length=1, max_length=80)
+    action_summary: str = Field(min_length=1, max_length=500)
+    tool_id: str | None = Field(default=None, max_length=240)
+    tool_name: str | None = Field(default=None, max_length=160)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    observation_status: Literal["running", "success", "error", "timeout", "blocked", "stopped"] = "running"
+    observation_summary: str | None = Field(default=None, max_length=1000)
+    preview: str | None = Field(default=None, max_length=4000)
+    error: str | None = Field(default=None, max_length=1000)
+    decision: str | None = Field(default=None, max_length=500)
+    artifact_ids: list[UUID] = Field(default_factory=list)
+    evidence_ids: list[UUID] = Field(default_factory=list)
+    started_at: datetime = Field(default_factory=utcnow)
+    finished_at: datetime | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
+
+
 class EvidenceRecord(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     run_id: UUID

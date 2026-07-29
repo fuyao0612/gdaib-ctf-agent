@@ -4,8 +4,19 @@ from uuid import uuid4
 
 import pytest
 
-from yuwang.domain.models import Event, EventType, Run, Thread
+from yuwang.domain.models import (
+    Artifact,
+    CallStatus,
+    Event,
+    EventType,
+    EvidenceRecord,
+    ExecutionStep,
+    ModelCall,
+    Run,
+    Thread,
+)
 from yuwang.events import EventService
+from yuwang.reports.trace import RunTraceService
 from yuwang.storage import SQLiteRepository
 
 
@@ -105,3 +116,56 @@ def test_checkpoints_are_append_only_versioned_state(tmp_path):
     assert [item.state["value"] for item in checkpoints] == [1, 2]
     assert checkpoints[-1].state_schema_version == "3.0"
     assert repository.latest_checkpoint(run_id) == checkpoints[-1]
+
+
+def test_execution_steps_and_unified_trace_survive_reopen(tmp_path):
+    path = tmp_path / "trace.db"
+    repository = SQLiteRepository(path)
+    thread = repository.save_thread(Thread(title="trace"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    call_id = uuid4()
+    step = repository.save_execution_step(
+        ExecutionStep(
+            run_id=run.id,
+            sequence=repository.next_execution_step_sequence(run.id),
+            call_id=call_id,
+            goal="提取受控附件中的候选值",
+            action_kind="tool_call",
+            action_summary="调用 strings 工具",
+            tool_id="ctf.strings",
+            tool_name="字符串提取",
+            arguments={"api_key": "secret-value"},
+            observation_status="success",
+            observation_summary="找到一个候选值",
+            preview="FLAG{TRACE}",
+            decision="继续执行格式校验。",
+            duration_ms=12,
+        )
+    )
+    repository.save_model_call(
+        ModelCall(
+            run_id=run.id, provider="test", model="m", duration_ms=3,
+            input_tokens=10, output_tokens=5, status=CallStatus.SUCCEEDED,
+            metadata={"request_count": 2, "usage_reported": True},
+        )
+    )
+    repository.save_evidence(
+        EvidenceRecord(
+            run_id=run.id, candidate="FLAG{TRACE}", source_call_id=call_id,
+            location="/result/0", verified=False, verification_summary="候选 Flag，尚未外部验证",
+        )
+    )
+    repository.save_artifact(
+        Artifact(
+            thread_id=thread.id, run_id=run.id, filename="result.txt", kind="tool_output",
+            sha256="a" * 64, size=10, mime_type="text/plain", storage_ref="safe/result.txt",
+        )
+    )
+
+    reopened = SQLiteRepository(path)
+    trace = RunTraceService(reopened).snapshot(run.id)
+    assert reopened.list_execution_steps(run.id) == [step]
+    assert trace["metrics"]["logical_model_calls"] == 1
+    assert trace["metrics"]["provider_requests"] == 2
+    assert trace["steps"][0]["arguments"]["api_key"] != "secret-value"
+    assert "storage_ref" not in trace["artifacts"][0]

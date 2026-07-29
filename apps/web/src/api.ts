@@ -203,6 +203,7 @@ export const api = {
   report: (id: string) => request<Report>(`/runs/${id}/report`),
   reportUrl: (id: string, format: "md" | "json") =>
     `${API}/runs/${id}/report.${format}`,
+  trajectoryUrl: (id: string) => `${API}/runs/${id}/trajectory.json`,
   artifactUrl: (id: string) => `${API}/artifacts/${id}/download`,
   memories: (id: string) => request<MemoryRecord[]>(`/threads/${id}/memories`),
   toggleMemories: (id: string, enabled: boolean) =>

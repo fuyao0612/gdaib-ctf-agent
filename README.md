@@ -102,6 +102,7 @@ Provider 没有返回 Token 用量时，界面明确显示“厂商未提供”�
 - **Event（公开事件）**：记录计划、状态、工具、验证和结果，用于进度展示与审计，不包含模型隐藏思维链。
 - **Evidence（证据）**：由受控工具产生、可回查的结果。模型自己声称“已完成”不等于验证成功。
 - **Report（报告）**：运行结束后生成的 Markdown 和 JSON 摘要，可用于复盘或程序处理。
+- **执行轨迹（Trajectory）**：把真实工具行动、观察和下一步公开决策持久化，可下载并在浏览器本地只读回放；详见[执行轨迹与报告](docs/trajectory.md)。
 
 Web 始终调用统一消息入口。没有活动任务时，每条输入都会创建受控 Agent Run；无工具任务也通过
 同一循环完成并标记为未经外部验证。`interaction_mode` 字段仅为历史数据兼容保留，已弃用且不再由
@@ -367,6 +368,7 @@ python examples/local_api.py
 - [上下文与记忆](docs/context-memory.md)：裁剪、完成可信等级和人工补充。
 - [设置参考](docs/settings.md)：全部高级字段。
 - [测试](docs/testing.md)：质量门禁与浏览器验收。
+- [执行轨迹与报告](docs/trajectory.md)：行动观察时间线、指标口径、下载与只读回放。
 - [本地评测](docs/evaluation.md)：评测用例、显式执行、结果查询与回放。
 - [故障排查](docs/troubleshooting.md)：启动、鉴权、模型和恢复问题。
 - [扩展开发](docs/extensions.md)：Provider、组件与工具的扩展边界。

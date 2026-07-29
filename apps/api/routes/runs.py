@@ -32,6 +32,7 @@ from yuwang.domain.models import (
     Run,
     RunStatus,
 )
+from yuwang.reports.trace import RunTraceService
 
 
 def create_run_router(context: ApiContext) -> APIRouter:
@@ -352,36 +353,14 @@ def create_run_router(context: ApiContext) -> APIRouter:
     @router.get("/runs/{run_id}/audit")
     async def run_audit(run_id: UUID) -> dict[str, Any]:
         run = context.require_run(run_id)
+        trace = RunTraceService(repository).snapshot(run_id)
+        unified_metrics = trace["metrics"]
         checkpoint = repository.latest_checkpoint(run_id)
         profile = repository.get_run_agent_profile(run_id)
         state = checkpoint.state if checkpoint else {}
         task_spec = repository.get_run_task(run_id)
         budget = task_spec.budget if task_spec else None
         model_calls = repository.list_model_calls(run_id)
-        events = repository.list_events(run_id)
-        reported_usage = [
-            bool(value.metadata.get("usage_reported")) for value in model_calls
-        ]
-        if not reported_usage:
-            token_source = "unavailable"
-        elif all(reported_usage):
-            token_source = "provider"
-        elif any(reported_usage):
-            token_source = "mixed"
-        else:
-            token_source = "estimated"
-        intervention_types = {
-            EventType.INPUT_RECEIVED,
-            EventType.CLARIFICATION_RECEIVED,
-            EventType.PLAN_EDITED,
-            EventType.PLAN_APPROVED,
-            EventType.PLAN_REJECTED,
-            EventType.RISK_APPROVED,
-            EventType.RISK_REJECTED,
-            EventType.GUIDANCE_QUEUED,
-            EventType.PAUSE_REQUESTED,
-            EventType.RUN_RESUMED,
-        }
         return {
             "run": {
                 "execution_status": run.status,
@@ -392,12 +371,18 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 "evidence_level": run.evidence_level,
             },
             "usage": {
-                "steps": state.get("step", 0),
-                "model_calls": state.get("model_calls", 0),
-                "tool_calls": state.get("tool_calls", 0),
-                "tokens": state.get("tokens", 0),
-                "model_cost": state.get("model_cost", 0),
-                "elapsed_seconds": state.get("elapsed_seconds", 0),
+                "steps": unified_metrics["steps"],
+                # 旧字段保留为逻辑模型调用；新字段明确区分实际 Provider 请求。
+                "model_calls": unified_metrics["logical_model_calls"],
+                "logical_model_calls": unified_metrics["logical_model_calls"],
+                "provider_requests": unified_metrics["provider_requests"],
+                "tool_calls": unified_metrics["tool_calls"],
+                "tool_failures": unified_metrics["tool_failures"],
+                "tokens": unified_metrics["total_tokens"],
+                "input_tokens": unified_metrics["input_tokens"],
+                "output_tokens": unified_metrics["output_tokens"],
+                "model_cost": unified_metrics["model_cost"],
+                "elapsed_seconds": unified_metrics["duration_ms"] / 1000,
                 "context_tokens": state.get("context_tokens", 0),
                 "context_window_tokens": state.get("context_window_tokens", 0),
                 "context_input_budget": state.get("context_input_budget", 0),
@@ -409,11 +394,9 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 "model": model_calls[-1].model if model_calls else None,
                 "started_at": run.started_at,
                 "finished_at": run.finished_at,
-                "token_source": token_source,
-                "cost_source": token_source,
-                "manual_interventions": sum(
-                    event.type in intervention_types for event in events
-                ),
+                "token_source": unified_metrics["token_source"],
+                "cost_source": unified_metrics["cost_source"],
+                "manual_interventions": unified_metrics["manual_interventions"],
                 "execution_status": run.status,
                 "validation_status": run.validation_status,
             },
@@ -445,6 +428,8 @@ def create_run_router(context: ApiContext) -> APIRouter:
             "evidence": [
                 value.model_dump(mode="json") for value in repository.list_evidence(run_id)
             ],
+            "steps": trace["steps"],
+            "metrics": unified_metrics,
             "checkpoints": [
                 {
                     "checkpoint_sequence": value.checkpoint_sequence,

@@ -11,6 +11,7 @@ from yuwang.domain.models import (
     Event,
     EventType,
     EvidenceRecord,
+    ExecutionStep,
     ModelCall,
     Run,
     RunCheckpoint,
@@ -64,6 +65,7 @@ class SQLiteRepository(
                 CREATE TABLE IF NOT EXISTS model_calls(id TEXT PRIMARY KEY, run_id TEXT NOT NULL, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS tool_calls(id TEXT PRIMARY KEY, run_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS evidence(id TEXT PRIMARY KEY, run_id TEXT NOT NULL, data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS execution_steps(run_id TEXT NOT NULL, sequence INTEGER NOT NULL, call_id TEXT, data TEXT NOT NULL, PRIMARY KEY(run_id,sequence), UNIQUE(run_id,call_id));
                 CREATE TABLE IF NOT EXISTS provider_snapshots(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS agent_profile_versions(profile_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(profile_id,version));
                 CREATE TABLE IF NOT EXISTS run_agent_profiles(run_id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -89,6 +91,7 @@ class SQLiteRepository(
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (9);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (10);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (11);
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (12);
                 """
             )
             rows = db.execute("SELECT id,data FROM threads").fetchall()
@@ -383,6 +386,45 @@ class SQLiteRepository(
                 "SELECT data FROM evidence WHERE run_id=? ORDER BY rowid", (str(run_id),)
             ).fetchall()
         return [EvidenceRecord.model_validate_json(row["data"]) for row in rows]
+
+    def save_execution_step(self, value: ExecutionStep) -> ExecutionStep:
+        """按 ``run_id + sequence/call_id`` 原位更新，恢复后不会复制时间线卡片。"""
+
+        with self._lock, self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO execution_steps(run_id,sequence,call_id,data) VALUES(?,?,?,?)",
+                (
+                    str(value.run_id),
+                    value.sequence,
+                    str(value.call_id) if value.call_id else None,
+                    value.model_dump_json(),
+                ),
+            )
+        return value
+
+    def next_execution_step_sequence(self, run_id: UUID | str) -> int:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT COALESCE(MAX(sequence),0)+1 AS n FROM execution_steps WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()
+        return int(row["n"])
+
+    def get_execution_step_by_call(self, run_id: UUID | str, call_id: UUID | str) -> ExecutionStep | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT data FROM execution_steps WHERE run_id=? AND call_id=?",
+                (str(run_id), str(call_id)),
+            ).fetchone()
+        return ExecutionStep.model_validate_json(row["data"]) if row else None
+
+    def list_execution_steps(self, run_id: UUID | str) -> list[ExecutionStep]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT data FROM execution_steps WHERE run_id=? ORDER BY sequence",
+                (str(run_id),),
+            ).fetchall()
+        return [ExecutionStep.model_validate_json(row["data"]) for row in rows]
 
     def save_provider_snapshot(self, run_id: UUID, values: list[ProviderConfig]) -> None:
         serialized = json.dumps(

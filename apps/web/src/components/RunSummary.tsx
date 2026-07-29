@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { api } from "../api";
-import type { Event, Message, Report, Run, RunAudit } from "../types";
+import type { Event, ExecutionStep, Message, Report, Run, RunAudit } from "../types";
 import {
   elapsedSeconds,
   presentPhases,
@@ -87,6 +87,34 @@ function conciseAnswer(value: string): string {
   return `${value.slice(0, limit).trimEnd()}…`;
 }
 
+const STEP_STATUS_LABEL: Record<ExecutionStep["observation_status"], string> = {
+  running: "执行中", success: "成功", error: "失败", timeout: "超时", blocked: "已阻止", stopped: "已停止",
+};
+
+export function ExecutionTimeline({ steps }: { steps: ExecutionStep[] }) {
+  if (!steps.length) return <p className="muted">暂无已持久化的工具执行步骤。</p>;
+  return (
+    <ol className="execution-timeline" aria-label="行动、观察与决策时间线">
+      {steps.map((step) => (
+        <li className={`execution-step ${step.observation_status}`} key={`${step.sequence}-${step.call_id ?? "manual"}`}>
+          <header><strong>步骤 {step.sequence}</strong><span>{STEP_STATUS_LABEL[step.observation_status]}</span><time>{step.duration_ms == null ? "进行中" : `${step.duration_ms} ms`}</time></header>
+          <p><b>目标：</b>{step.goal}</p>
+          <p><b>行动：</b>{step.tool_name ?? step.action_kind}，{step.action_summary}</p>
+          <p><b>关键观察：</b>{step.observation_summary ?? "正在等待工具返回"}</p>
+          <p><b>下一步：</b>{step.decision ?? "等待下一次公开决策"}</p>
+          <div className="step-links">证据 {step.evidence_ids.length} · Artifact {step.artifact_ids.length}</div>
+          <details>
+            <summary>查看参数与结果预览</summary>
+            <pre>{JSON.stringify(step.arguments, null, 2)}</pre>
+            {step.preview && <pre>{step.preview}</pre>}
+            {step.error && <p className="step-error">{step.error}</p>}
+          </details>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 export function RunProgress({ run, events, audit }: Omit<Props, "report" | "messages">) {
   const [now, setNow] = useState(0);
   const active = [
@@ -107,6 +135,7 @@ export function RunProgress({ run, events, audit }: Omit<Props, "report" | "mess
     ["active", "waiting", "interrupted"].includes(phase.state),
   );
   const model = audit?.model_calls?.at(-1)?.model ?? run.model ?? "等待首次模型调用";
+  const executionSteps = audit?.steps ?? [];
   const latestKnownTime = Date.parse(
     events.at(-1)?.timestamp ?? run.started_at ?? run.created_at ?? "",
   );
@@ -149,6 +178,10 @@ export function RunProgress({ run, events, audit }: Omit<Props, "report" | "mess
           <div><dt>步骤预算</dt><dd>{audit?.usage.steps ?? 0} / {audit?.limits.max_steps ?? "-"}</dd></div>
         </dl>
       </details>
+      {executionSteps.length > 0 && <section className="execution-trace" data-testid="execution-timeline">
+        <h3>执行时间线</h3>
+        <ExecutionTimeline steps={executionSteps} />
+      </section>}
     </section>
   );
 }
@@ -205,6 +238,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
           <div className="report-downloads">
             <a href={api.reportUrl(run.id, "md")}>下载 Markdown</a>
             <a href={api.reportUrl(run.id, "json")}>下载 JSON</a>
+            <a href={api.trajectoryUrl(run.id)}>下载轨迹</a>
           </div>
           <ReactMarkdown>{report.markdown}</ReactMarkdown>
           </>

@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from apps.api.context import ApiContext
+from yuwang.reports.trace import RunTraceService
 
 
 def create_report_router(context: ApiContext) -> APIRouter:
@@ -43,6 +44,16 @@ def create_report_router(context: ApiContext) -> APIRouter:
         return JSONResponse(
             report[1],
             headers={"Content-Disposition": f'attachment; filename="report-{run_id}.json"'},
+        )
+
+    @router.get("/{run_id}/trajectory.json")
+    async def trajectory_json(run_id: UUID) -> JSONResponse:
+        """导出只读回放所需的脱敏运行轨迹，不包含 Artifact 内容或存储路径。"""
+
+        context.require_run(run_id)
+        return JSONResponse(
+            RunTraceService(context.repository).snapshot(run_id),
+            headers={"Content-Disposition": f'attachment; filename="trajectory-{run_id}.json"'},
         )
 
     return router

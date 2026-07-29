@@ -409,6 +409,7 @@ export interface RunAudit {
     evidence_level: string;
   };
   usage: Record<string, number>;
+  metrics?: Record<string, number | string>;
   history?: {
     model: string | null;
     started_at: string | null;
@@ -457,12 +458,35 @@ export interface RunAudit {
     verification_summary: string;
     location: string;
   }>;
+  steps?: ExecutionStep[];
   checkpoints?: Array<{
     checkpoint_sequence: number;
     node: string;
     elapsed_seconds: number;
     created_at: string;
   }>;
+}
+
+export interface ExecutionStep {
+  run_id: string;
+  sequence: number;
+  call_id: string | null;
+  goal: string;
+  action_kind: string;
+  action_summary: string;
+  tool_id: string | null;
+  tool_name: string | null;
+  arguments: Record<string, unknown>;
+  observation_status: "running" | "success" | "error" | "timeout" | "blocked" | "stopped";
+  observation_summary: string | null;
+  preview: string | null;
+  error: string | null;
+  decision: string | null;
+  artifact_ids: string[];
+  evidence_ids: string[];
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
 }
 
 export type EvaluationStatus = "passed" | "failed" | "skipped";

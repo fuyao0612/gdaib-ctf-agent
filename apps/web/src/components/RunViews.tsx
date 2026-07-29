@@ -18,6 +18,7 @@ import {
 } from "./run-presentation";
 import TaskPlanControl from "./TaskPlanControl";
 import RunControlPanel from "./RunControlPanel";
+import { TrajectoryReplay } from "./TrajectoryReplay";
 
 export function StatusBadge({ status }: { status: string }) {
   const labels: Record<string, string> = {
@@ -384,6 +385,7 @@ export function InspectorPanel(props: InspectorProps) {
           </div>
         </section>
       )}
+      <TrajectoryReplay />
     </aside>
   );
 }

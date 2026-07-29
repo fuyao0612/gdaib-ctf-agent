@@ -16,6 +16,7 @@ from yuwang.domain.models import (
     Run,
     RunStatus,
 )
+from yuwang.reports.trace import RunTraceService
 from yuwang.settings import SafeTemplateRenderer
 
 if TYPE_CHECKING:
@@ -65,6 +66,7 @@ class AgentFinalizer:
                     value.model_dump(mode="json")
                     for value in engine.repository.list_evidence(run.id)
                 ],
+                "trace": RunTraceService(engine.repository).snapshot(run.id),
             },
         )
         markdown = SafeTemplateRenderer.render(
