@@ -118,6 +118,7 @@ def test_report_keeps_custom_prefix_candidate_and_deduplicates_sources() -> None
     assert candidate["candidate"] == "GDAIB{custom_prefix}"
     assert candidate["source_call_id"] == call_id
     assert candidate["location"] == "/candidates/0/value"
+    assert candidate["discovery_source"] == "encoding_decode"
     assert len(candidate["sources"]) == 1
     assert candidate["platform_verified"] is False
 

@@ -219,7 +219,11 @@ class ReportFacts:
             )
         for step in timeline:
             for candidate in _FLAG.findall(" ".join(str(step.get(key, "")) for key in ("observation_summary", "preview"))):
-                add(candidate, "execution_step", step.get("call_id"), step.get("sequence"))
+                add(
+                    candidate,
+                    "encoding_decode" if step.get("tool_id") == "ctf.encoding_decode" else "execution_step",
+                    step.get("call_id"), step.get("sequence"),
+                )
         for call in tool_calls:
             for candidate in _FLAG.findall(str(call.get("result_summary", ""))):
                 add(candidate, "tool_call", call.get("id"), None)
