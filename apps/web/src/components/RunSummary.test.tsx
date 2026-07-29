@@ -113,7 +113,7 @@ const report: Report = {
   data: {
     final_answer: "已验证答案",
     evidence: ["参考工具返回匹配结果"],
-    flag_candidates: [{ candidate: "flag{demo}", validation_status: "format_matched", platform_verified: false }],
+    flag_candidates: [{ candidate: "flag{demo}", format_status: "format_matched", platform_verified: false }],
   },
 };
 

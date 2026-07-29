@@ -27,7 +27,7 @@ def create_health_router(context: ApiContext) -> APIRouter:
 
     @router.get("/readiness")
     async def readiness() -> JSONResponse:
-        checks = context.deployment_checks()
+        checks = context.readiness_checks()
         ready = all(checks.values())
         return JSONResponse(
             status_code=200 if ready else 503,

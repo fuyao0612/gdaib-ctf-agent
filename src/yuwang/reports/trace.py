@@ -13,6 +13,7 @@ from uuid import UUID
 from yuwang.agent.repository import AgentRepository
 from yuwang.domain.models import Run
 from yuwang.policy import redact, redact_data
+from yuwang.reports.facts import public_arguments
 
 
 def _source(values: list[bool]) -> str:
@@ -88,7 +89,18 @@ class RunTraceService:
         task = self.repository.get_run_task(run.id)
         profile = self.repository.get_run_agent_profile(run.id)
         evidence = self.repository.list_evidence(run.id)
-        artifacts = self.repository.list_run_artifacts(run.id)
+        steps = self.repository.list_execution_steps(run.id)
+        tool_calls = self.repository.list_tool_calls(run.id)
+        # Old HTTP artifacts lacked run_id.  Recover only IDs explicitly referenced by this
+        # Run's persisted calls/steps; never scan the whole Thread and leak another Run.
+        artifacts_by_id = {value.id: value for value in self.repository.list_run_artifacts(run.id)}
+        for artifact_id in [
+            artifact_id for step in steps for artifact_id in step.artifact_ids
+        ] + [artifact_id for call in tool_calls for artifact_id in call.artifact_ids]:
+            artifact = self.repository.get_artifact(artifact_id)
+            if artifact and artifact.thread_id == run.thread_id:
+                artifacts_by_id.setdefault(artifact.id, artifact)
+        artifacts = sorted(artifacts_by_id.values(), key=lambda value: (value.created_at, str(value.id)))
         data = {
             "schema_version": "2.0",
             "exported_at": datetime.now(UTC).isoformat(),
@@ -104,7 +116,16 @@ class RunTraceService:
                 if profile and profile.planning_strategy == "direct"
                 else "计划执行"
             ),
-            "steps": [value.model_dump(mode="json") for value in self.repository.list_execution_steps(run.id)],
+            "steps": [
+                {**value.model_dump(mode="json"), "arguments": public_arguments(value.arguments)}
+                for value in steps
+            ],
+            "tool_calls": [
+                {"id": str(value.id), "tool_id": value.tool_id, "tool_name": value.tool_name,
+                 "arguments": public_arguments(value.arguments), "result_summary": value.result_summary,
+                 "artifact_ids": [str(item) for item in value.artifact_ids]}
+                for value in tool_calls
+            ],
             "evidence": [value.model_dump(mode="json") for value in evidence],
             "artifacts": [
                 {

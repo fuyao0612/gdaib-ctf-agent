@@ -90,7 +90,11 @@ function conciseAnswer(value: string): string {
 function flagCandidates(report: Report | null): FlagCandidate[] {
   const values = report?.data.flag_candidates;
   return Array.isArray(values) ? values.filter((value): value is FlagCandidate =>
-    Boolean(value && typeof value.candidate === "string" && typeof value.validation_status === "string"),
+    Boolean(
+      value &&
+      typeof value.candidate === "string" &&
+      (typeof value.format_status === "string" || typeof value.validation_status === "string"),
+    ),
   ) : [];
 }
 
@@ -229,7 +233,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
           <strong>Flag 候选与验证状态</strong>
           {candidates.map((candidate) => (
             <p key={`${candidate.candidate}-${candidate.source_call_id ?? ""}`}>
-              {candidate.candidate}：格式校验 {candidate.validation_status}；
+              {candidate.candidate}：格式校验 {candidate.format_status ?? candidate.validation_status ?? "未校验"}；
               {candidate.platform_verified ? "赛题平台验证通过" : "尚未经过赛题平台验证"}
             </p>
           ))}

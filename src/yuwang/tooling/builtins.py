@@ -263,6 +263,9 @@ class LocalhostHTTPProbeTool(ToolPlugin[ProbeInput, ProbeOutput]):
         artifact = self.repository.save_artifact(
             Artifact(
                 thread_id=run.thread_id,
+                # HTTP evidence belongs to the active Run as well as its Thread.  Without
+                # this, historical reports cannot safely distinguish it from another Run.
+                run_id=run.id,
                 filename=f"localhost-response-{request.call_id}{suffix}",
                 kind="http_evidence_truncated" if body_truncated else "http_evidence",
                 sha256=hashlib.sha256(body).hexdigest(),

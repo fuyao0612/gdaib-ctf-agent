@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import sys
 import threading
 import time
@@ -836,12 +837,32 @@ def test_health_readiness_and_setup_status_are_distinct(tmp_path, provider_serve
             "provider": False,
             "agent": False,
         }
-        assert client.get("/api/v1/readiness").status_code == 503
+        # Readiness verifies durable storage, while setup status separately reports that no
+        # Provider has been configured yet.  A new installation must still start its Web UI.
+        assert client.get("/api/v1/readiness").status_code == 200
 
         open_local_session(client)
         create_provider(client, provider_server)
         assert client.get("/api/v1/setup/status").json()["configured"] is True
         assert client.get("/api/v1/readiness").json()["status"] == "ready"
+
+
+def test_readiness_reports_database_failure_while_liveness_stays_available(tmp_path, monkeypatch):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        def unavailable_defaults():
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(app.state.repository, "get_agent_defaults", unavailable_defaults)
+        assert client.get("/api/v1/health").status_code == 200
+        readiness = client.get("/api/v1/readiness")
+        assert readiness.status_code == 503
+        assert readiness.json() == {
+            "status": "not_ready",
+            "checks": {"database": False, "core_tables": False},
+        }
+        # Setup status must gracefully expose the same database fault instead of propagating a 500.
+        assert client.get("/api/v1/setup/status").json()["checks"]["database"] is False
 
 
 def test_mcp_admin_routes_expose_allowlist_and_deletion_impact(tmp_path):

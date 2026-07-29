@@ -6,6 +6,16 @@ from typing import Any, cast
 
 from yuwang.domain.models import Event, Run, TaskSpec
 from yuwang.policy import redact, redact_data
+from yuwang.reports.facts import ReportFacts
+
+
+def _clean_decision(value: object) -> str | None:
+    text = str(value or "").strip()
+    while text.startswith("下一步："):
+        text = text.removeprefix("下一步：").strip()
+    while text.startswith("结束："):
+        text = text.removeprefix("结束：").strip()
+    return text or None
 
 
 def trust_notice(validation_status: str) -> str:
@@ -57,6 +67,115 @@ class ReportGenerator:
     """把运行、事件和计量快照渲染成可下载的 Markdown/JSON 报告。"""
 
     def generate(
+        self, run: Run, task: TaskSpec, events: list[Event], metrics: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        """Render both formats from one ReportFacts object."""
+        facts = ReportFacts.build(run, task, events, metrics)
+        data = self._data(run, facts, metrics)
+        return self._markdown(facts, data), data
+
+    @staticmethod
+    def _data(run: Run, facts: ReportFacts, metrics: dict[str, Any]) -> dict[str, Any]:
+        model = facts.metrics
+        data = {
+            "schema_version": "2.1", "report_kind": facts.report_kind,
+            "report_kind_reason": facts.report_kind_reason, "run_id": str(run.id),
+            "task_summary": facts.task_summary, "execution_status": facts.execution_status,
+            "status": facts.execution_status, "validation_status": facts.validation_status,
+            "validation_label": facts.validation_label,
+            # Keep the established public fields while schema 2.1 adds structured facts.
+            "trust_notice": trust_notice(facts.validation_status),
+            "evidence_level": metrics.get("evidence_level", run.evidence_level),
+            "completion_mode": metrics.get("completion_mode", run.completion_mode),
+            "final_answer": facts.final_answer,
+            "structured_output": metrics.get("structured_output"),
+            "flag_candidates": facts.candidates, "timeline": facts.timeline, "steps": facts.timeline,
+            "key_clues": facts.key_clues, "verification_evidence": metrics.get("evidence_records", []),
+            "artifacts": facts.artifacts, "reproduction_steps": facts.reproduction_steps,
+            "failed_attempts": facts.failed_attempts, "policy_summary": facts.policy_summary,
+            "adjustments": facts.adjustments,
+            "metrics": model, "model_metrics": {
+                "logical_model_calls": model.get("logical_model_calls", metrics.get("model_calls", 0)),
+                "provider_requests": model.get("provider_requests", metrics.get("model_calls", 0)),
+                "input_tokens": model.get("input_tokens", 0), "output_tokens": model.get("output_tokens", 0),
+                "tokens": model.get("total_tokens", metrics.get("tokens", 0)),
+            },
+            "tool_metrics": {"calls": model.get("tool_calls", metrics.get("tool_calls", 0)), "failures": model.get("tool_failures", metrics.get("tool_failures", 0))},
+            "limitations": [trust_notice(facts.validation_status)],
+            "failure_analysis": metrics.get("failure_analysis"),
+        }
+        safe = redact_data(data)
+        assert isinstance(safe, dict)
+        return safe
+
+    @staticmethod
+    def _markdown(facts: ReportFacts, data: dict[str, Any]) -> str:
+        lines = ["# 御网智元 CTF 解题报告" if facts.report_kind == "ctf" else "# 御网智元运行报告", ""]
+        if facts.report_kind == "ctf":
+            lines += ["## 一、任务概览与最终结论", f"- 执行状态：{facts.execution_status}", f"- 验证状态：{facts.validation_label}", f"- 任务：{facts.task_summary}", "", "## 二、Flag 候选与验证状态"]
+            if facts.candidates:
+                for item in facts.candidates:
+                    platform = "已通过" if item["platform_verified"] else "未进行"
+                    lines.append(f"- 候选 Flag：`{item['candidate']}`；格式校验：{item['format_status']}；外部平台验证：{platform}；来源：{item['source_kind']}")
+            else:
+                lines.append("- 未发现 Flag 候选。")
+            lines += ["", "## 三、解题思路摘要"]
+            lines += [f"- {item['summary']}" for item in facts.key_clues[:5]] or ["- 尚无可公开的关键观察。"]
+            lines += ["", "## 四、详细执行过程"]
+        else:
+            lines += ["## 一、任务与结论", f"- 执行状态：{facts.execution_status}", f"- 验证状态：{facts.validation_label}", f"- 任务：{facts.task_summary}", "", "## 二、执行过程"]
+        for step in facts.timeline:
+            decision = _clean_decision(step.get("decision")) or "运行在此步骤结束，未记录后续公开动作"
+            lines += [f"### 步骤 {step.get('sequence')}", f"- 目标：{step.get('goal')}", f"- 行动：{step.get('action_summary')}", f"- 关键观察：{step.get('observation_summary') or '无'}", f"- 决策：{decision}", f"- 调用：`{step.get('call_id')}`"]
+        if facts.report_kind == "ctf":
+            lines += ["", "## 五、关键线索与证据"]
+            lines += [f"- 步骤 {item['step']}：{item['summary']}" for item in facts.key_clues] or ["- 暂无经过验证的证据记录。"]
+        lines += ["", "## 六、可复现步骤"]
+        for item in facts.reproduction_steps:
+            lines.append(ReportGenerator._reproduction_markdown(item))
+        lines += ["", "## 七、失败尝试与调整"]
+        lines += ([f"- 步骤 {item.get('sequence')}：{item.get('error') or item.get('observation_summary')}" for item in facts.failed_attempts] or ["- 本次运行未记录失败工具调用。"])
+        if facts.execution_status == "failed":
+            analysis = data.get("failure_analysis")
+            summary = analysis.get("summary") if isinstance(analysis, dict) else None
+            lines += ["", "## 失败复盘", f"- {summary or '运行失败，未记录额外复盘摘要。'}"]
+        lines += ["", "## 八、Artifact 清单"]
+        lines += [f"- {item.get('filename')}；{item.get('mime_type')}；{item.get('size')} B；SHA-256 {str(item.get('sha256', ''))[:12]}；下载：{item.get('download_url')}" for item in facts.artifacts] or ["- 无关联 Artifact。"]
+        lines += ["", "## 九、资源消耗与审计", f"- 逻辑模型调用：{data['model_metrics']['logical_model_calls']}，实际 Provider 请求：{data['model_metrics']['provider_requests']}；Token：{data['model_metrics']['tokens']}", f"- 工具调用：{data['tool_metrics']['calls']}；失败：{data['tool_metrics']['failures']}"]
+        lines += [f"- 策略：{item['summary']}（{item['count']} 次）" for item in facts.policy_summary]
+        lines += ["", "## 十、限制与未验证事项", *[f"- {value}" for value in data["limitations"]]]
+        if facts.adjustments:
+            lines += ["", "## 十一、计划与调整", *[f"- 调整：{value}" for value in facts.adjustments]]
+        return redact("\n".join(lines))
+
+    @staticmethod
+    def _reproduction_markdown(item: dict[str, Any]) -> str:
+        """Keep Markdown reproduction instructions readable instead of dumping JSON."""
+
+        expected = item.get("expected") or "无额外预期结果"
+        if item.get("kind") == "http" and isinstance(item.get("http"), dict):
+            http = item["http"]
+            details = [f"{http.get('method', 'GET')} `{http.get('url', '')}`"]
+            query = http.get("query")
+            if isinstance(query, list) and query:
+                details.append("查询参数 " + "、".join(f"`{key}` = `{value}`" for key, value in query if isinstance(key, str)))
+            header = http.get("ctf_header")
+            if isinstance(header, dict):
+                name, value = header.get("name"), header.get("value")
+                if name and value:
+                    details.append(f"CTF 请求头 `{name}`，值 `{value}`")
+            return f"{item['sequence']}. {'；'.join(details)}。预期：{expected}"
+        if item.get("kind") == "decode" and isinstance(item.get("decode"), dict):
+            decode = item["decode"]
+            details = [f"使用 `{decode.get('encoding', 'auto')}` 解码", f"来源：{decode.get('source', '已记录输入')}"]
+            if decode.get("json_pointer"):
+                details.append(f"提取字段 `{decode['json_pointer']}`")
+            if decode.get("input"):
+                details.append(f"输入：`{decode['input']}`")
+            return f"{item['sequence']}. {'；'.join(details)}。预期：{expected}"
+        return f"{item['sequence']}. {item['action']}。预期：{expected}"
+
+    def _legacy_generate(
         self, run: Run, task: TaskSpec, events: list[Event], metrics: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
         trace_value = metrics.get("trace")

@@ -41,12 +41,12 @@ Linux/macOS：
 
 国内模型可直接选择 DeepSeek、阿里云百炼/千问或智谱 GLM 预设，核对控制台提供的 API Key 与模型名后执行“连接测试”。若使用其他 OpenAI 兼容服务，选择“自定义”，填写该服务的 HTTPS Base URL 和模型名；只有明确启用本机协议测试时才允许 HTTP localhost。
 
-可通过 `.env` 调整 `YUWANG_WEB_PORT`、`YUWANG_DATA_PATH`、CORS、Cookie Secure 标志和 API/Web 的 CPU、内存上限。Compose 的一次性 `data-init` 服务只负责建立目录并把持久化数据交给固定 UID 10001，随后退出；长期运行的 API 仍是非 root 用户。API/Web 使用只读根文件系统、受限 tmpfs、最小 capabilities 且禁止提权。HTTPS 部署必须设置 `YUWANG_COOKIE_SECURE=true`，并把 `YUWANG_CORS_ORIGINS` 改为准确的 HTTPS 来源。
+可通过 `.env` 调整 `YUWANG_WEB_PORT`、`YUWANG_DATA_PATH`、CORS、Cookie Secure 标志和 API/Web 的 CPU、内存上限。Compose 的一次性 `data-init` 服务把 SQLite 与 Artifact 放入 Docker 命名卷 `yuwang-data`，随后把目录所有权交给固定 UID 10001；长期运行的 API 仍是非 root 用户。API/Web 使用只读根文件系统、受限 tmpfs、最小 capabilities 且禁止提权。HTTPS 部署必须设置 `YUWANG_COOKIE_SECURE=true`，并把 `YUWANG_CORS_ORIGINS` 改为准确的 HTTPS 来源。
 
 ## 健康与就绪
 
-- `/api/v1/health`：只表明进程存活并返回版本，供容器健康检查使用。
-- `/api/v1/readiness`：检查数据库、主密钥、管理员配置，以及默认 Agent 是否能解析到已启用且最近真实连接测试成功的 Provider；首次配置前返回 503 是正常行为。
+- `/api/v1/health`：只表明进程存活并返回版本。
+- `/api/v1/readiness`：只检查 SQLite 和核心表是否可读，是 Docker 容器健康检查使用的端点；首次配置 Provider 前仍应返回 200。
 - `/api/v1/setup/status`：供首次配置界面读取非敏感检查结果，不返回令牌、密钥或内部路径。
 
 ## 备份、恢复和迁移
@@ -69,11 +69,22 @@ Linux/macOS：
 
 恢复只允许项目目录内的数据路径，要求显式确认，并在恢复前停止容器。必须使用备份对应的 `YUWANG_MASTER_KEY`，否则 Provider 密文无法解密。升级顺序为：一致性备份 → `preflight` → 拉取代码/镜像 → `migrate` → 构建启动 → 检查 health/readiness → 抽查历史 Thread 与报告。应用回滚不会自动回滚数据库，必须使用升级前备份。
 
+### Windows SQLite 卷迁移
+
+Windows Docker Desktop 的目录绑定不适合 SQLite WAL 锁。首次使用这一版本的 Docker
+启动时，`data-init` 会把 `${YUWANG_DATA_PATH:-./data}` 中的数据库、WAL/SHM 和
+Artifact 合并到命名卷。它按 SQLite 主键合并已有卷内记录，保留两侧数据，并在成功后写入
+一次性标记；之后重建镜像不会再用旧宿主快照覆盖卷内的新数据。宿主 `data/` 不会被删除或
+修改为新数据目录。
+
+迁移前不要手动删除 `data/yuwang.db`、`yuwang.db-wal`、`yuwang.db-shm`，也不要使用
+`docker compose down -v`。如需恢复，优先通过备份脚本恢复到明确的数据目录，再重新启动。
+
 ## 故障排查
 
 - health 失败：检查 `docker compose ps`、API 日志、端口冲突和数据目录权限。
-- readiness 的 `master_key/admin` 失败：检查 `.env` 是否完整、Fernet 格式是否有效；不要把值贴到工单或聊天。
-- readiness 的 `provider` 失败：登录设置中心，启用默认 Provider 并运行连接测试。
+- readiness 失败：检查 `checks.database` 和 `checks.core_tables`，再查看 API 日志中的 SQLite 错误；`/health` 为 200 不代表数据库可用。
+- setup status 的 `master_key/admin/provider` 失败：检查 `.env`、设置中心的默认 Provider 和真实连接测试；不要把密钥贴到工单或聊天。
 - Provider 连接失败：根据中文错误检查鉴权、额度、模型名、HTTPS 证书和 Base URL；测试协议服务不代表真实厂商联网成功。
 - 历史恢复失败：查看 `/api/v1/runs/{id}/audit`；结果不确定的非幂等调用会安全失败，不会自动重放。
 - SSE 断线：浏览器使用事件序号恢复，也可通过事件查询 API 的 `after` 参数补取。

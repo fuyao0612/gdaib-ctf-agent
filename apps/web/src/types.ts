@@ -151,8 +151,14 @@ export interface ThreadDetail extends Thread {
 export interface FlagCandidate {
   candidate: string;
   source_call_id?: string;
-  validation_status: string;
+  source_kind?: string;
+  source_step?: number;
+  /** schema 2.1：候选格式匹配结果。 */
+  format_status?: string;
+  /** schema 2.0 及以前的兼容字段。 */
+  validation_status?: string;
   platform_verified: boolean;
+  verification_summary?: string;
 }
 export interface ReportData extends Record<string, unknown> {
   final_answer?: string;

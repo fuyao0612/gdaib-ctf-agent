@@ -2,10 +2,16 @@
 name: yuwang
 services:
   data-init:
-    image: docker.m.daocloud.io/library/alpine:3.20
-    command: ["sh", "-c", "mkdir -p /data/artifacts && chown -R 10001:10001 /data"]
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    user: "0:0"
+    # Windows bind mounts are unsuitable for SQLite WAL locks. The first startup merges
+    # existing host data into a managed volume and never deletes either data source.
+    command: ["python", "/app/scripts/migrate_legacy_data.py"]
     volumes:
-      - ${YUWANG_DATA_PATH:-./data}:/data
+      - yuwang-data:/data
+      - ${YUWANG_DATA_PATH:-./data}:/legacy:ro
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -31,7 +37,7 @@ services:
       # Windows/macOS Docker 容器无法直接访问宿主机回环靶场的网络命名差异。
       YUWANG_LOCAL_CTF_HOST_GATEWAY: http://host.docker.internal
     volumes:
-      - ${YUWANG_DATA_PATH:-./data}:/data
+      - yuwang-data:/data
     depends_on:
       data-init:
         condition: service_completed_successfully
@@ -39,7 +45,7 @@ services:
     tmpfs:
       - /tmp:size=64m,noexec,nosuid,nodev
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/readiness')"]
       interval: 3s
       timeout: 2s
       retries: 15
@@ -122,3 +128,6 @@ services:
 networks:
   tool-internal:
     internal: true
+
+volumes:
+  yuwang-data:

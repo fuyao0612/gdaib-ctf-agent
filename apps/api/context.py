@@ -496,9 +496,18 @@ class ApiContext:
 
         try:
             self.repository.list_threads()
+            self.repository.get_agent_defaults()
             database_ok = True
         except Exception:  # pragma: no cover - readiness 的最后防线
             database_ok = False
+        if not database_ok:
+            return {
+                "database": False,
+                "master_key": False,
+                "admin": True,
+                "provider": False,
+                "agent": False,
+            }
         master_key_ok = False
         if self.config.master_key:
             try:
@@ -532,6 +541,15 @@ class ApiContext:
             "provider": provider_ok,
             "agent": agent_ok,
         }
+
+    def readiness_checks(self) -> dict[str, bool]:
+        """Container readiness only depends on durable local storage, not user Provider setup."""
+        try:
+            self.repository.list_threads()
+            self.repository.get_agent_defaults()
+        except Exception:
+            return {"database": False, "core_tables": False}
+        return {"database": True, "core_tables": True}
 
     @asynccontextmanager
     async def lifespan(self, _: FastAPI) -> AsyncIterator[None]:

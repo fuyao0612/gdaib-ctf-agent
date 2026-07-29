@@ -29,12 +29,17 @@
 
 当任务场景为 CTF、运行使用 CTF 工具，或存在 Flag 格式证据时，报告会自动使用 CTF
 结构。它按持久化步骤展示公开行动、关键观察和下一步决策，并列出关键线索、复现动作、
-Artifact、失败尝试与资源消耗；不会额外调用模型或工具。
+Artifact、失败尝试与资源消耗；不会额外调用模型或工具。HTTP 复现步骤以持久化的 URL、
+查询参数和允许的 `X-CTF-*` 请求头为准；Base64 等解码步骤会说明编码和输入来源，避免把
+模型文字中的错误路径当作事实。
 
 结果卡会先显示候选 Flag 和验证状态。`format_matched` 仅表示候选符合题目格式；没有
 真实赛题平台回执时，报告会明确写为“尚未经过赛题平台验证”。普通任务保持通用报告，
 不会添加空的 Flag 或 CTF 章节。
 
+历史 HTTP Artifact 可能没有 `run_id`。报告会只根据当前 Run 的持久化步骤和工具调用中明确
+引用的 Artifact ID 回收它们，绝不扫描同一 Thread 的所有文件，避免串入其他 Run。
+
 ## 升级兼容
 
-SQLite 迁移会幂等创建 `execution_steps` 表。旧运行没有步骤时仍能查看原有事件、审计和报告；旧报告也继续由原报告接口返回。新报告 schema 使用 `2.0`，保留原有 `status`、`model_metrics.calls` 和 `tool_metrics` 字段以兼容旧客户端。
+SQLite 迁移会幂等创建 `execution_steps` 表。旧运行没有步骤时仍能查看原有事件、审计和报告；旧报告也继续由原报告接口返回。轨迹 schema 保持 `2.0`，新报告 schema 使用 `2.1`，保留原有 `status`、`model_metrics.calls` 和 `tool_metrics` 字段以兼容旧客户端。

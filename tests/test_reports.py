@@ -2,8 +2,19 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from yuwang.domain.models import Run, TaskSpec
+from yuwang.domain.models import (
+    Artifact,
+    CallStatus,
+    ExecutionStep,
+    Run,
+    TaskSpec,
+    Thread,
+    ToolCall,
+)
+from yuwang.reports.facts import public_arguments
 from yuwang.reports.generator import ReportGenerator
+from yuwang.reports.trace import RunTraceService
+from yuwang.storage import SQLiteRepository
 
 
 def test_ctf_report_renders_persisted_timeline_without_duplicate_h1() -> None:
@@ -25,10 +36,13 @@ def test_ctf_report_renders_persisted_timeline_without_duplicate_h1() -> None:
         },
         {
             "sequence": 4, "call_id": str(uuid4()), "goal": "读取调试接口", "action_summary": "请求 /api/debug",
+            "tool_id": "builtin.localhost_http_probe",
+            "arguments": {"url": "http://127.0.0.1:8088/api/debug?unlock=1", "ctf_header": {"name": "X-CTF-Token", "value": "sunrise-7"}},
             "observation_summary": "响应正文包含 flag_b64 字段", "decision": "下一步：使用 Base64 解码",
         },
         {
             "sequence": 5, "call_id": str(uuid4()), "goal": "解码", "action_summary": "执行 Base64 解码",
+            "tool_id": "ctf.encoding_decode", "arguments": {"text": "ZmxhZ3tkZW1vfQ==", "encoding": "base64"},
             "observation_summary": "解码得到 1 个高置信 Flag 候选", "decision": "下一步：校验 Flag 格式",
         },
         {
@@ -47,3 +61,111 @@ def test_ctf_report_renders_persisted_timeline_without_duplicate_h1() -> None:
     assert "尚未经过赛题平台验证" in markdown
     assert "Artifact 清单" in markdown
     assert "逻辑模型调用：2，实际 Provider 请求：3" in markdown
+    assert "参数：`{" not in markdown
+    assert "X-CTF-Token" in markdown and "sunrise-7" in markdown
+    assert "`unlock` = `1`" in markdown
+    assert "使用 `base64` 解码" in markdown
+
+
+def test_final_answer_flag_is_reported_without_evidence_record() -> None:
+    run = Run(thread_id=uuid4())
+    task = TaskSpec(body="完成授权 CTF", scenario="general")
+    markdown, data = ReportGenerator().generate(
+        run,
+        task,
+        [],
+        {
+            "validation_status": "unverified",
+            "final_answer": "最终结果是 flag{persisted_answer}",
+            "trace": {"steps": [], "metrics": {}, "artifacts": []},
+        },
+    )
+    assert data["report_kind"] == "ctf"
+    assert data["flag_candidates"][0]["candidate"] == "flag{persisted_answer}"
+    assert data["flag_candidates"][0]["platform_verified"] is False
+    assert "未发现 Flag 候选" not in markdown
+    assert "尚未进行外部平台验证" in markdown
+
+
+def test_historical_ctf_trace_recovers_legacy_artifacts_and_uses_real_request_parameters(tmp_path) -> None:
+    """Old HTTP artifacts have no run_id, but their persisted step IDs are authoritative."""
+
+    repository = SQLiteRepository(tmp_path / "historical-ctf.db")
+    thread = repository.save_thread(Thread(title="历史 CTF 运行"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    task = TaskSpec(body="拿到授权本机靶场的 Flag", authorized_targets=["http://127.0.0.1:8088/"])
+    repository.save_run_task(run.id, task)
+    steps = [
+        ("http://127.0.0.1:8088/", None, "首页声明 robots.txt"),
+        ("http://127.0.0.1:8088/robots.txt", None, "robots.txt 指向 /dev-notes.txt"),
+        ("http://127.0.0.1:8088/dev-notes.txt", {"name": "X-CTF-Build-Token", "value": "sunrise-7"}, "开发说明给出 /api/debug"),
+        ("http://127.0.0.1:8088/api/debug?unlock=1", {"name": "X-CTF-Token", "value": "sunrise-7"}, "HTTP 200；响应正文包含 flag_b64 字段"),
+    ]
+    for sequence, (url, header, observation) in enumerate(steps, 1):
+        call_id, artifact_id = uuid4(), uuid4()
+        arguments = {"url": url, **({"ctf_header": header} if header else {})}
+        repository.save_tool_call(
+            ToolCall(
+                id=call_id, run_id=run.id, tool_name="localhost_http_probe",
+                tool_id="builtin.localhost_http_probe", arguments=arguments,
+                input_summary="读取已经公开的本机 CTF 线索", result_summary="HTTP 请求完成",
+                duration_ms=10, status=CallStatus.SUCCEEDED, artifact_ids=[artifact_id],
+            )
+        )
+        repository.save_execution_step(
+            ExecutionStep(
+                run_id=run.id, sequence=sequence, call_id=call_id, goal="跟随公开线索",
+                action_kind="tool_call", action_summary="请求本机 HTTP 资源",
+                tool_id="builtin.localhost_http_probe", tool_name="localhost_http_probe",
+                arguments=arguments, observation_status="success", observation_summary=observation,
+                preview=("flag_b64=ZmxhZ3tsb2NhbF9hZ2VudF9mb3VuZF90aGVfZGVidWdfZG9vcn0=" if sequence == 4 else None),
+                decision=("下一步：Decode base64 flag from /api/status response." if sequence == 4 else None),
+                artifact_ids=[artifact_id], duration_ms=10,
+            )
+        )
+        # This represents data written before the probe recorded run_id.
+        repository.save_artifact(
+            Artifact(
+                id=artifact_id, thread_id=thread.id, filename=f"response-{sequence}.txt",
+                kind="http_evidence", sha256=f"{sequence:x}" * 64, size=100 + sequence,
+                mime_type="text/plain", storage_ref=f"{thread.id}/response-{sequence}.txt",
+            )
+        )
+    decode_id = uuid4()
+    repository.save_tool_call(
+        ToolCall(
+            id=decode_id, run_id=run.id, tool_name="常见编码解码", tool_id="ctf.encoding_decode",
+            arguments={"text": "ZmxhZ3tsb2NhbF9hZ2VudF9mb3VuZF90aGVfZGVidWdfZG9vcn0=", "encoding": "base64"},
+            input_summary="解码 flag_b64", result_summary="解码得到 flag{local_agent_found_the_debug_door}",
+            duration_ms=5, status=CallStatus.SUCCEEDED,
+        )
+    )
+    repository.save_execution_step(
+        ExecutionStep(
+            run_id=run.id, sequence=5, call_id=decode_id, goal="解码 flag_b64", action_kind="tool_call",
+            action_summary="Decode base64 flag from /api/status response.", tool_id="ctf.encoding_decode", tool_name="常见编码解码",
+            arguments={"text": "ZmxhZ3tsb2NhbF9hZ2VudF9mb3VuZF90aGVfZGVidWdfZG9vcn0=", "encoding": "base64"},
+            observation_status="success", observation_summary="解码得到 flag{local_agent_found_the_debug_door}",
+            preview="flag{local_agent_found_the_debug_door}", duration_ms=5,
+        )
+    )
+
+    trace = RunTraceService(repository).snapshot(run.id)
+    markdown, data = ReportGenerator().generate(
+        run, task, [], {"validation_status": "unverified", "trace": trace, "final_answer": "flag{local_agent_found_the_debug_door}"}
+    )
+
+    assert len(trace["artifacts"]) == 4
+    assert [item["filename"] for item in trace["artifacts"]] == [f"response-{item}.txt" for item in range(1, 5)]
+    assert "flag{local_agent_found_the_debug_door}" in markdown
+    assert "/api/debug" in markdown and "`unlock` = `1`" in markdown
+    assert "X-CTF-Token" in markdown and "sunrise-7" in markdown
+    assert "来自 /api/debug 响应的已记录值" in markdown
+    assert "from /api/status response" not in markdown
+    assert "参数：`{" not in markdown
+    assert data["flag_candidates"][0]["candidate"] == "flag{local_agent_found_the_debug_door}"
+
+
+def test_public_arguments_keeps_only_explicit_ctf_header_values() -> None:
+    assert public_arguments({"ctf_header": {"name": "X-CTF-Token", "value": "sunrise-7"}})["ctf_header"]["value"] == "sunrise-7"
+    assert public_arguments({"ctf_header": {"name": "Authorization", "value": "Bearer private"}})["ctf_header"]["value"] == "[REDACTED]"
