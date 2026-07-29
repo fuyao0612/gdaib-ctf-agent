@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS runtime
+FROM docker.m.daocloud.io/library/python:3.11-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /sandbox
 RUN pip install --no-cache-dir "fastapi==0.133.1" "uvicorn[standard]==0.41.0" "pydantic==2.13.4" \

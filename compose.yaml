@@ -2,7 +2,7 @@
 name: yuwang
 services:
   data-init:
-    image: alpine:3.20
+    image: docker.m.daocloud.io/library/alpine:3.20
     command: ["sh", "-c", "mkdir -p /data/artifacts && chown -R 10001:10001 /data"]
     volumes:
       - ${YUWANG_DATA_PATH:-./data}:/data

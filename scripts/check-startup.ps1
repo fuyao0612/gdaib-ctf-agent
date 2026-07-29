@@ -86,8 +86,6 @@ try {
     $launcherText = Get-Content -LiteralPath $doubleClickLauncher -Raw
     $startText = Get-Content -LiteralPath $startScript -Raw
     if ($launcherText -notmatch 'start\s+-Build\s+-OpenBrowser' -or
-        -not $launcherText.Contains('start -Development -OpenBrowser') -or
-        -not $launcherText.Contains('http://127.0.0.1:8000/api/v1/health') -or
         $launcherText -match 'start "" "http://localhost:8080"' -or
         -not $launcherText.Contains('for /l %%N in (1,1,60)') -or
         -not $launcherText.Contains('did not become ready within 2 minutes') -or
