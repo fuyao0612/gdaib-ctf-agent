@@ -147,6 +147,7 @@ def provider_server():
                             "tool_name": "test_echo",
                             "tool_input": {"text": "verified", "fail": not observations},
                         }
+                    action["reason"] = "依据当前计划和已记录观察，执行下一项受控动作。"
                     response_content = json.dumps(action)
             encoded = json.dumps(
                 {

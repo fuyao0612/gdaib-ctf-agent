@@ -18,6 +18,13 @@ def _items(value: object) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
+def _observation_facts(step: dict[str, Any]) -> list[Any]:
+    """兼容历史步骤中缺失或为 null 的 observation_facts。"""
+
+    facts = step.get("observation_facts")
+    return facts if isinstance(facts, list) and facts else [step.get("observation_summary")]
+
+
 def _status(value: str, has_candidate: bool, has_answer: bool) -> str:
     return {
         "pending": "待验证",
@@ -157,11 +164,7 @@ class ReportFacts:
                 "summary": fact,
             }
             for step in timeline
-            for fact in (
-                step.get("observation_facts")
-                if isinstance(step.get("observation_facts"), list) and step.get("observation_facts")
-                else [step.get("observation_summary")]
-            )
+            for fact in _observation_facts(step)
             if isinstance(fact, str) and fact.strip()
         ]
         reproduction = [cls._reproduction(index, step) for index, step in enumerate(timeline, 1)]

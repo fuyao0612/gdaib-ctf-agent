@@ -331,7 +331,7 @@ async def test_provider_retries_with_redacted_structured_validation_feedback():
                         {
                             "message": {
                                 "content": (
-                                    '{"kind":"finish","summary":"ok",'
+                                    '{"kind":"finish","summary":"ok","reason":"基于已记录事实结束。",'
                                     '"debug_trace":"sensitive value"}'
                                 )
                             }
@@ -341,7 +341,7 @@ async def test_provider_retries_with_redacted_structured_validation_feedback():
             ),
             httpx.Response(
                 200,
-                json={"choices": [{"message": {"content": '{"kind":"finish","summary":"ok"}'}}]},
+                json={"choices": [{"message": {"content": '{"kind":"finish","summary":"ok","reason":"基于已记录事实结束。"}'}}]},
             ),
         ]
     )
