@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from yuwang.domain.models import VerificationRule
 from yuwang.flag_candidates import is_flag_candidate
 from yuwang.policy import redact, redact_data
 
@@ -31,6 +32,7 @@ def present_tool_observation(
     error: str | None = None,
     artifact_count: int = 0,
     arguments: dict[str, Any] | None = None,
+    verification_rules: list[VerificationRule] | None = None,
 ) -> ToolObservationPresentation:
     """从工具事实提取公开摘要，避免把“执行成功”当作观察结果。"""
 
@@ -85,7 +87,7 @@ def present_tool_observation(
         ]
         flags = [
             str(value.get("value")) for value in values[:3]
-            if isinstance(value, dict) and is_flag_candidate(value.get("value"))
+            if isinstance(value, dict) and is_flag_candidate(value.get("value"), verification_rules or ())
         ]
         facts = [f"解码得到 {len(values)} 个候选"]
         if chains:

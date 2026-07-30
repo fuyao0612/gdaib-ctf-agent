@@ -493,6 +493,7 @@ class WorkflowNodes:
             error=result.error.message if result.error else None,
             artifact_count=len(artifact_ids),
             arguments=public_arguments,
+            verification_rules=state.task.verification_rules,
         )
         engine.repository.save_tool_call(
             ToolCall(

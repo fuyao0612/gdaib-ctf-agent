@@ -101,14 +101,21 @@ class ReportFacts:
         return {
             "task": self.task_summary,
             "validation_status": self.validation_status,
-            "plan_adjustments": self.adjustments,
+            "plan_adjustments": [
+                {"ref": f"adjustment:{index}", "text": value}
+                for index, value in enumerate(self.adjustments, 1)
+            ],
             "timeline_untrusted": [
                 {
                     "sequence": step.get("sequence"),
+                    "action_ref": f"step:{step.get('sequence')}:action",
                     "goal": step.get("goal"),
                     "reason": step.get("action_reason"),
                     "action": step.get("action_summary"),
-                    "observation_facts": step.get("observation_facts", []),
+                    "observation_facts": [
+                        {"ref": f"step:{step.get('sequence')}:observation:{index}", "text": fact}
+                        for index, fact in enumerate(step.get("observation_facts", []), 1)
+                    ],
                     "observation_summary": step.get("observation_summary"),
                     "status": step.get("observation_status"),
                 }
@@ -276,7 +283,9 @@ class ReportFacts:
         for call in tool_calls:
             for candidate in find_flag_candidates(str(call.get("result_summary", "")), rules):
                 add(candidate, "tool_call", call.get("id"), None)
-        for candidate in find_flag_candidates(final_answer or "", rules):
+        for candidate in find_flag_candidates(
+            final_answer or "", rules, allow_whole_text_sha256=True
+        ):
             add(candidate, "final_answer")
         return list(values.values())
 

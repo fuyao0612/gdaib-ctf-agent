@@ -18,6 +18,7 @@ _UNRELATED_PROBES = (
     "普通无关文本",
     "1234567890",
 )
+_NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*{]")
 
 
 def validate_verification_rule(rule: VerificationRule) -> VerificationRule:
@@ -29,6 +30,10 @@ def validate_verification_rule(rule: VerificationRule) -> VerificationRule:
 
     if rule.kind != "regex":
         return rule
+    if len(rule.value) > 500:
+        raise ValueError("证据正则表达式过长")
+    if re.search(r"\\[1-9]|\(\?<=[^)]|\(\?<!", rule.value) or _NESTED_QUANTIFIER.search(rule.value):
+        raise ValueError("证据正则表达式包含不受支持的高风险结构")
     try:
         compiled = re.compile(rule.value)
     except re.error as exc:
