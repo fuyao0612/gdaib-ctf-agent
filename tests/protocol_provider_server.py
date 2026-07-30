@@ -94,7 +94,7 @@ class Handler(BaseHTTPRequestHandler):
         if "slow" in user_input["task"].lower():
             time.sleep(1.2)
         purpose = context.get("purpose", "")
-        if schema_name == "agentplan" or any(word in purpose for word in ("计划", "规划")):
+        if schema_name == "agentplan" or purpose.startswith(("生成动态计划", "重新规划")):
             task = user_input["task"].lower()
             guidance = user_input["supplemental_inputs"]
             return {
@@ -122,31 +122,48 @@ class Handler(BaseHTTPRequestHandler):
             }
         if schema_name == "importantfacts":
             return {"facts": ["用户偏好分阶段、可回滚的实施方案"]}
+        if schema_name == "runretrospectivedraft":
+            return {
+                "summary": "已根据持久化步骤生成公开复盘。",
+                "outcome_review": "复盘不改变已记录的验证状态。",
+                "step_reviews": [{
+                    "step": 1,
+                    "assessment": "步骤已执行并记录观察。",
+                    "contribution": "为最终结论提供可核对的事实。",
+                }],
+                "effective_actions": ["按计划执行已授权动作"],
+                "failed_attempts": [],
+                "lessons": ["结论应保持对持久化事实的引用"],
+                "next_steps": ["仅在授权范围内继续验证"],
+            }
         observations = context["untrusted_tool_content"]
         task = user_input["task"].lower()
         if "human-input" in task:
             if not user_input["supplemental_inputs"]:
-                return {"kind": "request_input", "summary": "Please provide the missing scope."}
+                return Handler._action("request_input", "Please provide the missing scope.")
             return {
                 "kind": "finish",
                 "summary": "Produce an advisory answer after human input.",
                 "answer": "A staged, reversible rollout is recommended.",
+                "reason": "The user supplied the missing scope, so the advisory answer can be completed.",
             }
         if "advisory-only" in task:
             return {
                 "kind": "finish",
                 "summary": "Produce an advisory answer without external evidence.",
                 "answer": "Review the plan with the authorized operator before execution.",
+                "reason": "This task only requests an advisory answer and records no external evidence requirement.",
             }
         if "hard-fail" in task:
-            return {"kind": "fail", "summary": "测试要求明确失败"}
+            return Handler._action("fail", "测试要求明确失败")
         if not observations:
             attachments = context["untrusted_attachment_content"]
             if not attachments:
                 return {
-                    "kind": "finish",
-                    "summary": "Complete the advisory task without a tool call.",
-                    "answer": "The requested advisory task completed successfully.",
+                "kind": "finish",
+                "summary": "Complete the advisory task without a tool call.",
+                "answer": "The requested advisory task completed successfully.",
+                "reason": "No controlled attachment is available, so the advisory task can end without a tool call.",
                 }
             attachment = attachments[0]
             return {
@@ -154,6 +171,7 @@ class Handler(BaseHTTPRequestHandler):
                 "summary": "Compute metadata for the controlled attachment.",
                 "tool_name": "file_metadata",
                 "tool_input": {"path": attachment["storage_ref"]},
+                "reason": "The controlled attachment is the next persisted source available for verification.",
             }
         latest = observations[-1]
         return {
@@ -164,6 +182,15 @@ class Handler(BaseHTTPRequestHandler):
                 "source_call_id": latest["call_id"],
                 "location": "/sha256",
             },
+            "reason": "The latest successful tool observation contains the candidate needed for deterministic verification.",
+        }
+
+    @staticmethod
+    def _action(kind: str, summary: str) -> dict[str, Any]:
+        return {
+            "kind": kind,
+            "summary": summary,
+            "reason": "The current task state requires this public next action.",
         }
 
     def _json(self, status: int, body: dict[str, Any]) -> None:

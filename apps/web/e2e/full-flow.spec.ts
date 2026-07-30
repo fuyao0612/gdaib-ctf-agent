@@ -179,7 +179,8 @@ test("long task history scrolls inside the workspace at every target viewport", 
     await conversation.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
-    await expect(page.locator(".message.agent").last()).toBeInViewport();
+    // 终态结果卡现在位于最新模型消息之后，滚到底部应优先看见可操作的结论与验证边界。
+    await expect(page.getByTestId("result-completed")).toBeInViewport();
     await expect(messageInput(page)).toBeInViewport();
     await expectNoHorizontalOverflow(page);
     await page.screenshot({
