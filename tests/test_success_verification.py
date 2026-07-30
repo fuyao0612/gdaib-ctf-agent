@@ -4,6 +4,7 @@ import pytest
 
 from yuwang.agent import AgentStateModel, SuccessVerifier
 from yuwang.agent.finalization import AgentFinalizer
+from yuwang.agent.retrospective import RunRetrospective
 from yuwang.domain.models import AgentAction, EvidenceCandidate, Observation, TaskSpec
 from yuwang.storage import SQLiteRepository
 
@@ -52,6 +53,29 @@ def test_unverified_candidate_keeps_value_source_and_trust_label_in_final_reply(
     assert candidate.value in reply
     assert str(candidate.source_call_id) in reply
     assert candidate.location in reply
+
+
+def test_final_reply_keeps_deterministic_candidate_and_marks_retrospective_source():
+    observation = successful_observation()
+    candidate = EvidenceCandidate(
+        value="FLAG{ABC123}", source_call_id=observation.call_id, location="/result/candidate"
+    )
+    state = AgentStateModel(
+        run_id=uuid4(), task=TaskSpec(body="find flag"),
+        action=AgentAction(kind="finish", summary="candidate", candidate=candidate),
+        validation_status="unverified", verification_summary="尚未执行平台验证",
+    )
+    retrospective = RunRetrospective(
+        source="deterministic", summary="预算不足，使用持久化事实生成摘要。",
+        outcome_review="未验证", next_steps=["执行授权验证步骤。"],
+    )
+
+    reply = AgentFinalizer.assistant_content(state, retrospective)
+
+    assert candidate.value in reply
+    assert "未执行外部或赛题平台验证" in reply
+    assert "确定性摘要" in reply
+    assert "下一步：执行授权验证步骤。" in reply
 
 
 def test_legacy_verified_checkpoint_field_only_restores_completion_readiness():

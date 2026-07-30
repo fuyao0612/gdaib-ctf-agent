@@ -125,7 +125,7 @@ class AgentFinalizer:
             Message(
                 thread_id=run.thread_id,
                 role=MessageRole.AGENT,
-                content=self.assistant_content(state),
+                content=self.assistant_content(state, retrospective),
                 run_id=run.id,
                 provider=actual_call.provider if actual_call else None,
                 model=actual_call.model if actual_call else None,
@@ -196,23 +196,43 @@ class AgentFinalizer:
         return merge_retrospective(facts, draft)
 
     @staticmethod
-    def assistant_content(state: AgentStateModel) -> str:
+    def assistant_content(
+        state: AgentStateModel, retrospective: RunRetrospective | None = None
+    ) -> str:
+        """聊天只呈现确定性结论与简短公开复盘，详细事实仍以报告为准。"""
+
+        lines = ["任务结果：已完成"]
         if state.final_answer:
-            return state.final_answer
-        if state.structured_output is not None:
-            return json.dumps(state.structured_output, ensure_ascii=False, indent=2)
-        if state.action and state.action.candidate:
-            label = (
-                "已外部验证的候选结果"
-                if state.validation_status == "validated"
-                else "候选结果（未外部验证）"
-            )
+            lines.append(f"最终答案：{state.final_answer}")
+        elif state.structured_output is not None:
+            lines.append("结构化结果：")
+            lines.append(json.dumps(state.structured_output, ensure_ascii=False, indent=2))
+        elif state.action and state.action.candidate:
             candidate = state.action.candidate
-            return (
-                f"{label}：{candidate.value}\n"
-                f"来源：受控工具调用 {candidate.source_call_id}（证据位置 {candidate.location}）"
+            label = "候选结果（未外部验证）" if state.validation_status != "validated" else "候选结果"
+            lines.append(f"{label}：{candidate.value}")
+            lines.append(
+                f"候选来源：受控工具调用 {candidate.source_call_id}（证据位置 {candidate.location}）"
             )
-        return state.verification_summary
+        else:
+            lines.append("未产生可展示的最终答案或候选。")
+
+        labels = {
+            "validated": "确定性验证已通过；未记录赛题平台验证。",
+            "partial": "已完成部分校验；未记录赛题平台验证。",
+            "unverified": "未执行外部或赛题平台验证。",
+            "failed": "验证失败。",
+        }
+        lines.append(f"验证状态：{labels.get(state.validation_status, state.verification_summary)}")
+        if state.verification_summary:
+            lines.append(f"验证说明：{state.verification_summary}")
+        if retrospective:
+            source = "模型复盘" if retrospective.source == "model" else "确定性摘要"
+            lines.append(f"{source}：{retrospective.summary[:500]}")
+            if retrospective.next_steps:
+                lines.append(f"下一步：{retrospective.next_steps[0]}")
+        lines.append("完整步骤、证据来源与验证边界请查看本次报告。")
+        return "\n".join(lines)
 
     async def persist_memories(self, state: AgentStateModel, run: Run) -> None:
         """重要事实提取失败不能推翻已完成结果，因此只发出公开警告。"""
