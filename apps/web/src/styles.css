@@ -370,7 +370,8 @@ textarea:disabled {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 28px max(24px, calc((100% - 860px) / 2)) 38px;
-  scroll-behavior: smooth;
+  /* 自动跟随由组件同步控制；全局平滑动画会与用户滚轮竞争。 */
+  scroll-behavior: auto;
   scrollbar-gutter: stable;
 }
 

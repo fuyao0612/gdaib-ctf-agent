@@ -106,6 +106,10 @@ export function ConversationView({
   const followLatestRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const userScrollTopRef = useRef(0);
+  const scrollIntentRef = useRef<"up" | "down" | null>(null);
+  const previousThreadIdRef = useRef<string | null>(null);
+  const [followLatest, setFollowLatest] = useState(true);
+  const followThreshold = 120;
   // Run 的 SSE 事件会频繁刷新视图。受控展开状态可避免原生 details 在重渲染时偶发收起，
   // 让暂停、继续和追加指引始终可操作。
   const [taskDetailsOpen, setTaskDetailsOpen] = useState(false);
@@ -118,17 +122,22 @@ export function ConversationView({
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
-    const previousHeight = previousScrollHeightRef.current;
-    const wasNearBottom =
-      previousHeight === 0 ||
-      previousHeight - element.scrollTop - element.clientHeight < 120;
-    if (followLatestRef.current && wasNearBottom) {
+    const switchedThread = previousThreadIdRef.current !== detail.id;
+    if (switchedThread) {
+      // 首次进入或切换任务始终从最新消息开始；之后只尊重用户当前阅读位置。
+      previousThreadIdRef.current = detail.id;
+      followLatestRef.current = true;
+      setFollowLatest(true);
+    }
+    if (switchedThread || followLatest) {
       element.scrollTop = element.scrollHeight;
-    } else if (!followLatestRef.current) {
+    } else {
+      // 新消息或报告刷新改变高度时，保持用户正在阅读的绝对位置。
       element.scrollTop = userScrollTopRef.current;
     }
+    userScrollTopRef.current = element.scrollTop;
     previousScrollHeightRef.current = element.scrollHeight;
-  }, [detail.messages.length, events.length]);
+  }, [detail.id, detail.messages.length, events.length, followLatest, report]);
 
   return (
     <section
@@ -136,11 +145,34 @@ export function ConversationView({
       className="conversation"
       aria-label="任务时间线"
       data-testid="conversation-scroll"
+      data-follow-latest={followLatest ? "true" : "false"}
+      onWheel={(event) => {
+        if (event.deltaY < 0) {
+          scrollIntentRef.current = "up";
+          followLatestRef.current = false;
+          setFollowLatest(false);
+        } else if (event.deltaY > 0) {
+          scrollIntentRef.current = "down";
+        }
+      }}
       onScroll={(event) => {
         const element = event.currentTarget;
-        userScrollTopRef.current = element.scrollTop;
-        followLatestRef.current =
-          element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+        const shouldFollow =
+          element.scrollHeight - element.scrollTop - element.clientHeight < followThreshold;
+        const intent = scrollIntentRef.current;
+        if (followLatestRef.current) {
+          userScrollTopRef.current = element.scrollTop;
+          followLatestRef.current = shouldFollow;
+          setFollowLatest(shouldFollow);
+        } else if (intent) {
+          // 只有用户的向下滚轮回到底部时，才重新开启自动跟随。
+          userScrollTopRef.current = element.scrollTop;
+          if (intent === "down" && shouldFollow) {
+            followLatestRef.current = true;
+            setFollowLatest(true);
+          }
+        }
+        scrollIntentRef.current = null;
       }}
     >
       {detail.messages.map((message) => (

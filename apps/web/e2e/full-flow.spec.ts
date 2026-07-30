@@ -197,10 +197,22 @@ test("long task history scrolls inside the workspace at every target viewport", 
       ),
     )
     .toBeGreaterThan(120);
-  const before = await conversation.evaluate((element) => element.scrollTop);
+  await conversation.evaluate((element) => {
+    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight - 240);
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await expect
+    .poll(() => conversation.evaluate(
+      (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+    ))
+    .toBeGreaterThan(120);
+  await expect(conversation).toHaveAttribute("data-follow-latest", "false");
   await sendTask(page, "用户正在向上阅读时不要强制滚到底部。", 21);
-  const after = await conversation.evaluate((element) => element.scrollTop);
-  expect(Math.abs(after - before)).toBeLessThan(120);
+  await expect
+    .poll(() => conversation.evaluate(
+      (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
+    ))
+    .toBeGreaterThan(120);
 });
 
 test("one hundred task histories scroll independently from the fixed sidebar controls", async ({ page }) => {
