@@ -170,6 +170,16 @@ export interface ReportData extends Record<string, unknown> {
   evidence?: string[];
   flag_candidates?: FlagCandidate[];
   failure_analysis?: { summary?: string; causes?: string[]; next_steps?: string[] };
+  retrospective?: {
+    source?: "model" | "deterministic";
+    summary?: string;
+    outcome_review?: string;
+    step_reviews?: { step: number; assessment: string; contribution: string }[];
+    effective_actions?: string[];
+    failed_attempts?: string[];
+    lessons?: string[];
+    next_steps?: string[];
+  };
 }
 export interface Report {
   markdown: string;

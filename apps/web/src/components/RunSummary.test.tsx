@@ -114,6 +114,7 @@ const report: Report = {
     final_answer: "已验证答案",
     evidence: ["参考工具返回匹配结果"],
     flag_candidates: [{ candidate: "flag{demo}", format_status: "format_matched", platform_verified: false }],
+    retrospective: { source: "model", summary: "模型根据已持久化步骤完成公开复盘。" },
   },
 };
 
@@ -210,6 +211,7 @@ describe("统一任务结果卡片", () => {
     expect(screen.getByTestId("flag-candidates")).toHaveTextContent("flag{demo}");
     expect(screen.getByTestId("flag-candidates")).toHaveTextContent("尚未经过赛题平台验证");
     expect(screen.getByText("查看完整报告、证据与复现步骤")).toBeInTheDocument();
+    expect(screen.getByTestId("retrospective-summary")).toHaveTextContent("模型复盘");
   });
 
   it("空失败原因优先展示报告中的失败复盘", () => {

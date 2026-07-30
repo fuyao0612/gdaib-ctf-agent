@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from yuwang.agent.progress import action_fingerprint
 from yuwang.agent.state import AgentStateModel
 from yuwang.control import (
     AgentActionDraft,
@@ -89,6 +90,16 @@ def test_action_draft_requires_and_carries_public_reason() -> None:
     ).to_agent_action([])
 
     assert action.action_reason == "最近观察已记录候选格式检查结果，因此结束本次取证。"
+
+
+def test_action_reason_does_not_change_action_fingerprint() -> None:
+    first = AgentActionDraft(
+        kind="call_tool", summary="读取首页", reason="当前计划从公开首页开始收集线索。",
+        tool_name="builtin.http", tool_input={"url": "http://example.test/"},
+    ).to_agent_action([])
+    second = first.model_copy(update={"action_reason": "同一行动的另一种公开说明。"})
+
+    assert action_fingerprint(first) == action_fingerprint(second)
 
 
 def test_task_brief_versions_preserve_original_request(tmp_path) -> None:

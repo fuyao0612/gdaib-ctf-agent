@@ -14,6 +14,16 @@ _URL = re.compile(r"https?://\S+")
 _ARTIFACT = re.compile(r"(?i)artifact(?:\s*(?:id|编号))?\s*[:#]?\s*[0-9a-f-]{8,}")
 
 
+def _validation_label(status: str) -> str:
+    return {
+        "pending": "待验证",
+        "unverified": "未完成外部验证",
+        "partial": "已完成部分校验，未完成外部验证",
+        "validated": "已通过确定性验证",
+        "failed": "验证失败",
+    }.get(status, "验证状态未知")
+
+
 class StepReview(BaseModel):
     """每项只评价一个已持久化步骤，不承载新的外部事实。"""
 
@@ -83,7 +93,7 @@ def deterministic_retrospective(facts: Any, reason: str | None = None) -> RunRet
     fallback = reason or "未完成模型复盘，以下内容由已持久化事实确定性生成。"
     return RunRetrospective(
         summary=fallback,
-        outcome_review=f"事实记录的验证状态为：{status}。最终结论以报告中的确定性验证状态为准。",
+        outcome_review=f"事实记录的验证状态为：{_validation_label(status)}。最终结论以报告中的确定性验证状态为准。",
         step_reviews=step_reviews,
         effective_actions=[str(step.get("action_summary")) for step in timeline if step.get("observation_status") == "success"][:6],
         failed_attempts=[str(step.get("observation_summary") or step.get("error") or "步骤未成功") for step in failed][:6],
@@ -130,7 +140,7 @@ def merge_retrospective(
     return RunRetrospective(
         summary=_clean_text(draft.summary, status) or "模型复盘未提供有效摘要。",
         outcome_review=(
-            f"事实记录的验证状态为：{status}。"
+            f"事实记录的验证状态为：{_validation_label(status)}。"
             f" {_clean_text(draft.outcome_review, status)}"
         )[:1_000],
         step_reviews=[reviews[step] for step in sorted(reviews)],

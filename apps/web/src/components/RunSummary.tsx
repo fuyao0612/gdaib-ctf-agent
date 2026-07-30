@@ -52,6 +52,11 @@ function failureAnalysisSummary(report: Report | null, events: Event[]): string 
   return null;
 }
 
+function retrospective(report: Report | null): NonNullable<Report["data"]["retrospective"]> | null {
+  const value = report?.data.retrospective;
+  return value && typeof value === "object" ? value : null;
+}
+
 function finalAnswer(run: Run, report: Report | null, messages: Message[]): string {
   const explicit = report?.data.final_answer;
   if (typeof explicit === "string" && explicit.trim()) return explicit;
@@ -216,6 +221,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
   const answer = finalAnswer(run, report, messages);
   const failureSummary = failureAnalysisSummary(report, events);
   const candidates = flagCandidates(report);
+  const review = retrospective(report);
   const reason =
     (run.status === "failed" ? failureSummary : null) ??
     nonEmpty(run.error) ??
@@ -245,6 +251,12 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
               {candidate.platform_verified ? "赛题平台验证通过" : "尚未经过赛题平台验证（未执行）"}
             </p>
           ))}
+        </section>
+      )}
+      {run.status === "completed" && review?.summary && (
+        <section className="result-conclusion" data-testid="retrospective-summary">
+          <strong>{review.source === "model" ? "模型复盘" : "确定性摘要"}</strong>
+          <p>{conciseAnswer(review.summary)}</p>
         </section>
       )}
       {run.status === "failed" && (

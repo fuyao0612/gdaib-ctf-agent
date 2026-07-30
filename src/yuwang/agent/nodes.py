@@ -37,6 +37,7 @@ from yuwang.domain.models import (
     ToolCall,
     ValidationStatus,
 )
+from yuwang.flag_candidates import is_flag_candidate
 from yuwang.policy import redact, redact_data
 from yuwang.reports.presentation import present_tool_observation
 from yuwang.reports.trace import RunTraceService
@@ -491,6 +492,7 @@ class WorkflowNodes:
             output=output,
             error=result.error.message if result.error else None,
             artifact_count=len(artifact_ids),
+            arguments=public_arguments,
         )
         engine.repository.save_tool_call(
             ToolCall(
@@ -537,19 +539,23 @@ class WorkflowNodes:
             )
             if not isinstance(structured_candidates, list):
                 structured_candidates = []
+            current_step = engine.repository.get_execution_step_by_call(state.run_id, call_id)
             for candidate_index, candidate_value in enumerate(structured_candidates):
                 candidate_text = (
                     candidate_value.get("value")
                     if isinstance(candidate_value, dict)
                     else candidate_value
                 )
-                if not isinstance(candidate_text, str) or not candidate_text.strip():
+                if not isinstance(candidate_text, str) or not is_flag_candidate(
+                    candidate_text, state.task.verification_rules
+                ):
                     continue
                 is_format_tool = tool.spec.id == "ctf.flag_candidate_verify"
                 evidence = EvidenceRecord(
                     run_id=state.run_id,
                     candidate=candidate_text.strip(),
                     source_call_id=call_id,
+                    source_step=current_step.sequence if current_step else None,
                     location=("/candidate" if is_format_tool else f"/candidates/{candidate_index}/value"),
                     verified=False,
                     verification_summary=(
@@ -739,7 +745,9 @@ class WorkflowNodes:
         return "model"
 
     @staticmethod
-    def _latest_flag_candidate(state: Any) -> EvidenceCandidate | None:
+    def _latest_flag_candidate(
+        state: Any, task: Any | None = None
+    ) -> EvidenceCandidate | None:
         """收尾缺少候选引用时，仅复用专用工具已验证格式的真实输出。"""
 
         for observation in reversed(state.observations):
@@ -748,7 +756,9 @@ class WorkflowNodes:
             if observation.success and observation.tool_name == "ctf.encoding_decode" and isinstance(candidates, list):
                 for index, item in enumerate(candidates):
                     value = item.get("value") if isinstance(item, dict) else item
-                    if isinstance(value, str) and value.strip():
+                    if isinstance(value, str) and is_flag_candidate(
+                        value, getattr(task, "verification_rules", ())
+                    ):
                         return EvidenceCandidate(
                             value=value.strip(), source_call_id=observation.call_id,
                             location=f"/candidates/{index}/value",
@@ -758,6 +768,9 @@ class WorkflowNodes:
                 and observation.tool_name == "ctf.flag_candidate_verify"
                 and output.get("validation_status") == "format_matched"
                 and isinstance(output.get("candidate"), str)
+                and is_flag_candidate(
+                    output["candidate"], getattr(task, "verification_rules", ())
+                )
             ):
                 return EvidenceCandidate(
                     value=output["candidate"],
@@ -810,7 +823,7 @@ class WorkflowNodes:
             )
             return engine._result("verify", state)
         candidate = state.action.candidate if state.action else None
-        candidate = candidate or self._latest_flag_candidate(state)
+        candidate = candidate or self._latest_flag_candidate(state, state.task)
         if not state.task.verification_rules:
             # 任务可以给出可用结论，但没有确定性外部条件时绝不声称“已验证成功”。
             if not state.action or not (state.action.answer or candidate):

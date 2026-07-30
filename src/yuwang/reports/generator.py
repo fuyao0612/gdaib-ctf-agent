@@ -38,6 +38,34 @@ def completion_summary(validation_status: str) -> str:
     }.get(validation_status, "执行已结束，验证状态未知")
 
 
+def display_value(value: object) -> str:
+    """用户可见 Markdown 只展示中文状态，不泄露协议机器值。"""
+
+    return {
+        "completed": "已完成",
+        "failed": "失败",
+        "stopped": "已停止",
+        "not_checked": "未检查",
+        "not_run": "未执行",
+        "format_matched": "格式匹配",
+        "format_failed": "格式不匹配",
+        "passed": "通过",
+        "encoding_decode": "编码解码",
+        "tool_call": "工具调用",
+    }.get(str(value), str(value))
+
+
+def deterministic_conclusion(facts: ReportFacts) -> str:
+    """最终结论只组合已持久化的答案、候选和验证状态。"""
+
+    result = facts.final_answer
+    if not result and facts.candidates:
+        result = f"发现候选 {facts.candidates[0]['candidate']}"
+    if not result:
+        result = "未记录可展示的最终答案"
+    return f"{result}；{trust_notice(facts.validation_status)}。"
+
+
 class ReportGenerator:
     """唯一报告路径：ReportFacts.build -> _data -> _markdown。"""
 
@@ -132,18 +160,19 @@ class ReportGenerator:
     @staticmethod
     def _markdown(facts: ReportFacts, data: dict[str, Any]) -> str:
         title = "# 御网智元 CTF 解题报告" if facts.report_kind == "ctf" else "# 御网智元运行报告"
-        lines = [title, "", "## 任务与结论"]
+        lines = [title, "", "## 任务与最终结论"]
         lines.extend([
-            f"- 执行状态：{facts.execution_status}",
+            f"- 执行状态：{display_value(facts.execution_status)}",
             f"- 验证状态：{facts.validation_label}",
             f"- 任务：{facts.task_summary}",
+            f"- 最终结论：{deterministic_conclusion(facts)}",
         ])
         if facts.report_kind == "ctf":
             lines.extend(["", "## Flag 候选与验证状态"])
             lines.extend([
-                f"- 候选 Flag：`{item['candidate']}`；格式校验：{item['format_status']}；"
-                f"确定性验证：{item['deterministic_validation_status']}；"
-                f"赛题平台验证：{item['platform_validation_status']}；来源：{item['discovery_source']}"
+                f"- 候选 Flag：`{item['candidate']}`；格式校验：{display_value(item['format_status'])}；"
+                f"确定性验证：{display_value(item['deterministic_validation_status'])}；"
+                f"赛题平台验证：{display_value(item['platform_validation_status'])}；来源：{display_value(item['discovery_source'])}"
                 for item in facts.candidates
             ] or ["- 未发现 Flag 候选。"])
         retrospective = data["retrospective"]
@@ -173,6 +202,12 @@ class ReportGenerator:
             ])
         lines.extend(["", "## 可复现步骤"])
         lines.extend([ReportGenerator._reproduction_markdown(item) for item in facts.reproduction_steps])
+        if facts.failed_attempts:
+            lines.extend(["", "## 失败尝试"])
+            lines.extend([
+                f"- 步骤 {step.get('sequence')}：{step.get('observation_summary') or step.get('error') or '执行未成功'}"
+                for step in facts.failed_attempts
+            ])
         lines.extend(["", "## Artifact 清单"])
         lines.extend([
             f"- {item.get('filename')}；{item.get('mime_type')}；{item.get('size')} B；"
@@ -211,5 +246,15 @@ class ReportGenerator:
             return f"{item['sequence']}. {'；'.join(details)}。预期：{expected}"
         if item.get("kind") == "decode" and isinstance(item.get("decode"), dict):
             decode = item["decode"]
-            return f"{item['sequence']}. 使用 `{decode.get('encoding', 'auto')}` 解码；来源：{decode.get('source')}。预期：{expected}"
+            details = [
+                f"使用 `{decode.get('encoding', 'auto')}` 解码",
+                f"来源：{decode.get('source')}",
+            ]
+            if decode.get("field"):
+                details.append(f"字段：`{decode['field']}`")
+            if decode.get("json_pointer"):
+                details.append(f"JSON Pointer：`{decode['json_pointer']}`")
+            if decode.get("input") is not None:
+                details.append(f"输入：`{decode['input']}`")
+            return f"{item['sequence']}. {'；'.join(details)}。预期：{expected}"
         return f"{item['sequence']}. {item['action']}。预期：{expected}"

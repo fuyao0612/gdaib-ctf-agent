@@ -8,11 +8,9 @@ from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
 from yuwang.domain.models import Event, Run, TaskSpec
+from yuwang.flag_candidates import find_flag_candidates, is_flag_candidate
 from yuwang.policy import redact, redact_data
 
-# The prefix is intentionally bounded.  It accepts common competition-specific prefixes
-# without treating arbitrary JSON objects or template syntax as a Flag candidate.
-_FLAG = re.compile(r"(?i)(?<![A-Za-z0-9_-])[A-Za-z][A-Za-z0-9_-]{0,39}\{[^\s{}]{1,300}\}")
 _CTF_HEADER = re.compile(r"^X-CTF-[A-Za-z0-9-]+$")
 
 
@@ -141,18 +139,30 @@ class ReportFacts:
             str(task.scenario).casefold() == "ctf"
             or any(str(step.get("tool_id", "")).startswith("ctf.") for step in timeline)
             or any(item.get("rule_kind") == "flag_format" for item in evidence)
-            or bool(_FLAG.search(final_answer or ""))
+            or bool(find_flag_candidates(final_answer or "", task.verification_rules))
         )
         reason = (
             "任务场景明确为 CTF" if str(task.scenario).casefold() == "ctf"
             else "持久化执行记录包含 CTF 工具、Flag 证据或最终答案候选"
             if is_ctf else "未发现 CTF 专用持久化事实"
         )
-        candidates = cls._candidates(evidence, timeline, tool_calls, final_answer)
+        candidates = cls._candidates(
+            evidence, timeline, tool_calls, final_answer, task.verification_rules
+        )
         artifacts = cls._artifacts(_items(trace.get("artifacts")), timeline, tool_calls)
         clues = [
-            {"step": step.get("sequence"), "call_id": step.get("call_id"), "summary": step.get("observation_summary")}
-            for step in timeline if step.get("observation_summary")
+            {
+                "step": step.get("sequence"),
+                "call_id": step.get("call_id"),
+                "summary": fact,
+            }
+            for step in timeline
+            for fact in (
+                step.get("observation_facts")
+                if isinstance(step.get("observation_facts"), list) and step.get("observation_facts")
+                else [step.get("observation_summary")]
+            )
+            if isinstance(fact, str) and fact.strip()
         ]
         reproduction = [cls._reproduction(index, step) for index, step in enumerate(timeline, 1)]
         policies: dict[str, int] = {}
@@ -184,18 +194,22 @@ class ReportFacts:
     @staticmethod
     def _candidates(
         evidence: list[dict[str, Any]], timeline: list[dict[str, Any]],
-        tool_calls: list[dict[str, Any]], final_answer: str | None,
+        tool_calls: list[dict[str, Any]], final_answer: str | None, rules: list[Any],
     ) -> list[dict[str, Any]]:
         values: dict[str, dict[str, Any]] = {}
+        source_steps = {
+            str(step.get("call_id")): step.get("sequence")
+            for step in timeline if step.get("call_id")
+        }
 
         def add(
             candidate: str, kind: str, call_id: object = None, step: object = None,
-            *, location: str | None = None, trusted: bool = False, format_status: str = "not_checked",
+            *, location: str | None = None, format_status: str = "not_checked",
             verification_scope: str = "none", deterministic_status: str = "not_run",
             platform_status: str = "not_run", summary: str = "",
         ) -> None:
             candidate = candidate.strip()
-            if not _FLAG.fullmatch(candidate) and not trusted:
+            if not is_flag_candidate(candidate, rules):
                 return
             source = {
                 "kind": kind, "call_id": str(call_id) if call_id else None,
@@ -240,24 +254,26 @@ class ReportFacts:
             ))
             add(
                 str(record.get("candidate", "")), str(record.get("discovery_source") or "evidence"),
-                record.get("source_call_id"), record.get("source_step"),
-                location=str(record.get("location") or "") or None, trusted=True,
+                record.get("source_call_id"), record.get("source_step") or source_steps.get(str(record.get("source_call_id"))),
+                location=str(record.get("location") or "") or None,
                 format_status=str(record.get("format_status") or ("format_matched" if rule_kind == "flag_format" else "not_checked")),
                 verification_scope=scope or ("deterministic_rule" if deterministic == "passed" else "none"),
                 deterministic_status=deterministic, platform_status=platform,
                 summary=str(record.get("verification_summary", "")),
             )
         for step in timeline:
-            for candidate in _FLAG.findall(" ".join(str(step.get(key, "")) for key in ("observation_summary", "preview"))):
+            for candidate in find_flag_candidates(
+                " ".join(str(step.get(key, "")) for key in ("observation_summary", "preview")), rules
+            ):
                 add(
                     candidate,
                     "encoding_decode" if step.get("tool_id") == "ctf.encoding_decode" else "execution_step",
                     step.get("call_id"), step.get("sequence"),
                 )
         for call in tool_calls:
-            for candidate in _FLAG.findall(str(call.get("result_summary", ""))):
+            for candidate in find_flag_candidates(str(call.get("result_summary", "")), rules):
                 add(candidate, "tool_call", call.get("id"), None)
-        for candidate in _FLAG.findall(final_answer or ""):
+        for candidate in find_flag_candidates(final_answer or "", rules):
             add(candidate, "final_answer")
         return list(values.values())
 
@@ -316,6 +332,11 @@ class ReportFacts:
                     current["goal"] = summary
                     current["action_summary"] = summary
                     current["decision"] = "解码完成；候选结果见本步骤观察"
+                    current["decode_source"] = {
+                        "source_step": source_step.get("sequence"),
+                        "source_url": source_url,
+                        "field": "flag_b64" if "flag_b64" in str(source_step.get("preview", "")) else None,
+                    }
             normalized.append(current)
         return normalized
 
@@ -340,10 +361,19 @@ class ReportFacts:
             }
         elif step.get("tool_id") == "ctf.encoding_decode":
             text = arguments.get("text")
+            source = step.get("decode_source")
+            source = source if isinstance(source, dict) else {}
             reproduction["kind"] = "decode"
             reproduction["decode"] = {
                 "encoding": arguments.get("encoding", "auto"),
-                "source": f"Artifact {arguments['artifact_id']}" if arguments.get("artifact_id") else "步骤中记录的文本",
+                "source": (
+                    f"步骤 {source.get('source_step')} 的 {source.get('source_url')}"
+                    if source.get("source_url") else
+                    f"Artifact {arguments['artifact_id']}" if arguments.get("artifact_id") else "步骤中记录的文本"
+                ),
+                "source_step": source.get("source_step"),
+                "source_url": source.get("source_url"),
+                "field": source.get("field"),
                 "input": redact(str(text)) if text is not None else None,
                 "json_pointer": arguments.get("json_pointer"),
             }
