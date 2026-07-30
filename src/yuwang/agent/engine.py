@@ -172,6 +172,7 @@ class AgentEngine:
             state.action = AgentAction(
                 kind="replan",
                 summary="已收到新增指引，正在基于最新上下文重新选择动作",
+                action_reason="已持久化新的用户指引，下一次动作需要基于更新后的公开任务信息重新判断。",
             )
         self._checkpoint(node, state, guidance)
         if node in safe_nodes and self.repository.consume_pause_request(state.run_id):
@@ -279,6 +280,7 @@ class AgentEngine:
                 return AgentAction(
                     kind="fail",
                     summary="当前 Provider 已禁用工具调用，不能执行模型请求的工具动作",
+                    action_reason="当前 Provider 的已记录能力不支持工具调用，因此不能执行该工具动作。",
                 )
             return action
         if not state.task.tool_snapshots:
@@ -312,6 +314,7 @@ class AgentEngine:
             return AgentAction(
                 kind="call_tool",
                 summary=f"原生 Function Calling 选择 {selection.invocation.tool_id}",
+                action_reason="根据当前计划和最近已持久化的观察，继续执行已授权工具以收集下一项证据。",
                 tool_name=selection.invocation.tool_id,
                 tool_input=selection.invocation.arguments,
             )

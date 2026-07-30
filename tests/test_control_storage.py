@@ -35,6 +35,7 @@ def test_action_draft_binds_candidate_to_actual_tool_observation() -> None:
     action = AgentActionDraft(
         kind="finish",
         summary="展示候选 Flag",
+        reason="候选值来自刚刚完成的工具观察，现将其作为公开结果展示。",
         candidate={"value": "flag{evidence_bound}"},
     ).to_agent_action(
         [
@@ -54,7 +55,11 @@ def test_action_draft_binds_candidate_to_actual_tool_observation() -> None:
 
 def test_finish_draft_reuses_latest_verified_flag_candidate() -> None:
     call_id = uuid4()
-    action = AgentActionDraft(kind="finish", summary="完成取证").to_agent_action(
+    action = AgentActionDraft(
+        kind="finish",
+        summary="完成取证",
+        reason="已完成可公开的候选格式检查，可以结束本次取证。",
+    ).to_agent_action(
         [
             Observation(
                 call_id=call_id,
@@ -71,6 +76,19 @@ def test_finish_draft_reuses_latest_verified_flag_candidate() -> None:
 
     assert action.candidate and action.candidate.value == "flag{verified_by_tool}"
     assert action.candidate.source_call_id == call_id
+
+
+def test_action_draft_requires_and_carries_public_reason() -> None:
+    with pytest.raises(ValueError, match="reason"):
+        AgentActionDraft(kind="finish", summary="缺少公开理由")
+
+    action = AgentActionDraft(
+        kind="finish",
+        summary="完成取证",
+        reason="最近观察已记录候选格式检查结果，因此结束本次取证。",
+    ).to_agent_action([])
+
+    assert action.action_reason == "最近观察已记录候选格式检查结果，因此结束本次取证。"
 
 
 def test_task_brief_versions_preserve_original_request(tmp_path) -> None:

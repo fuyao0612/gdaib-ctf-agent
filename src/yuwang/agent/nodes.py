@@ -52,6 +52,12 @@ class WorkflowNodes:
     def __init__(self, engine: AgentEngine) -> None:
         self.engine = engine
 
+    @staticmethod
+    def _public_action_reason(action: AgentAction) -> str:
+        """仅保留短小的公开理由；服务端动作使用确定性回退文本。"""
+
+        return redact(action.action_reason or "根据当前已持久化的计划和观察，执行该动作以继续收集可核对的事实。")[:600]
+
     def _link_previous_decision(self, state: Any, action: AgentAction) -> None:
         """将下一次已选择的公开动作关联到最近未收口的工具步骤。"""
 
@@ -273,7 +279,10 @@ class WorkflowNodes:
         state.action_fingerprints.append(fingerprint)
         if repeats >= 2:
             state.no_progress_count += 1
-            state.action = AgentAction(kind="replan", summary="检测到重复动作，强制重新规划")
+            state.action = AgentAction(
+                kind="replan", summary="检测到重复动作，强制重新规划",
+                action_reason="当前动作与已执行动作重复，改为重新规划以避免重复调用。",
+            )
             engine.events.emit(
                 state.run_id,
                 EventType.WARNING,
@@ -312,7 +321,10 @@ class WorkflowNodes:
                     error=reason,
                 )
             )
-            state.action = AgentAction(kind="replan", summary="工具快照拒绝后重新规划")
+            state.action = AgentAction(
+                kind="replan", summary="工具快照拒绝后重新规划",
+                action_reason="该工具不在当前 Run 的持久化允许快照中，需要重新规划。",
+            )
             return engine._result("policy_check", state)
         try:
             tool = engine.registry.get(tool_id)
@@ -333,7 +345,10 @@ class WorkflowNodes:
                     error=reason,
                 )
             )
-            state.action = AgentAction(kind="replan", summary="工具不可用后重新规划")
+            state.action = AgentAction(
+                kind="replan", summary="工具不可用后重新规划",
+                action_reason="当前 Run 已记录的工具不可用，需要重新规划可执行路径。",
+            )
             return engine._result("policy_check", state)
         decision = engine.policy.check_tool(state.task, tool.spec, state.action.tool_input)
         engine.events.emit(
@@ -352,7 +367,10 @@ class WorkflowNodes:
                     error=decision.reason,
                 )
             )
-            state.action = AgentAction(kind="replan", summary="策略拒绝后重新规划")
+            state.action = AgentAction(
+                kind="replan", summary="策略拒绝后重新规划",
+                action_reason="当前动作未通过策略检查，需要重新规划合规的后续步骤。",
+            )
         elif decision.requires_approval:
             fingerprint = engine._fingerprint(state.action)
             if state.approved_risk_action_fingerprint == fingerprint:
@@ -406,6 +424,7 @@ class WorkflowNodes:
                 goal=redact(goal),
                 action_kind="tool_call",
                 action_summary=redact(state.action.summary),
+                action_reason=self._public_action_reason(state.action),
                 tool_id=tool.spec.id,
                 tool_name=tool.spec.display_name,
                 arguments=public_arguments,

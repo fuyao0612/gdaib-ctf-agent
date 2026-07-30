@@ -16,6 +16,15 @@ from yuwang.tooling.sdk import ToolPlugin, ToolSpec
 T = TypeVar("T", bound=BaseModel)
 
 
+def action_draft_payload(action: AgentAction) -> dict[str, object]:
+    """测试桩模拟模型动作契约中的必填公开理由。"""
+
+    return {
+        **action.model_dump(exclude={"action_reason"}),
+        "reason": "依据当前测试计划和最近已记录观察，执行该受控动作。",
+    }
+
+
 class FakeModelProvider:
     name = "test-provider"
     fallback_on = ["rate_limit", "timeout", "service"]
@@ -115,27 +124,27 @@ class FakeModelProvider:
         )
         if self.scenario == "request_input" and not supplemental:
             return output_type.model_validate(
-                AgentAction(kind="request_input", summary="请补充目标受众").model_dump()
+                action_draft_payload(AgentAction(kind="request_input", summary="请补充目标受众"))
             )
         if self.scenario in {"request_input", "advisory"}:
             return output_type.model_validate(
-                AgentAction(
+                action_draft_payload(AgentAction(
                     kind="finish",
                     summary="生成建议回答",
                     answer=f"建议：{supplemental[-1] if supplemental else '采用分阶段方案'}",
-                ).model_dump()
+                ))
             )
         if self.scenario == "structured":
             return output_type.model_validate(
-                AgentAction(
+                action_draft_payload(AgentAction(
                     kind="finish",
                     summary="生成结构化结果",
                     structured_output={"title": "validated", "priority": 1},
-                ).model_dump()
+                ))
             )
         if self.scenario == "declared_failure":
             return output_type.model_validate(
-                AgentAction(kind="fail", summary="测试触发安全失败").model_dump()
+                action_draft_payload(AgentAction(kind="fail", summary="测试触发安全失败"))
             )
         if observations and observations[-1]["success"]:
             latest = observations[-1]
@@ -148,7 +157,7 @@ class FakeModelProvider:
                     "location": "/echoed",
                 },
             )
-            return output_type.model_validate(value.model_dump())
+            return output_type.model_validate(action_draft_payload(value))
         fail = not observations
         value = AgentAction(
             kind="call_tool",
@@ -156,7 +165,7 @@ class FakeModelProvider:
             tool_name="test_echo",
             tool_input={"text": "verified", "fail": fail},
         )
-        return output_type.model_validate(value.model_dump())
+        return output_type.model_validate(action_draft_payload(value))
 
 
 class FakeEchoInput(BaseModel):

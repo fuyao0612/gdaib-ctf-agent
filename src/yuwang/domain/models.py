@@ -389,6 +389,8 @@ class ExecutionStep(DomainModel):
     goal: str = Field(min_length=1, max_length=500)
     action_kind: str = Field(min_length=1, max_length=80)
     action_summary: str = Field(min_length=1, max_length=500)
+    # 兼容历史运行；新步骤创建时保存已脱敏的公开行动理由。
+    action_reason: str | None = Field(default=None, max_length=600)
     tool_id: str | None = Field(default=None, max_length=240)
     tool_name: str | None = Field(default=None, max_length=160)
     arguments: dict[str, Any] = Field(default_factory=dict)
@@ -439,6 +441,8 @@ class AgentAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["call_tool", "replan", "finish", "fail", "request_input"]
     summary: str
+    # 历史检查点可能没有理由；模型草稿仍要求 reason。
+    action_reason: str | None = Field(default=None, max_length=600)
     tool_name: str | None = None
     tool_input: dict[str, Any] = Field(default_factory=dict)
     candidate: EvidenceCandidate | None = None

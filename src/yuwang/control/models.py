@@ -104,6 +104,7 @@ class AgentActionDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["call_tool", "replan", "finish", "fail", "request_input"]
     summary: str = Field(min_length=1, max_length=10_000)
+    reason: str = Field(min_length=1, max_length=600)
     tool_name: str | None = Field(default=None, min_length=1, max_length=500)
     tool_input: dict[str, Any] = Field(default_factory=dict)
     candidate: str | dict[str, Any] | None = None
@@ -121,6 +122,7 @@ class AgentActionDraft(BaseModel):
         return AgentAction(
             kind=self.kind,
             summary=self.summary,
+            action_reason=self.reason,
             tool_name=self.tool_name,
             tool_input=self.tool_input,
             candidate=candidate,

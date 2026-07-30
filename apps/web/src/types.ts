@@ -497,6 +497,7 @@ export interface ExecutionStep {
   goal: string;
   action_kind: string;
   action_summary: string;
+  action_reason?: string | null;
   tool_id: string | null;
   tool_name: string | null;
   arguments: Record<string, unknown>;

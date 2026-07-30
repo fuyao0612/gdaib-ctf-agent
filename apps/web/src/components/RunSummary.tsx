@@ -113,6 +113,7 @@ export function ExecutionTimeline({ steps }: { steps: ExecutionStep[] }) {
         <li className={`execution-step ${step.observation_status}`} key={`${step.sequence}-${step.call_id ?? "manual"}`}>
           <header><strong>步骤 {step.sequence}</strong><span>{STEP_STATUS_LABEL[step.observation_status]}</span><time>{step.duration_ms == null ? "进行中" : `${step.duration_ms} ms`}</time></header>
           <p><b>目标：</b>{step.goal}</p>
+          <p><b>理由：</b>{step.action_reason ?? "历史步骤未记录公开理由"}</p>
           <p><b>行动：</b>{step.tool_name ?? step.action_kind}，{step.action_summary}</p>
           <p><b>关键观察：</b>{step.observation_summary ?? "正在等待工具返回"}</p>
           <p><b>下一步：</b>{(step.decision ?? "等待下一次公开决策").replace(/^(下一步：\s*)+/, "").replace(/^(结束：\s*)+/, "")}</p>

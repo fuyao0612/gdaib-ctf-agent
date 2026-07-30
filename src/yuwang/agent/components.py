@@ -173,6 +173,8 @@ class DefaultActionSelector:
                 "选择下一动作：call_tool、replan、finish、fail 或 request_input。"
                 "当用户已给出工具所需的完整受限输入，且工具 Schema 支持该输入时，"
                 "优先 call_tool；只有缺少 Schema 必填数据时才 request_input。"
+                "必须提供 reason：用一至三句公开、简短的文字说明当前计划或最近观察为何支持此动作；"
+                "不得输出隐藏思维过程、敏感数据或工具指令。"
             ),
         )
         return draft.to_agent_action(state.observations)

@@ -138,6 +138,26 @@ describe("Agent 五阶段进度", () => {
   });
 });
 
+describe("执行时间线", () => {
+  it("展示公开行动理由并兼容历史步骤", () => {
+    const timeline = [{
+      run_id: "run-running", sequence: 1, call_id: "call-1", goal: "读取首页",
+      action_kind: "tool_call", action_summary: "请求首页", action_reason: "计划从首页开始收集公开路径。",
+      tool_id: "builtin.http", tool_name: "HTTP", arguments: {}, observation_status: "success" as const,
+      observation_summary: "发现 robots.txt", preview: null, error: null, decision: null,
+      artifact_ids: [], evidence_ids: [], started_at: started, finished_at: started, duration_ms: 1,
+    }, {
+      run_id: "run-running", sequence: 2, call_id: "call-2", goal: "读取 robots",
+      action_kind: "tool_call", action_summary: "请求 robots.txt", tool_id: "builtin.http", tool_name: "HTTP",
+      arguments: {}, observation_status: "success" as const, observation_summary: "无", preview: null,
+      error: null, decision: null, artifact_ids: [], evidence_ids: [], started_at: started, finished_at: started, duration_ms: 1,
+    }];
+    render(<RunProgress run={makeRun("completed")} events={events} audit={audit} report={{ ...report, data: { ...report.data, timeline } }} />);
+    expect(screen.getByTestId("execution-timeline")).toHaveTextContent("计划从首页开始收集公开路径");
+    expect(screen.getByTestId("execution-timeline")).toHaveTextContent("历史步骤未记录公开理由");
+  });
+});
+
 describe("统一任务结果卡片", () => {
   it.each([
     ["completed", "任务已验证成功", "已验证答案"],

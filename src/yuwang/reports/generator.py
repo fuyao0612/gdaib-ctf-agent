@@ -137,6 +137,7 @@ class ReportGenerator:
             lines.extend([
                 f"### 步骤 {step.get('sequence')}",
                 f"- 目标：{step.get('goal')}",
+                f"- 理由：{step.get('action_reason') or '历史步骤未记录公开理由'}",
                 f"- 行动：{step.get('action_summary')}",
                 f"- 关键观察：{step.get('observation_summary') or '无'}",
                 f"- 决策：{decision}",
