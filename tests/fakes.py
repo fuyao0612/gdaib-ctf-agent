@@ -7,6 +7,7 @@ from typing import TypeVar
 from pydantic import BaseModel, Field, ValidationError
 
 from yuwang.agent.failure_analysis import FailureAnalysisDraft
+from yuwang.agent.retrospective import RunRetrospectiveDraft
 from yuwang.control import AgentPlanDraft, TaskBriefDraft
 from yuwang.domain.models import AgentAction, ImportantFacts
 from yuwang.model_providers import ProviderError
@@ -111,6 +112,22 @@ class FakeModelProvider:
                     "summary": "任务在安全检查中止，当前未执行未经授权的动作。",
                     "causes": ["模型选择了不可继续的动作"],
                     "next_steps": ["补充允许范围或调整任务后重试"],
+                }
+            )
+        if output_type is RunRetrospectiveDraft:
+            return output_type.model_validate(
+                {
+                    "summary": "已根据持久化步骤整理公开复盘。",
+                    "outcome_review": "复盘仅描述已记录事实，最终验证状态保持不变。",
+                    "step_reviews": [{
+                        "step": 1,
+                        "assessment": "步骤提供了可核对的观察。",
+                        "contribution": "为后续结论提供已持久化的事实。",
+                    }],
+                    "effective_actions": ["按计划执行已授权动作"],
+                    "failed_attempts": [],
+                    "lessons": ["区分候选发现与外部验证"],
+                    "next_steps": ["按授权范围继续验证"],
                 }
             )
         context = json.loads(prompt)

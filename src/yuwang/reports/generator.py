@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from yuwang.agent.retrospective import RunRetrospective, deterministic_retrospective
 from yuwang.domain.models import Event, Run, TaskSpec
 from yuwang.policy import redact, redact_data
 from yuwang.reports.facts import ReportFacts
@@ -44,11 +45,13 @@ class ReportGenerator:
         self, run: Run, task: TaskSpec, events: list[Event], metrics: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
         facts = ReportFacts.build(run, task, events, metrics)
-        data = self._data(run, facts, metrics)
+        data = self._data(run, task, facts, metrics)
         return self._markdown(facts, data), data
 
     @staticmethod
-    def _data(run: Run, facts: ReportFacts, metrics: dict[str, Any]) -> dict[str, Any]:
+    def _data(
+        run: Run, task: TaskSpec, facts: ReportFacts, metrics: dict[str, Any]
+    ) -> dict[str, Any]:
         model = facts.metrics
         evidence_level = (
             "external"
@@ -59,13 +62,26 @@ class ReportGenerator:
         raw_plan = metrics.get("plan")
         trace: dict[str, Any] = raw_trace if isinstance(raw_trace, dict) else {}
         plan: dict[str, Any] = raw_plan if isinstance(raw_plan, dict) else {}
+        retrospective = metrics.get("retrospective")
+        if not isinstance(retrospective, dict):
+            failure = metrics.get("failure_analysis")
+            reason = (
+                "失败运行未完成模型复盘，以下内容由已持久化事实和失败分析确定性生成。"
+                if isinstance(failure, dict)
+                else "历史报告未记录模型复盘，以下内容由已持久化事实确定性生成。"
+            )
+            retrospective = deterministic_retrospective(
+                facts, reason
+            ).model_dump(mode="json")
+        else:
+            retrospective = RunRetrospective.model_validate(retrospective).model_dump(mode="json")
         data = {
-            "schema_version": "2.1",
+            "schema_version": "3.0",
             "report_kind": facts.report_kind,
             "report_kind_reason": facts.report_kind_reason,
             "run_id": str(run.id),
             "task_summary": facts.task_summary,
-            "mode": str(getattr(run, "mode", "agent")),
+            "mode": str(task.mode),
             "execution_status": facts.execution_status,
             "status": facts.execution_status,
             "validation_status": facts.validation_status,
@@ -107,6 +123,7 @@ class ReportGenerator:
             },
             "limitations": [trust_notice(facts.validation_status)],
             "failure_analysis": metrics.get("failure_analysis"),
+            "retrospective": retrospective,
         }
         safe = redact_data(data)
         assert isinstance(safe, dict)
@@ -129,8 +146,19 @@ class ReportGenerator:
                 f"赛题平台验证：{item['platform_validation_status']}；来源：{item['discovery_source']}"
                 for item in facts.candidates
             ] or ["- 未发现 Flag 候选。"])
-            lines.extend(["", "## 解题思路摘要"])
-            lines.extend([f"- {item['summary']}" for item in facts.key_clues[:5]] or ["- 尚无可公开的关键观察。"])
+        retrospective = data["retrospective"]
+        source_label = "模型复盘" if retrospective.get("source") == "model" else "确定性摘要"
+        lines.extend(["", f"## 全过程复盘（{source_label}）"])
+        lines.extend([
+            f"- 总体总结：{retrospective.get('summary')}",
+            f"- 结果复核：{retrospective.get('outcome_review')}",
+            "- 有效做法：" + "；".join(retrospective.get("effective_actions") or ["未记录"]),
+            "- 无效尝试：" + "；".join(retrospective.get("failed_attempts") or ["未记录"]),
+            "- 经验：" + "；".join(retrospective.get("lessons") or ["未记录"]),
+            "- 下一步建议：" + "；".join(retrospective.get("next_steps") or ["未记录"]),
+        ])
+        lines.extend(["", "## 关键线索"])
+        lines.extend([f"- {item['summary']}" for item in facts.key_clues[:5]] or ["- 尚无可公开的关键观察。"])
         lines.extend(["", "## 详细执行过程"])
         for step in facts.timeline:
             decision = _clean_decision(step.get("decision")) or "运行在此步骤结束，未记录后续公开动作"

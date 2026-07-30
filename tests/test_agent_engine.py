@@ -211,7 +211,7 @@ async def test_complete_failure_replan_success_report(tmp_path):
     tool_events = [event for event in events if event.type == EventType.TOOL_FINISHED]
     assert [event.payload["success"] for event in tool_events] == [False, True]
     assert repository.get_report(run.id)[1]["tool_metrics"] == {"calls": 2, "failures": 1}
-    assert len(repository.list_model_calls(run.id)) == 6
+    assert len(repository.list_model_calls(run.id)) == 7
     assert [call.status for call in repository.list_tool_calls(run.id)] == [
         CallStatus.FAILED,
         CallStatus.SUCCEEDED,
@@ -685,7 +685,7 @@ async def test_direct_workflow_uses_one_model_call_for_an_advisory_answer(tmp_pa
     await engine.run(run.id, TaskSpec(body="answer directly"))
 
     assert repository.get_run(run.id).status == RunStatus.COMPLETED
-    assert len(repository.list_model_calls(run.id)) == 1
+    assert len(repository.list_model_calls(run.id)) == 2
     assert repository.latest_task_brief(run.id) is None
     assert not any(event.type == EventType.PLAN_UPDATED for event in repository.list_events(run.id))
 
@@ -778,7 +778,7 @@ async def test_direct_workflow_returns_failed_tool_observation_to_same_agent(tmp
     calls = repository.list_tool_calls(run.id)
     assert repository.get_run(run.id).status == RunStatus.COMPLETED
     assert [call.status for call in calls] == [CallStatus.FAILED, CallStatus.SUCCEEDED]
-    assert len(repository.list_model_calls(run.id)) == 3
+    assert len(repository.list_model_calls(run.id)) == 4
     assert repository.latest_task_brief(run.id) is None
 
 
@@ -932,7 +932,7 @@ async def test_disabling_important_fact_extraction_skips_extra_model_call(tmp_pa
     run = repository.save_run(Run(thread_id=thread.id))
     await engine.run(run.id, TaskSpec(body="do not remember facts"))
     assert [item.kind for item in repository.list_memories(thread.id)] == ["run_summary"]
-    assert len(repository.list_model_calls(run.id)) == 1
+    assert len(repository.list_model_calls(run.id)) == 2
 
 
 @pytest.mark.asyncio

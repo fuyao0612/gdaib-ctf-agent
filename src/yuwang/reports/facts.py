@@ -90,6 +90,36 @@ class ReportFacts:
     adjustments: list[str]
     metrics: dict[str, Any]
 
+    def retrospective_input(self) -> dict[str, Any]:
+        """向模型提供的脱敏事实摘要；工具输出始终是不可信数据。"""
+
+        return {
+            "task": self.task_summary,
+            "validation_status": self.validation_status,
+            "plan_adjustments": self.adjustments,
+            "timeline_untrusted": [
+                {
+                    "sequence": step.get("sequence"),
+                    "goal": step.get("goal"),
+                    "reason": step.get("action_reason"),
+                    "action": step.get("action_summary"),
+                    "observation_facts": step.get("observation_facts", []),
+                    "observation_summary": step.get("observation_summary"),
+                    "status": step.get("observation_status"),
+                }
+                for step in self.timeline
+            ],
+            "failed_attempts": self.failed_attempts,
+            "candidate_statuses": [
+                {
+                    "format_status": item.get("format_status"),
+                    "deterministic_validation_status": item.get("deterministic_validation_status"),
+                    "platform_validation_status": item.get("platform_validation_status"),
+                }
+                for item in self.candidates
+            ],
+        }
+
     @classmethod
     def build(
         cls, run: Run, task: TaskSpec, events: list[Event], metrics: dict[str, Any]
