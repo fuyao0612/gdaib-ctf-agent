@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import re
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -21,6 +22,26 @@ from yuwang.domain.models import (
     Thread,
     utcnow,
 )
+
+_PROMPT_INJECTION_MARKERS = re.compile(
+    r"(?i)(ignore\s+(all|previous)|system\s+message|developer\s+message|reveal\s+api\s*key|disable\s+policy)"
+)
+
+
+def _artifact_metadata(content: bytes, mime_type: str) -> tuple[dict[str, Any], str | None, bool]:
+    """提取受限摘要并标记潜在注入；附件内容永远不作为系统指令执行。"""
+
+    metadata: dict[str, Any] = {"byte_length": len(content)}
+    preview: str | None = None
+    contains_injection = False
+    if mime_type.startswith("text/") or mime_type in {"application/json", "application/xml"}:
+        text = content.decode("utf-8", errors="replace")
+        preview = text[:12_000]
+        metadata.update({"encoding": "utf-8-replacement", "line_count": text.count("\n") + 1})
+        contains_injection = bool(_PROMPT_INJECTION_MARKERS.search(text))
+    else:
+        metadata["binary"] = True
+    return metadata, preview, contains_injection
 
 
 def create_thread_router(context: ApiContext) -> APIRouter:
@@ -163,6 +184,12 @@ def create_thread_router(context: ApiContext) -> APIRouter:
         destination = context.config.artifact_root / storage_ref
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
+        mime_type = (
+            upload.content_type
+            or mimetypes.guess_type(filename)[0]
+            or "application/octet-stream"
+        )
+        metadata, preview, contains_injection = _artifact_metadata(content, mime_type)
         artifact = Artifact(
             id=artifact_id,
             thread_id=thread_id,
@@ -170,12 +197,15 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             kind="upload",
             sha256=hashlib.sha256(content).hexdigest(),
             size=len(content),
-            mime_type=(
-                upload.content_type
-                or mimetypes.guess_type(filename)[0]
-                or "application/octet-stream"
-            ),
+            mime_type=mime_type,
             storage_ref=storage_ref,
+            source="user_upload",
+            trust_level="untrusted",
+            extracted_metadata=metadata,
+            preview=preview,
+            contains_prompt_injection=contains_injection,
+            truncated=False,
+            original_ref=f"upload:{artifact_id}",
         )
         return repository.save_artifact(artifact)
 

@@ -94,6 +94,7 @@ class ReportFacts:
     policy_summary: list[dict[str, Any]]
     adjustments: list[str]
     metrics: dict[str, Any]
+    handoff: dict[str, Any]
 
     def retrospective_input(self) -> dict[str, Any]:
         """向模型提供的脱敏事实摘要；工具输出始终是不可信数据。"""
@@ -179,6 +180,51 @@ class ReportFacts:
         for event in events:
             if str(event.type) == "policy_checked":
                 policies[event.summary] = policies.get(event.summary, 0) + 1
+        completed_steps = [
+            step.get("sequence")
+            for step in timeline
+            if step.get("observation_status") == "success"
+        ]
+        blockers: list[str] = []
+        status = str(run.status)
+        if status in {"waiting_input", "waiting_clarification"}:
+            blockers.append("等待用户补充或澄清")
+        if status == "waiting_approval":
+            blockers.append("等待计划或风险审批")
+        if status == "paused":
+            blockers.append("任务已暂停，等待从检查点恢复")
+        budget = {
+            "steps": max(0, task.budget.max_steps - int(trace.get("metrics", {}).get("steps", 0)))
+            if isinstance(trace.get("metrics"), dict) else task.budget.max_steps,
+            "model_calls": max(0, task.budget.max_model_calls - int(trace.get("metrics", {}).get("logical_model_calls", 0)))
+            if isinstance(trace.get("metrics"), dict) else task.budget.max_model_calls,
+            "tool_calls": max(0, task.budget.max_tool_calls - int(trace.get("metrics", {}).get("tool_calls", 0)))
+            if isinstance(trace.get("metrics"), dict) else task.budget.max_tool_calls,
+        }
+        handoff = {
+            "current_goal": redact(task.body[:500]),
+            "completed_steps": completed_steps,
+            "validated_results": [
+                item.get("candidate") for item in candidates
+                if item.get("deterministic_validation_status") == "passed"
+                or item.get("platform_validation_status") == "passed"
+            ],
+            "key_evidence": [item["summary"] for item in clues[:8] if item.get("summary")],
+            "failed_paths": [
+                step.get("sequence") for step in timeline
+                if step.get("observation_status") in {"error", "timeout", "blocked", "stopped"}
+            ],
+            "current_blockers": blockers,
+            "pending_approvals": [
+                event.summary for event in events
+                if str(event.type) in {"plan_approval_requested", "risk_approval_requested"}
+            ],
+            "remaining_budget": budget,
+            "recommended_action": (
+                "先处理当前阻塞后从检查点继续" if blockers
+                else "复核报告和证据后决定是否进行下一步授权验证"
+            ),
+        }
         return cls(
             report_kind="ctf" if is_ctf else "general",
             report_kind_reason=reason,
@@ -199,6 +245,7 @@ class ReportFacts:
                 if isinstance(trace.get("metrics"), dict)
                 else {}
             ),
+            handoff=handoff,
         )
 
     @staticmethod

@@ -49,6 +49,8 @@ class RunStatus(StrEnum):
 
 ValidationStatus = Literal["pending", "unverified", "partial", "validated", "failed"]
 EvidenceLevel = Literal["none", "model", "structured", "external"]
+ArtifactTrustLevel = Literal["untrusted", "user_asserted", "tool_verified"]
+ResultType = Literal["answer", "finding", "assessment", "flag", "artifact", "handoff"]
 
 
 ACTIVE_RUN_STATUSES = {
@@ -182,6 +184,7 @@ class Run(DomainModel):
     # status 描述执行生命周期；验证结论与证据强度必须独立展示，不能由完成状态推断。
     validation_status: ValidationStatus = "pending"
     evidence_level: EvidenceLevel = "none"
+    results: list[TaskResult] = Field(default_factory=list, max_length=100)
     created_at: datetime = Field(default_factory=utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -253,6 +256,13 @@ class Artifact(DomainModel):
     size: int = Field(ge=0)
     mime_type: str = Field(min_length=1, max_length=200)
     storage_ref: str = Field(min_length=1, max_length=500)
+    source: str = Field(default="user_upload", min_length=1, max_length=200)
+    trust_level: ArtifactTrustLevel = "untrusted"
+    extracted_metadata: dict[str, Any] = Field(default_factory=dict)
+    preview: str | None = Field(default=None, max_length=12_000)
+    contains_prompt_injection: bool = False
+    truncated: bool = False
+    original_ref: str | None = Field(default=None, max_length=500)
     created_at: datetime = Field(default_factory=utcnow)
 
     @field_validator("storage_ref")
@@ -267,6 +277,45 @@ class Artifact(DomainModel):
         ):
             raise ValueError("storage_ref must be an opaque relative reference")
         return value
+
+
+class EvidenceReference(DomainModel):
+    """通用结果引用的最小证据契约。"""
+
+    id: UUID = Field(default_factory=uuid4)
+    evidence_type: str = Field(min_length=1, max_length=80)
+    source: str = Field(min_length=1, max_length=500)
+    content_summary: str = Field(min_length=1, max_length=2000)
+    raw_ref: str = Field(min_length=1, max_length=500)
+    sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    collected_at: datetime = Field(default_factory=utcnow)
+    source_step: int | None = Field(default=None, ge=1)
+    reliable: bool = False
+    tool_verified: bool = False
+
+
+class TaskResult(DomainModel):
+    """跨场景统一结果；CTF Flag 只是 ``result_type=flag`` 的一种场景结果。"""
+
+    id: UUID = Field(default_factory=uuid4)
+    result_type: ResultType
+    title: str = Field(min_length=1, max_length=300)
+    summary: str = Field(min_length=1, max_length=10_000)
+    structured_data: dict[str, Any] = Field(default_factory=dict)
+    scenario: str = Field(min_length=1, max_length=80)
+    evidence: list[EvidenceReference] = Field(default_factory=list, max_length=100)
+    validation_status: ValidationStatus = "pending"
+    validator_name: str = Field(default="none", min_length=1, max_length=120)
+    validator_version: str = Field(default="0", min_length=1, max_length=40)
+    validated_at: datetime | None = None
+    validation_explanation: str = Field(default="", max_length=2000)
+    confidence: float = Field(default=0, ge=0, le=1)
+    source_steps: list[int] = Field(default_factory=list, max_length=100)
+    tool_call_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+Run.model_rebuild()
 
 
 class SkillSnapshot(BaseModel):
@@ -502,6 +551,7 @@ class AgentPlan(BaseModel):
     verification_methods: list[str] = Field(default_factory=list, max_length=30)
     risks: list[str] = Field(default_factory=list, max_length=30)
     dependencies: list[str] = Field(default_factory=list, max_length=30)
+    step_details: list[PlanStep] = Field(default_factory=list, max_length=30)
 
     @model_validator(mode="after")
     def complete_step_contracts(self) -> AgentPlan:
@@ -515,7 +565,60 @@ class AgentPlan(BaseModel):
             raise ValueError("每个计划步骤必须有一个预期结果")
         if len(self.verification_methods) != len(self.steps):
             raise ValueError("每个计划步骤必须有一个验证方式")
+        if not self.step_details:
+            self.step_details = [
+                PlanStep(
+                    step_id=f"step-{index}",
+                    goal=step,
+                    reason="按任务目标推进并收集公开证据。",
+                    expected_result=self.expected_results[index - 1],
+                    verification_method=self.verification_methods[index - 1],
+                )
+                for index, step in enumerate(self.steps, 1)
+            ]
+        if len(self.step_details) != len(self.steps) or [
+            item.goal for item in self.step_details
+        ] != self.steps:
+            # 兼容旧 UI 只提交并行数组的计划编辑；服务端重新对齐结构化字段。
+            self.step_details = [
+                PlanStep(
+                    step_id=f"step-{index}",
+                    goal=step,
+                    reason=(self.step_details[index - 1].reason
+                            if index <= len(self.step_details)
+                            else "按更新后的任务目标推进并收集公开证据。"),
+                    expected_result=self.expected_results[index - 1],
+                    verification_method=self.verification_methods[index - 1],
+                    capabilities=(self.step_details[index - 1].capabilities
+                                  if index <= len(self.step_details) else []),
+                    dependencies=(self.step_details[index - 1].dependencies
+                                  if index <= len(self.step_details) else []),
+                    risk=(self.step_details[index - 1].risk
+                          if index <= len(self.step_details) else "low"),
+                    status=(self.step_details[index - 1].status
+                            if index <= len(self.step_details) else "planned"),
+                )
+                for index, step in enumerate(self.steps, 1)
+            ]
         return self
+
+
+class PlanStep(BaseModel):
+    """可审计的公开计划步骤；不包含模型隐藏推理。"""
+
+    model_config = ConfigDict(extra="forbid")
+    step_id: str = Field(pattern=r"^step-[1-9][0-9]{0,2}$")
+    goal: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=600)
+    expected_result: str = Field(min_length=1, max_length=1000)
+    verification_method: str = Field(min_length=1, max_length=1000)
+    capabilities: list[str] = Field(default_factory=list, max_length=20)
+    dependencies: list[str] = Field(default_factory=list, max_length=20)
+    risk: Literal["low", "medium", "high"] = "low"
+    status: Literal["planned", "running", "succeeded", "failed", "skipped", "replanned"] = "planned"
+
+
+AgentPlan.model_rebuild()
 
 
 class Observation(BaseModel):

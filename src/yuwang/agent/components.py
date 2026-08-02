@@ -157,7 +157,8 @@ class DefaultPlanner:
         draft = await invoke(
             state,
             AgentPlanDraft,
-            "根据 Task Brief 生成动态计划骨架；只输出 summary 和非空 steps，步骤必须在授权范围内。",
+            "根据 Task Brief 生成动态计划；每个步骤必须给出 goal、reason、expected_result 和 verification_method，"
+            "可补充所需 capabilities、dependencies 和 risk。只输出公开计划字段，步骤必须在授权范围内。",
         )
         return draft.to_agent_plan()
 

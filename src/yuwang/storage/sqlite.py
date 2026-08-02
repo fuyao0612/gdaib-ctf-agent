@@ -92,6 +92,9 @@ class SQLiteRepository(
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (10);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (11);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (12);
+                -- v13 仅扩展 JSON 领域契约：旧行由 Pydantic 默认值兼容读取，
+                -- 不改写历史 Run、Artifact、报告或 CTF 记录。
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (13);
                 """
             )
             rows = db.execute("SELECT id,data FROM threads").fetchall()

@@ -30,6 +30,7 @@ from yuwang.tooling import ToolRegistry, ToolSpec
 
 from .cases import BUILTIN_EVALUATION_CASES, EvaluationCase
 from .results import EvaluationRecord, EvaluationStatus, FailureCategory
+from .scorer import CriterionResult, EvaluationScorer
 
 
 class EvaluationAssertionResult(BaseModel):
@@ -40,6 +41,9 @@ class EvaluationAssertionResult(BaseModel):
     assertion: str
     status: EvaluationStatus
     detail: str
+    criterion_id: str | None = None
+    score: float = 0
+    max_score: float = 0
 
 
 class EvaluationResult(BaseModel):
@@ -53,6 +57,9 @@ class EvaluationResult(BaseModel):
     thread_id: UUID | None = None
     record_id: UUID | None = None
     assertions: tuple[EvaluationAssertionResult, ...]
+    criteria: tuple[EvaluationAssertionResult, ...] = ()
+    score: float = 0
+    max_score: float = 0
     reason: str | None = None
 
 
@@ -83,6 +90,7 @@ class EvaluationRunner:
         )
         self.provider_config = provider_config
         self.artifact_root = artifact_root or database_path.parent / "evaluation-artifacts"
+        self.scorer = EvaluationScorer(self.repository)
 
     async def run(
         self,
@@ -166,23 +174,53 @@ class EvaluationRunner:
                 reason="正式运行记录未能读取",
             )
             return self._persist_result(case, result, attempt, started_at=None, run=None)
-        assertions = self._evaluate_assertions(case, persisted, task)
+        assertions = self._evaluate_criteria(case, persisted, task)
         statuses = {item.status for item in assertions}
-        status: EvaluationStatus = (
-            "failed"
-            if "failed" in statuses
-            else "skipped"
-            if "skipped" in statuses
-            else "passed"
+        failed_required = any(
+            item.status == "failed"
+            for item, criterion in zip(assertions, case.criteria, strict=False)
+            if criterion.required
         )
+        if case.criteria:
+            status: EvaluationStatus = "failed" if failed_required else "passed"
+        else:
+            # 旧评测文件兼容：历史断言结果本身仍保留原状态，但新内置用例不会走这里。
+            status = "failed" if "failed" in statuses else "skipped" if "skipped" in statuses else "passed"
+        score = sum(item.score for item in assertions)
+        max_score = sum(item.max_score for item in assertions)
         result = EvaluationResult(
             case_id=case.case_id,
             status=status,
             run_id=run.id,
             assertions=assertions,
+            criteria=assertions,
+            score=score,
+            max_score=max_score,
             reason=None if status == "passed" else "存在未满足或尚未映射的声明式断言",
         )
         return self._persist_result(case, result, attempt, started_at=run.created_at, run=persisted)
+
+    def _evaluate_criteria(
+        self, case: EvaluationCase, run: Run, task: TaskSpec
+    ) -> tuple[EvaluationAssertionResult, ...]:
+        """优先使用类型化评分器；旧用例走只读兼容路径，不影响新评测契约。"""
+
+        if not case.criteria:
+            return self._evaluate_assertions(case, run, task)
+        results = self.scorer.score(run, task, case.criteria)
+        return tuple(self._criterion_result(item) for item in results)
+
+    @staticmethod
+    def _criterion_result(item: CriterionResult) -> EvaluationAssertionResult:
+        status: EvaluationStatus = "failed" if item.status != "passed" else "passed"
+        return EvaluationAssertionResult(
+            assertion=item.criterion_id,
+            criterion_id=item.criterion_id,
+            status=status,
+            detail=item.detail,
+            score=item.score,
+            max_score=item.max_score,
+        )
 
     def _skipped(self, case: EvaluationCase, reason: str, attempt: int) -> EvaluationResult:
         result = EvaluationResult(
@@ -263,6 +301,12 @@ class EvaluationRunner:
             run_id=run.id if run else None,
             trace_path=trace_path or (f"/api/v1/runs/{run.id}/events" if run else None),
             report_path=f"/api/v1/runs/{run.id}/report" if report and run else None,
+            score=result.score,
+            max_score=result.max_score,
+            criterion_results=[item.model_dump(mode="json") for item in result.criteria],
+            retry_count=max(0, attempt - 1),
+            manual_interventions=0,
+            context_compressions=0,
         )
         self.repository.save_evaluation_record(record)
         return result.model_copy(update={"record_id": record.id})

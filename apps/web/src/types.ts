@@ -133,6 +133,13 @@ export interface Artifact {
   mime_type: string;
   sha256: string;
   kind: string;
+  source?: string;
+  trust_level?: "untrusted" | "user_asserted" | "tool_verified";
+  extracted_metadata?: Record<string, unknown>;
+  preview?: string | null;
+  contains_prompt_injection?: boolean;
+  truncated?: boolean;
+  original_ref?: string | null;
 }
 export interface Event {
   event_id: string;
@@ -180,6 +187,48 @@ export interface ReportData extends Record<string, unknown> {
     lessons?: string[];
     next_steps?: string[];
   };
+  handoff_summary?: {
+    current_goal?: string;
+    completed_steps?: number[];
+    validated_results?: string[];
+    key_evidence?: string[];
+    failed_paths?: number[];
+    current_blockers?: string[];
+    pending_approvals?: string[];
+    remaining_budget?: Record<string, number>;
+    recommended_action?: string;
+  };
+  task_result?: TaskResult;
+}
+export interface TaskResult {
+  id: string;
+  result_type: "answer" | "finding" | "assessment" | "flag" | "artifact" | "handoff";
+  title: string;
+  summary: string;
+  structured_data: Record<string, unknown>;
+  scenario: string;
+  evidence: EvidenceReference[];
+  validation_status: "pending" | "unverified" | "partial" | "validated" | "failed";
+  validator_name: string;
+  validator_version: string;
+  validated_at: string | null;
+  validation_explanation: string;
+  confidence: number;
+  source_steps: number[];
+  tool_call_ids: string[];
+  created_at: string;
+}
+export interface EvidenceReference {
+  id: string;
+  evidence_type: string;
+  source: string;
+  content_summary: string;
+  raw_ref: string;
+  sha256: string | null;
+  collected_at: string;
+  source_step: number | null;
+  reliable: boolean;
+  tool_verified: boolean;
 }
 export interface Report {
   markdown: string;
@@ -193,6 +242,18 @@ export interface AgentPlan {
   verification_methods: string[];
   risks: string[];
   dependencies: string[];
+  step_details?: PlanStep[];
+}
+export interface PlanStep {
+  step_id: string;
+  goal: string;
+  reason: string;
+  expected_result: string;
+  verification_method: string;
+  capabilities: string[];
+  dependencies: string[];
+  risk: "low" | "medium" | "high";
+  status: "planned" | "running" | "succeeded" | "failed" | "skipped" | "replanned";
 }
 export interface TaskBrief {
   id: string;
@@ -553,6 +614,12 @@ export interface EvaluationRecord {
   run_id: string | null;
   trace_path: string | null;
   report_path: string | null;
+  score?: number;
+  max_score?: number;
+  criterion_results?: Array<Record<string, unknown>>;
+  retry_count?: number;
+  manual_interventions?: number;
+  context_compressions?: number;
 }
 
 export interface EvaluationStatistics {

@@ -610,6 +610,19 @@ class AgentEngine:
     def _track_plan_progress(self, state: AgentStateModel) -> None:
         track_plan_progress(state)
 
+    def _set_plan_step_status(self, state: AgentStateModel, status: str) -> None:
+        """把公开步骤状态同步到可恢复状态和最新计划版本。"""
+
+        if not state.plan or not state.plan.step_details:
+            return
+        index = min(len(state.observations), len(state.plan.step_details) - 1)
+        details = list(state.plan.step_details)
+        details[index] = details[index].model_copy(update={"status": status})
+        state.plan = state.plan.model_copy(update={"step_details": details})
+        revision = self.repository.latest_plan_revision(state.run_id)
+        if revision:
+            self.repository.update_plan_revision(revision.model_copy(update={"plan": state.plan}))
+
 
 __all__ = [
     "AgentDeclaredFailure",
