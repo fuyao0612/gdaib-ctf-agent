@@ -996,7 +996,20 @@ def test_agent_profile_validation_identifies_the_invalid_field(tmp_path):
         )
 
     assert response.status_code == 422
-    assert "name" in response.json()["error"]["message"]
+    message = response.json()["error"]["message"]
+    assert "name：长度不能少于 1 个字符" in message
+    assert "budget.max_steps：必须大于或等于 1" in message
+
+    with TestClient(app) as client:
+        headers = open_local_session(client)
+        response = client.post(
+            "/api/v1/admin/settings/agent-profiles",
+            headers=headers,
+            json={"name": "校验提示", "budget": {"max_steps": 101}},
+        )
+
+    assert response.status_code == 422
+    assert "budget.max_steps：不能大于 100" in response.json()["error"]["message"]
 
 
 def test_waiting_input_api_persists_memory_and_resumes(

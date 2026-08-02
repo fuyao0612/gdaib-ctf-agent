@@ -109,12 +109,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        def validation_message(error: dict[str, object]) -> str:
+            context = error.get("ctx")
+            context = context if isinstance(context, dict) else {}
+            error_type = str(error.get("type", ""))
+            if error_type == "missing":
+                return "此项为必填"
+            if error_type == "string_too_short":
+                return f"长度不能少于 {context.get('min_length')} 个字符"
+            if error_type == "string_too_long":
+                return f"长度不能超过 {context.get('max_length')} 个字符"
+            if error_type == "greater_than_equal":
+                return f"必须大于或等于 {context.get('ge')}"
+            if error_type == "greater_than":
+                return f"必须大于 {context.get('gt')}"
+            if error_type == "less_than_equal":
+                return f"不能大于 {context.get('le')}"
+            if error_type == "less_than":
+                return f"必须小于 {context.get('lt')}"
+            if error_type in {"int_parsing", "float_parsing", "decimal_parsing"}:
+                return "必须是数字"
+            if error_type == "bool_parsing":
+                return "必须是布尔值"
+            if error_type == "string_type":
+                return "必须是文本"
+            return str(error.get("msg", "参数无效")).removeprefix("Value error, ")
+
         details: list[str] = []
         for error in exc.errors():
             location = ".".join(
                 str(item) for item in error.get("loc", ()) if item not in {"body", "query"}
             )
-            message = str(error.get("msg", "参数无效")).removeprefix("Value error, ")
+            message = validation_message(error)
             details.append(f"{location}：{message}" if location else message)
         message = "请求参数校验失败"
         if details:
