@@ -129,11 +129,14 @@ export default function ProviderBudgetFields({
             </span>
           ))}
         </div>
-        {BUDGET_FIELDS.map(({ key, label }) => (
+        {BUDGET_FIELDS.map(({ key, label, min, max, step }) => (
           <label key={key}>
             {label}
             <input
               type="number"
+              min={min}
+              max={max}
+              step={step}
               value={form.budget[key]}
               onChange={(event) =>
                 onChange({

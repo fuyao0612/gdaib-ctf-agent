@@ -16,14 +16,17 @@ export const WIZARD_STEPS = [
 export const BUDGET_FIELDS: ReadonlyArray<{
   key: keyof AgentProfileInput["budget"];
   label: string;
+  min: number;
+  max: number;
+  step?: number;
 }> = [
-  { key: "max_steps", label: "最大步骤" },
-  { key: "max_model_calls", label: "模型调用" },
-  { key: "max_tool_calls", label: "工具调用" },
-  { key: "max_tokens", label: "最大 Token" },
-  { key: "max_model_cost", label: "最大模型费用" },
-  { key: "max_duration_seconds", label: "总时长（秒）" },
-  { key: "step_timeout_seconds", label: "单步超时（秒）" },
+  { key: "max_steps", label: "最大步骤", min: 1, max: 100 },
+  { key: "max_model_calls", label: "模型调用", min: 1, max: 50 },
+  { key: "max_tool_calls", label: "工具调用", min: 1, max: 50 },
+  { key: "max_tokens", label: "最大 Token", min: 1, max: 200000 },
+  { key: "max_model_cost", label: "最大模型费用", min: 0, max: 100000, step: 0.01 },
+  { key: "max_duration_seconds", label: "总时长（秒）", min: 0.1, max: 3600, step: 0.1 },
+  { key: "step_timeout_seconds", label: "单步超时（秒）", min: 0.1, max: 300, step: 0.1 },
 ];
 
 /** 每次新建都返回独立对象，避免嵌套策略在多次编辑之间共享引用。 */

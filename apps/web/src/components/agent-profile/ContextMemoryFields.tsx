@@ -36,6 +36,8 @@ export default function ContextMemoryFields({
           最近消息
           <input
             type="number"
+            min={1}
+            max={500}
             value={form.context_policy.recent_message_limit}
             onChange={(event) =>
               onChange({
@@ -52,6 +54,8 @@ export default function ContextMemoryFields({
           附件字符
           <input
             type="number"
+            min={0}
+            max={200000}
             value={form.context_policy.text_attachment_char_limit}
             onChange={(event) =>
               onChange({
@@ -68,6 +72,8 @@ export default function ContextMemoryFields({
           最大事实
           <input
             type="number"
+            min={0}
+            max={1000}
             value={form.memory_policy.max_facts}
             onChange={(event) =>
               onChange({

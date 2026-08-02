@@ -985,6 +985,20 @@ def test_agent_profile_api_versions_preview_export_and_thread_snapshot(tmp_path)
         assert "api_key" not in exported.text
 
 
+def test_agent_profile_validation_identifies_the_invalid_field(tmp_path):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        headers = open_local_session(client)
+        response = client.post(
+            "/api/v1/admin/settings/agent-profiles",
+            headers=headers,
+            json={"name": "", "budget": {"max_steps": 0}},
+        )
+
+    assert response.status_code == 422
+    assert "name" in response.json()["error"]["message"]
+
+
 def test_waiting_input_api_persists_memory_and_resumes(
     tmp_path, provider_server, monkeypatch
 ):

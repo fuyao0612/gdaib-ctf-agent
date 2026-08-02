@@ -108,10 +108,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @application.exception_handler(RequestValidationError)
-    async def validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
+    async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        details: list[str] = []
+        for error in exc.errors():
+            location = ".".join(
+                str(item) for item in error.get("loc", ()) if item not in {"body", "query"}
+            )
+            message = str(error.get("msg", "参数无效")).removeprefix("Value error, ")
+            details.append(f"{location}：{message}" if location else message)
+        message = "请求参数校验失败"
+        if details:
+            message += "：" + "；".join(dict.fromkeys(details))
         return JSONResponse(
             status_code=422,
-            content={"error": {"code": "validation_error", "message": "请求参数校验失败"}},
+            content={"error": {"code": "validation_error", "message": message}},
         )
 
     # 路由装配顺序不改变路径契约；每个工厂都绑定当前应用自己的上下文。

@@ -16,6 +16,8 @@ export default function BasicProfileFields({ form, onChange }: Props) {
           <input
             aria-label="Agent 名称"
             value={form.name}
+            required
+            maxLength={120}
             onChange={(event) => onChange({ ...form, name: event.target.value })}
           />
         </label>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentProfile } from "../../types";
 import {
+  BUDGET_FIELDS,
   buildProfilePayload,
   changeCompletionMode,
   changePlanningStrategy,
@@ -16,6 +17,17 @@ describe("Agent 配置纯转换规则", () => {
     const second = createEmptyProfile();
     first.context_policy.recent_message_limit = 1;
     expect(second.context_policy.recent_message_limit).toBe(20);
+  });
+
+  it("预算字段与服务端边界保持一致", () => {
+    expect(BUDGET_FIELDS.find((field) => field.key === "max_steps")).toMatchObject({
+      min: 1,
+      max: 100,
+    });
+    expect(BUDGET_FIELDS.find((field) => field.key === "step_timeout_seconds")).toMatchObject({
+      min: 0.1,
+      max: 300,
+    });
   });
 
   it("直接规划会同步为直接工作流并退出证据模式", () => {
