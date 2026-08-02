@@ -33,10 +33,15 @@ export default function SettingsCenter({ onClose, onChanged, initialSetup = fals
   const session = useAdminSession();
 
   const load = useCallback(async (csrf: string) => {
-    const [items, defaults, status, configuredSkills] = await Promise.all([
-      api.adminProviders(csrf), api.agentDefaults(csrf), api.setupStatus(), api.adminSkills(csrf),
+    // Provider 列表驱动设置页的主要交互；先提交它，避免其他设置接口拖延列表刷新。
+    const providersRequest = api.adminProviders(csrf);
+    const restRequest = Promise.all([
+      api.agentDefaults(csrf), api.setupStatus(), api.adminSkills(csrf),
     ]);
-    setProviders(items); setAgentDefaults(defaults); setSetupStatus(status);
+    const items = await providersRequest;
+    setProviders(items);
+    const [defaults, status, configuredSkills] = await restRequest;
+    setAgentDefaults(defaults); setSetupStatus(status);
     setSkills(Array.isArray(configuredSkills) ? configuredSkills : []);
   }, []);
 
