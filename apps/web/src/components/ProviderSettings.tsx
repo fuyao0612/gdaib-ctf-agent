@@ -26,6 +26,7 @@ interface Props {
   onNotice: (message: string) => void;
   onError: (message: string) => void;
   mode: SettingsMode;
+  autoOpenEmpty?: boolean;
 }
 
 export default function ProviderSettings(props: Props) {
@@ -38,6 +39,7 @@ export default function ProviderSettings(props: Props) {
   const [deleteImpact, setDeleteImpact] = useState<ProviderDeletionImpact | null>(null);
   const [deleteConfirmed, setDeleteConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [formOpen, setFormOpen] = useState(Boolean(props.autoOpenEmpty && props.providers.length === 0));
 
   useEffect(() => {
     void api
@@ -49,6 +51,7 @@ export default function ProviderSettings(props: Props) {
   function edit(provider: ProviderConfig) {
     setEditingId(provider.id);
     setForm(providerToInput(provider));
+    setFormOpen(true);
     props.onNotice("编辑时留空 API Key 将保留现有密钥。");
   }
 
@@ -56,6 +59,7 @@ export default function ProviderSettings(props: Props) {
     setEditingId(null);
     setForm(createEmptyProvider());
     props.onNotice("");
+    setFormOpen(true);
   }
 
   async function saveProvider() {
@@ -77,6 +81,7 @@ export default function ProviderSettings(props: Props) {
       if (editingId) await api.updateProvider(props.csrf, editingId, payload);
       else await api.createProvider(props.csrf, payload);
       resetForm();
+      setFormOpen(false);
       await props.onRefresh();
       await props.onChanged();
       props.onNotice(wasEditing ? "Provider 已更新" : "Provider 已创建");
@@ -218,15 +223,10 @@ export default function ProviderSettings(props: Props) {
           )}
         </section>
       )}
-      <ProviderForm
-        form={form}
-        editing={Boolean(editingId)}
-        busy={busy}
-        mode={props.mode}
-        onChange={setForm}
-        onPresetChange={changePreset}
-        onSubmit={() => void saveProvider()}
-      />
+      {formOpen && <div className="editor-surface">
+        <div className="editor-header"><div><h4>{editingId ? "编辑 Provider" : "新增 Provider"}</h4><small>编辑时留空 API Key 可保留已有密钥。</small></div><button type="button" onClick={() => { setFormOpen(false); setEditingId(null); setForm(createEmptyProvider()); }}>取消</button></div>
+        <ProviderForm form={form} editing={Boolean(editingId)} busy={busy} mode={props.mode} onChange={setForm} onPresetChange={changePreset} onSubmit={() => void saveProvider()} />
+      </div>}
     </section>
   );
 }

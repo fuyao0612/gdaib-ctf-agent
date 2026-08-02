@@ -40,6 +40,7 @@ export default function AgentProfileCenter({
   const [error, setError] = useState("");
   const [preview, setPreview] = useState("");
   const [schemaText, setSchemaText] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
 
   async function load() {
     const [profileItems, toolItems] = await Promise.all([
@@ -70,6 +71,7 @@ export default function AgentProfileCenter({
     );
     setWizardStep(1);
     setNotice("");
+    setFormOpen(true);
   }
 
   function reset() {
@@ -79,6 +81,7 @@ export default function AgentProfileCenter({
     setVersions([]);
     setWizardStep(1);
     setPreview("");
+    setFormOpen(true);
   }
 
   async function save() {
@@ -89,6 +92,7 @@ export default function AgentProfileCenter({
       else await api.createProfile(csrf, payload);
       await load();
       reset();
+      setFormOpen(false);
       setNotice("Agent 配置已保存为新版本");
     } catch (cause) {
       setError(String(cause));
@@ -256,11 +260,13 @@ export default function AgentProfileCenter({
         onMakeDefault={(profile) => void makeDefault(profile)}
         onRemove={(profile) => void remove(profile)}
       />
+      {formOpen && <div className="editor-surface">
+      <div className="editor-header"><div><h4>{editingId ? "编辑 Agent 配置" : "新建 Agent 配置"}</h4><small>每次只显示一个步骤，切换步骤会保留未提交内容。</small></div><button type="button" onClick={() => { setFormOpen(false); setEditingId(null); setVersions([]); }}>取消</button></div>
       <AgentProfileForm
         form={form}
         providers={providers}
         tools={tools}
-        expert
+        expert={false}
         wizardStep={wizardStep}
         schemaText={schemaText}
         preview={preview}
@@ -275,6 +281,7 @@ export default function AgentProfileCenter({
         onPreview={() => void previewTemplate()}
         onSubmit={() => void save()}
       />
+      </div>}
       <VersionHistory
         versions={versions}
         onRollback={(version) => void rollback(version)}

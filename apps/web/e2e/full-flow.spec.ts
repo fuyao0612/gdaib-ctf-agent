@@ -29,6 +29,9 @@ async function configure(page: Page) {
   await expect(settings).toBeVisible();
   await expect(page.locator(".settings-content")).toBeVisible();
 
+  await page.getByRole("button", { name: /模型连接/ }).first().click();
+  await page.getByRole("button", { name: "新增配置" }).click();
+
   const providerSection = page.locator(".settings-content > section").first();
   const providerForm = providerSection.locator(".settings-form");
   await providerForm.locator("select").first().selectOption("custom");

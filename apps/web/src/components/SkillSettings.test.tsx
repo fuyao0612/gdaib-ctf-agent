@@ -33,6 +33,8 @@ describe("SkillSettings", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "新建" }));
+
     fireEvent.change(screen.getByLabelText("Skill 名称"), {
       target: { value: "发布检查" },
     });
@@ -74,6 +76,7 @@ describe("SkillSettings", () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /发布检查/ }));
     fireEvent.click(screen.getByRole("button", { name: /发布检查/ }));
     fireEvent.change(screen.getByLabelText("Skill 状态"), {
       target: { value: "disabled" },

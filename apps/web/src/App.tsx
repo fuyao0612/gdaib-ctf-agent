@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import SettingsCenter from "./SettingsCenter";
+import EvaluationResults from "./components/EvaluationResults";
 import CreateThreadDialog from "./components/CreateThreadDialog";
 import MessageComposer from "./components/MessageComposer";
 import SkillSelector from "./components/SkillSelector";
@@ -63,6 +64,7 @@ export default function App() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("新任务");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [evaluationOpen, setEvaluationOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const inspectorUserRunRef = useRef<string | null>(null);
   const [sidebarExpanded, setSidebarExpanded] = useState(
@@ -206,6 +208,7 @@ export default function App() {
       setInspectorOpen(false);
       setCreateOpen(false);
       setSettingsOpen(false);
+      setEvaluationOpen(false);
     };
     window.addEventListener("keydown", closeOverlay);
     return () => window.removeEventListener("keydown", closeOverlay);
@@ -485,6 +488,7 @@ export default function App() {
           ⚙ 设置中心
         </button>
         <div className="section-label">任务历史</div>
+        <button className="settings-button full" onClick={() => setEvaluationOpen(true)}>评测</button>
         <ThreadSidebar
           threads={threads}
           selectedId={detail?.id}
@@ -660,6 +664,11 @@ export default function App() {
             setInitialSetup(!status.configured);
           }}
         />
+      )}
+      {evaluationOpen && (
+        <div className="settings-backdrop" role="dialog" aria-modal="true" aria-label="评测中心">
+          <section className="evaluation-panel"><header><div><span className="eyebrow">EVALUATION</span><h2>评测中心</h2></div><button type="button" onClick={() => setEvaluationOpen(false)}>关闭</button></header><div className="settings-scroll"><EvaluationResults onError={setError} /></div></section>
+        </div>
       )}
     </div>
   );

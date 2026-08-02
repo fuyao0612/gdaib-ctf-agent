@@ -81,6 +81,7 @@ export default function ToolExtensionsCenter({
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<McpServerInput>(blankServer);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
   const [pendingEnable, setPendingEnable] = useState<McpServerView | null>(null);
   const [deletionImpact, setDeletionImpact] = useState<McpDeletionImpact | null>(null);
 
@@ -119,6 +120,7 @@ export default function ToolExtensionsCenter({
   function resetForm() {
     setEditingId(null);
     setForm(blankServer());
+    setFormOpen(true);
   }
 
   async function submit(event: FormEvent) {
@@ -134,6 +136,7 @@ export default function ToolExtensionsCenter({
         ? await api.updateMcpServer(csrf, editingId, normalized)
         : await api.createMcpServer(csrf, normalized);
       resetForm();
+      setFormOpen(false);
       await load();
       await onChanged();
       onNotice(`MCP 服务“${server.name}”已保存，可使用“检查并刷新”发现工具`);
@@ -301,7 +304,7 @@ export default function ToolExtensionsCenter({
         )) : <p className="settings-notice">尚未配置 MCP 服务。</p>}
       </div>
 
-      {mode === "advanced" && (
+      {formOpen && (
         <form className="settings-form mcp-form" onSubmit={(event) => void submit(event)}>
           <h4>{editingId ? "编辑 MCP 服务" : "添加 MCP 服务"}</h4>
           <div className="form-grid">

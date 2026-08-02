@@ -142,7 +142,9 @@ describe("SettingsCenter", () => {
   it("自动建立本机会话并创建脱敏 Provider", async () => {
     const changed = vi.fn(async () => undefined);
     render(<SettingsCenter onClose={() => undefined} onChanged={changed} />);
+    fireEvent.click(screen.getAllByRole("button", { name: /模型连接/ })[0]);
     await screen.findByText("模型 Provider");
+    fireEvent.click(screen.getByRole("button", { name: "新增配置" }));
     const keyInput = screen.getByPlaceholderText("输入 Provider API Key");
     expect(keyInput).toHaveAttribute("type", "password");
     fireEvent.change(keyInput, { target: { value: "provider-secret" } });
@@ -164,13 +166,17 @@ describe("SettingsCenter", () => {
     });
   });
 
-  it("新手和高级模式编辑同一份 Provider 表单数据", async () => {
+  it("默认进入快速配置，并可按需进入模型连接和高级选项", async () => {
     render(
       <SettingsCenter
         onClose={() => undefined}
         onChanged={async () => undefined}
       />,
     );
+    expect(screen.getByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("输入 Provider API Key")).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: /模型连接/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "新增配置" }));
     const keyInput = await screen.findByPlaceholderText("输入 Provider API Key");
     fireEvent.change(keyInput, { target: { value: "provider-secret" } });
     fireEvent.change(screen.getByLabelText("模型"), {
@@ -178,13 +184,13 @@ describe("SettingsCenter", () => {
     });
     expect(screen.queryByLabelText("超时（秒）")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "高级模式" }));
+    fireEvent.click(screen.getByRole("button", { name: "高级选项" }));
     expect(screen.getByLabelText("模型")).toHaveValue("deepseek-chat");
     fireEvent.change(screen.getByLabelText("超时（秒）"), {
       target: { value: "90" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "新手模式" }));
+    fireEvent.click(screen.getByRole("button", { name: "高级选项" }));
     expect(screen.getByLabelText("模型")).toHaveValue("deepseek-chat");
     fireEvent.click(screen.getByRole("button", { name: "创建 Provider" }));
 
@@ -210,6 +216,7 @@ describe("SettingsCenter", () => {
         onChanged={async () => undefined}
       />,
     );
+    fireEvent.click(screen.getAllByRole("button", { name: /模型连接/ })[0]);
     await screen.findByText("模型 Provider");
     expect(screen.queryByLabelText("管理员令牌")).not.toBeInTheDocument();
     const sessionRequest = vi.mocked(fetch).mock.calls.find(

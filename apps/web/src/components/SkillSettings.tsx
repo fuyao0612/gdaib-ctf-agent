@@ -40,6 +40,7 @@ export default function SkillSettings(props: Props) {
   const [form, setForm] = useState<SkillInput>(emptySkill);
   const [busy, setBusy] = useState(false);
   const [deletePending, setDeletePending] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
 
   useEffect(() => {
     if (!selectedId || props.skills.some((skill) => skill.id === selectedId)) return;
@@ -52,6 +53,7 @@ export default function SkillSettings(props: Props) {
     setSelectedId(skill?.id ?? null);
     setDeletePending(null);
     setForm(skill ? toForm(skill) : emptySkill);
+    setFormOpen(true);
   };
 
   async function save() {
@@ -63,6 +65,7 @@ export default function SkillSettings(props: Props) {
       await props.onRefresh();
       props.onNotice(selected ? "Skill 已更新" : "Skill 已创建");
       if (!selected) setForm(emptySkill);
+      setFormOpen(false);
     } catch (cause) {
       props.onError(String(cause));
     } finally {
@@ -94,17 +97,17 @@ export default function SkillSettings(props: Props) {
       </div>
       <div className="skill-list" aria-label="Skill 列表">
         {props.skills.map((skill) => (
+          <div className="skill-list-row" key={skill.id}>
           <button
-            key={skill.id}
             className={selectedId === skill.id ? "selected" : ""}
             onClick={() => choose(skill)}
           >
             <span>{skill.name}</span><small>{skill.enabled ? "已启用" : "已停用"}</small>
-          </button>
+          </button><button type="button" className="danger" onClick={() => { choose(skill); setDeletePending(skill.id); }}>删除</button></div>
         ))}
         {!props.skills.length && <p className="muted">暂无 Skill。</p>}
       </div>
-      <form
+      {formOpen && <form
         className="settings-form"
         onSubmit={(event) => { event.preventDefault(); void save(); }}
       >
@@ -142,7 +145,8 @@ export default function SkillSettings(props: Props) {
             <><span>确认删除“{selected.name}”？</span><button className="danger" type="button" disabled={busy} onClick={() => void remove()}>确认删除</button><button type="button" onClick={() => setDeletePending(null)}>取消</button></>
           ) : <button className="danger" type="button" disabled={busy} onClick={() => setDeletePending(selected.id)}>删除</button>)}
         </div>
-      </form>
+        <button type="button" onClick={() => { setFormOpen(false); setSelectedId(null); }}>取消</button>
+      </form>}
     </section>
   );
 }
