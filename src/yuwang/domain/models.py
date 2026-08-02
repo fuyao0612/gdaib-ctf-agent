@@ -50,7 +50,17 @@ class RunStatus(StrEnum):
 ValidationStatus = Literal["pending", "unverified", "partial", "validated", "failed"]
 EvidenceLevel = Literal["none", "model", "structured", "external"]
 ArtifactTrustLevel = Literal["untrusted", "user_asserted", "tool_verified"]
-ResultType = Literal["answer", "finding", "assessment", "flag", "artifact", "handoff"]
+ResultType = Literal[
+    "answer",
+    "finding",
+    "assessment",
+    "flag",
+    "artifact",
+    "handoff",
+    "indicator",
+    "vulnerability",
+    "patch",
+]
 
 
 ACTIVE_RUN_STATUSES = {
