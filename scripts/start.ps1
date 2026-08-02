@@ -16,6 +16,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $envFile = Join-Path $root '.env'
 $logDirectory = Join-Path $root 'data\logs'
 $processFile = Join-Path $root 'data\dev-processes.json'
+$dockerSourceFingerprintFile = Join-Path $root 'data\docker-source-fingerprint.txt'
 . (Join-Path $PSScriptRoot 'process-record.ps1')
 
 function Write-Step([string]$Message) {
@@ -141,6 +142,41 @@ function Open-YuwangBrowser([string]$Url) {
         Write-Host "已请求系统默认浏览器打开：$Url"
     } catch {
         Write-Warning "服务已启动，但无法自动打开浏览器。请手动访问：$Url"
+    }
+}
+
+function Get-DockerSourceFingerprint {
+    # 只纳入会进入 Docker 构建上下文的源码和构建定义，忽略数据、依赖和构建产物。
+    # 这样未提交的本地修改同样会触发重建，不依赖 Git 提交状态。
+    $sourcePaths = @('apps', 'src', 'scripts', 'tool_sandbox')
+    $rootFiles = @(
+        'compose.yaml', 'Dockerfile.api', 'Dockerfile.tool-sandbox',
+        'pyproject.toml', 'requirements.lock', 'requirements.runtime.lock'
+    )
+    $files = @()
+    foreach ($path in $sourcePaths) {
+        $fullPath = Join-Path $root $path
+        if (Test-Path -LiteralPath $fullPath) {
+            $files += Get-ChildItem -LiteralPath $fullPath -Recurse -File |
+                Where-Object {
+                    $_.FullName -notmatch '\\(node_modules|dist|test-results|playwright-report|__pycache__|\.pytest_cache)\\'
+                }
+        }
+    }
+    foreach ($path in $rootFiles) {
+        $fullPath = Join-Path $root $path
+        if (Test-Path -LiteralPath $fullPath) { $files += Get-Item -LiteralPath $fullPath }
+    }
+    $lines = foreach ($file in $files | Sort-Object FullName) {
+        $relativePath = $file.FullName.Substring($root.Length).TrimStart('\', '/')
+        "$relativePath $((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash)"
+    }
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $algorithm.ComputeHash([Text.Encoding]::UTF8.GetBytes(($lines -join "`n")))
+        return ([BitConverter]::ToString($bytes)).Replace('-', '')
+    } finally {
+        $algorithm.Dispose()
     }
 }
 
@@ -292,13 +328,22 @@ function Start-Docker {
             Write-Host 'Docker 启动检查通过；未创建或重启容器。' -ForegroundColor Green
             return
         }
-        if ($running -contains 'web' -and -not $Build) {
-            Write-Host '检测到项目容器已运行，将复用现有服务，不会重复启动。'
+        $currentFingerprint = Get-DockerSourceFingerprint
+        $previousFingerprint = if (Test-Path -LiteralPath $dockerSourceFingerprintFile) {
+            (Get-Content -LiteralPath $dockerSourceFingerprintFile -Raw).Trim()
+        } else { '' }
+        $sourceChanged = $Build -or $currentFingerprint -ne $previousFingerprint
+        if ($sourceChanged) {
+            if ($Build) { Write-Host '已请求强制重建，正在构建最新版 Docker 镜像…' }
+            elseif ($previousFingerprint) { Write-Host '检测到 Docker 构建相关源码已变更，正在构建最新版镜像…' }
+            else { Write-Host '首次启动或缺少构建记录，正在构建 Docker 镜像…' }
+        } elseif ($running -contains 'web') {
+            Write-Host '源码未变化，复用当前健康的 Docker 服务。'
         } else {
-            Write-Host '正在启动 Docker 服务，首次构建可能需要几分钟…'
+            Write-Host '源码未变化，正在启动已有 Docker 镜像。'
         }
         $arguments = @('compose', 'up', '-d', '--wait')
-        if ($Build) { $arguments += '--build' }
+        if ($sourceChanged) { $arguments += '--build' }
         if ($Quiet) {
             [IO.Directory]::CreateDirectory($logDirectory) | Out-Null
             $previousPreference = $ErrorActionPreference
@@ -315,6 +360,10 @@ function Start-Docker {
         }
         if ($composeExitCode) {
             throw 'Docker Compose 启动失败。请运行 docker compose logs 查看具体原因。'
+        }
+        if ($sourceChanged) {
+            [IO.Directory]::CreateDirectory((Split-Path -Parent $dockerSourceFingerprintFile)) | Out-Null
+            Set-Content -LiteralPath $dockerSourceFingerprintFile -Value $currentFingerprint -NoNewline -Encoding ASCII
         }
     } finally {
         Pop-Location

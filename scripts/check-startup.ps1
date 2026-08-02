@@ -85,15 +85,17 @@ try {
     }
     $launcherText = Get-Content -LiteralPath $doubleClickLauncher -Raw
     $startText = Get-Content -LiteralPath $startScript -Raw
-    if ($launcherText -notmatch 'start\s+-Build\s+-OpenBrowser' -or
+    if ($launcherText -notmatch 'start\s+-OpenBrowser' -or
         $launcherText -match 'start "" "http://localhost:8080"' -or
         -not $launcherText.Contains('for /l %%N in (1,1,60)') -or
         -not $launcherText.Contains('did not become ready within 2 minutes') -or
         -not $startText.Contains('http://127.0.0.1:$webPort') -or
-        $startText.Contains('http://localhost:$webPort')) {
-        throw '双击启动器没有重建当前源码，或没有委托统一入口打开实际 Web 地址。'
+        $startText.Contains('http://localhost:$webPort') -or
+        -not $startText.Contains('docker-source-fingerprint.txt') -or
+        -not $startText.Contains('$arguments += ''--build''')) {
+        throw '双击启动器没有检测源码指纹、按需重建，或没有委托统一入口打开实际 Web 地址。'
     }
-    Write-Host '[启动验收] 双击入口会重建当前源码，等待 Docker 就绪，并按可达的实际 Web 地址打开浏览器。' -ForegroundColor Green
+    Write-Host '[启动验收] 双击入口会检测源码指纹、按需重建，等待 Docker 就绪，并按可达的实际 Web 地址打开浏览器。' -ForegroundColor Green
 
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 8000)
     $listener.Start()

@@ -42,7 +42,7 @@ if not errorlevel 1 (
 
 :docker_ready
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0yuwang.ps1" start -Build -OpenBrowser
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0yuwang.ps1" start -OpenBrowser
 set "EXIT_CODE=%ERRORLEVEL%"
 
 if not "%EXIT_CODE%"=="0" (
@@ -53,7 +53,7 @@ if not "%EXIT_CODE%"=="0" (
 )
 
 echo.
-echo [OK] Service is ready. The actual Web address is shown above.
+echo [OK] Service is ready. Source changes are rebuilt automatically; unchanged code reuses the healthy service.
 echo If the browser did not open, use that address from this window.
 echo Closing this window does not stop Docker. Use .\yuwang.ps1 stop to stop it.
 pause
