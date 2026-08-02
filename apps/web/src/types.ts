@@ -202,7 +202,16 @@ export interface ReportData extends Record<string, unknown> {
 }
 export interface TaskResult {
   id: string;
-  result_type: "answer" | "finding" | "assessment" | "flag" | "artifact" | "handoff";
+  result_type:
+    | "answer"
+    | "finding"
+    | "assessment"
+    | "flag"
+    | "artifact"
+    | "handoff"
+    | "indicator"
+    | "vulnerability"
+    | "patch";
   title: string;
   summary: string;
   structured_data: Record<string, unknown>;

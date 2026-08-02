@@ -21,6 +21,7 @@ from yuwang.domain.models import (
     MessageRole,
     Run,
     RunStatus,
+    TaskResult,
 )
 from yuwang.reports.facts import ReportFacts
 from yuwang.reports.trace import RunTraceService
@@ -56,6 +57,41 @@ class AgentFinalizer:
         retrospective = await self.generate_retrospective(state, run)
         # 复盘优先于低优先级记忆提取，避免预算不足时丢失终态说明。
         await self.persist_memories(state, run)
+        markdown, data = engine.reporter.generate(
+            run,
+            state.task,
+            engine.repository.list_events(run.id),
+            {
+                "model_calls": len(engine.repository.list_model_calls(run.id)),
+                "tool_calls": len(engine.repository.list_tool_calls(run.id)),
+                "tool_failures": state.tool_failures,
+                "tokens": state.tokens,
+                "model_cost": state.model_cost,
+                "duration_ms": int(state.elapsed_seconds * 1000),
+                "plan": state.plan.model_dump(mode="json") if state.plan else None,
+                "verification": state.verification_summary,
+                "completion_mode": engine.profile.completion_mode,
+                "validation_status": state.validation_status,
+                "evidence_level": state.evidence_level,
+                "final_answer": state.final_answer,
+                "structured_output": state.structured_output,
+                "context_tokens": state.context_tokens,
+                "observation_chars": state.observation_chars,
+                "context_truncations": state.context_truncations,
+                "evidence_records": [
+                    value.model_dump(mode="json")
+                    for value in engine.repository.list_evidence(run.id)
+                ],
+                "retrospective": retrospective.model_dump(mode="json"),
+                "trace": RunTraceService(engine.repository).snapshot(run.id),
+            },
+        )
+        # ReportGenerator first derives a result from persisted execution facts.  Persist that
+        # exact object before rendering the final report so reports, handoff, UI, and evaluation
+        # all point at Run.results instead of independently reconstructing an answer.
+        generated_result = TaskResult.model_validate(data["task_result"])
+        if not run.results:
+            run.results.append(generated_result)
         run.completion_mode = engine.profile.completion_mode
         run.validation_status = state.validation_status
         run.evidence_level = state.evidence_level

@@ -141,7 +141,9 @@ class ReportGenerator:
             "pending": 0.0,
             "failed": 0.0,
         }.get(facts.validation_status, 0.0)
-        task_result = TaskResult(
+        # New runs must persist their result before this report is finalized.  The fallback keeps
+        # historical rows readable without modifying their immutable JSON payloads.
+        task_result = run.results[0] if run.results else TaskResult(
             result_type=result_type,
             title="CTF Flag 结果" if result_type == "flag" else "通用安全任务结果",
             summary=deterministic_conclusion(facts),
