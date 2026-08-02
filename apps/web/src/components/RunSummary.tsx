@@ -223,6 +223,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
   const candidates = flagCandidates(report);
   const review = retrospective(report);
   const handoff = report?.data.handoff_summary;
+  const taskResult = report?.data.task_result;
   const reason =
     (run.status === "failed" ? failureSummary : null) ??
     nonEmpty(run.error) ??
@@ -240,6 +241,13 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
         <section className="result-conclusion" data-testid="result-conclusion">
           <strong>结论</strong>
           <p>{conciseAnswer(answer)}</p>
+        </section>
+      )}
+      {taskResult && (
+        <section className="result-conclusion" data-testid="task-result">
+          <strong>{taskResult.title}</strong>
+          <p>结果类型：{taskResult.result_type}；验证器：{taskResult.validator_name} v{taskResult.validator_version}</p>
+          <p>置信度：{Math.round(taskResult.confidence * 100)}% · {taskResult.validation_explanation}</p>
         </section>
       )}
       {candidates.length > 0 && (

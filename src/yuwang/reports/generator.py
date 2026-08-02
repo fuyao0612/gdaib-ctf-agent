@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from yuwang.agent.retrospective import RunRetrospective, deterministic_retrospective
-from yuwang.domain.models import Event, Run, TaskSpec
+from yuwang.domain.models import Event, EvidenceReference, Run, TaskResult, TaskSpec
 from yuwang.policy import redact, redact_data
 from yuwang.reports.facts import ReportFacts
 
@@ -53,6 +54,19 @@ def display_value(value: object) -> str:
         "encoding_decode": "编码解码",
         "tool_call": "工具调用",
     }.get(str(value), str(value))
+
+
+def _uuid_values(values: list[dict[str, Any]]) -> list[UUID]:
+    result: list[UUID] = []
+    for item in values:
+        raw = item.get("call_id")
+        if not raw:
+            continue
+        try:
+            result.append(UUID(str(raw)))
+        except ValueError:
+            continue
+    return result
 
 
 def deterministic_conclusion(facts: ReportFacts) -> str:
@@ -103,6 +117,42 @@ class ReportGenerator:
             ).model_dump(mode="json")
         else:
             retrospective = RunRetrospective.model_validate(retrospective).model_dump(mode="json")
+        result_type = "flag" if facts.report_kind == "ctf" and facts.candidates else "assessment"
+        evidence_refs = [
+            EvidenceReference(
+                evidence_type=str(item.get("rule_kind") or item.get("source_kind") or "observation"),
+                source=str(item.get("source_call_id") or item.get("source_kind") or "persisted-run"),
+                content_summary=str(item.get("verification_summary") or item.get("candidate") or "持久化证据"),
+                raw_ref=str(item.get("location") or item.get("source_call_id") or "run"),
+                source_step=item.get("source_step"),
+                reliable=bool(item.get("verified") or item.get("platform_verified")),
+                tool_verified=bool(item.get("source_call_id")),
+            )
+            for item in facts.candidates
+        ]
+        confidence = {
+            "validated": 1.0,
+            "partial": 0.6,
+            "unverified": 0.25,
+            "pending": 0.0,
+            "failed": 0.0,
+        }.get(facts.validation_status, 0.0)
+        task_result = TaskResult(
+            result_type=result_type,
+            title="CTF Flag 结果" if result_type == "flag" else "通用安全任务结果",
+            summary=deterministic_conclusion(facts),
+            structured_data={"candidates": facts.candidates} if facts.candidates else {},
+            scenario=facts.report_kind,
+            evidence=evidence_refs,
+            validation_status=facts.validation_status,
+            validator_name="deterministic-report-facts",
+            validator_version="1.0",
+            validated_at=run.finished_at if facts.validation_status == "validated" else None,
+            validation_explanation=facts.validation_label,
+            confidence=confidence,
+            source_steps=[int(item.get("sequence")) for item in facts.timeline if item.get("sequence")],
+            tool_call_ids=_uuid_values(facts.timeline),
+        )
         data = {
             "schema_version": "3.0",
             "report_kind": facts.report_kind,
@@ -153,6 +203,7 @@ class ReportGenerator:
             "failure_analysis": metrics.get("failure_analysis"),
             "retrospective": retrospective,
             "handoff_summary": facts.handoff,
+            "task_result": task_result.model_dump(mode="json"),
         }
         safe = redact_data(data)
         assert isinstance(safe, dict)

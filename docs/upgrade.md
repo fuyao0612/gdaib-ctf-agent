@@ -6,6 +6,10 @@
 保留，运行时不再读取或写入普通聊天请求；旧 Message、Run、Event、Report 和 Provider 不会被
 删除或重写。旧 Thread 缺少字段时补为已弃用的兼容值，新 Thread 始终从受控 Run 开始。
 
+领域契约扩展记录在 SQLite `schema_migrations` 版本 13。Artifact、Run 结果和评测准则继续以 JSON
+保存；旧行缺少新字段时使用兼容默认值，不会删除或重写历史数据。升级后可直接读取旧 CTF 报告、
+`submitted_flag` 和旧计划，新的 Run 使用 `TaskResult`、结构化计划步骤和人机交接摘要。
+
 旧数据库中 `context_token_budget=32000` 会在模型校验前幂等迁移为 32768；新安装仍默认 262144，
 用户已保存的 32768 不会被改写为 262144。
 

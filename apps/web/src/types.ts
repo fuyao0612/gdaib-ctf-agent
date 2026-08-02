@@ -198,6 +198,37 @@ export interface ReportData extends Record<string, unknown> {
     remaining_budget?: Record<string, number>;
     recommended_action?: string;
   };
+  task_result?: TaskResult;
+}
+export interface TaskResult {
+  id: string;
+  result_type: "answer" | "finding" | "assessment" | "flag" | "artifact" | "handoff";
+  title: string;
+  summary: string;
+  structured_data: Record<string, unknown>;
+  scenario: string;
+  evidence: EvidenceReference[];
+  validation_status: "pending" | "unverified" | "partial" | "validated" | "failed";
+  validator_name: string;
+  validator_version: string;
+  validated_at: string | null;
+  validation_explanation: string;
+  confidence: number;
+  source_steps: number[];
+  tool_call_ids: string[];
+  created_at: string;
+}
+export interface EvidenceReference {
+  id: string;
+  evidence_type: string;
+  source: string;
+  content_summary: string;
+  raw_ref: string;
+  sha256: string | null;
+  collected_at: string;
+  source_step: number | null;
+  reliable: boolean;
+  tool_verified: boolean;
 }
 export interface Report {
   markdown: string;

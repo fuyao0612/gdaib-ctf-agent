@@ -50,6 +50,7 @@ class RunStatus(StrEnum):
 ValidationStatus = Literal["pending", "unverified", "partial", "validated", "failed"]
 EvidenceLevel = Literal["none", "model", "structured", "external"]
 ArtifactTrustLevel = Literal["untrusted", "user_asserted", "tool_verified"]
+ResultType = Literal["answer", "finding", "assessment", "flag", "artifact", "handoff"]
 
 
 ACTIVE_RUN_STATUSES = {
@@ -183,6 +184,7 @@ class Run(DomainModel):
     # status 描述执行生命周期；验证结论与证据强度必须独立展示，不能由完成状态推断。
     validation_status: ValidationStatus = "pending"
     evidence_level: EvidenceLevel = "none"
+    results: list[TaskResult] = Field(default_factory=list, max_length=100)
     created_at: datetime = Field(default_factory=utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -275,6 +277,45 @@ class Artifact(DomainModel):
         ):
             raise ValueError("storage_ref must be an opaque relative reference")
         return value
+
+
+class EvidenceReference(DomainModel):
+    """通用结果引用的最小证据契约。"""
+
+    id: UUID = Field(default_factory=uuid4)
+    evidence_type: str = Field(min_length=1, max_length=80)
+    source: str = Field(min_length=1, max_length=500)
+    content_summary: str = Field(min_length=1, max_length=2000)
+    raw_ref: str = Field(min_length=1, max_length=500)
+    sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    collected_at: datetime = Field(default_factory=utcnow)
+    source_step: int | None = Field(default=None, ge=1)
+    reliable: bool = False
+    tool_verified: bool = False
+
+
+class TaskResult(DomainModel):
+    """跨场景统一结果；CTF Flag 只是 ``result_type=flag`` 的一种场景结果。"""
+
+    id: UUID = Field(default_factory=uuid4)
+    result_type: ResultType
+    title: str = Field(min_length=1, max_length=300)
+    summary: str = Field(min_length=1, max_length=10_000)
+    structured_data: dict[str, Any] = Field(default_factory=dict)
+    scenario: str = Field(min_length=1, max_length=80)
+    evidence: list[EvidenceReference] = Field(default_factory=list, max_length=100)
+    validation_status: ValidationStatus = "pending"
+    validator_name: str = Field(default="none", min_length=1, max_length=120)
+    validator_version: str = Field(default="0", min_length=1, max_length=40)
+    validated_at: datetime | None = None
+    validation_explanation: str = Field(default="", max_length=2000)
+    confidence: float = Field(default=0, ge=0, le=1)
+    source_steps: list[int] = Field(default_factory=list, max_length=100)
+    tool_call_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+Run.model_rebuild()
 
 
 class SkillSnapshot(BaseModel):

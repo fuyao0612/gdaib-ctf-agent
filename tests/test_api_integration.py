@@ -270,6 +270,10 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
             files={"upload": ("sample.txt", b"evidence", "text/plain")},
         )
         artifact = uploaded.json()
+        assert artifact["trust_level"] == "untrusted"
+        assert artifact["source"] == "user_upload"
+        assert artifact["extracted_metadata"]["encoding"] == "utf-8-replacement"
+        assert artifact["contains_prompt_injection"] is False
         started = client.post(
             f"/api/v1/threads/{thread['id']}/turns",
             json={
@@ -292,6 +296,8 @@ def test_full_api_persistence_upload_sse_and_report(tmp_path, provider_server):
         report = client.get(f"/api/v1/runs/{run_id}/report")
         assert report.status_code == 200
         assert "调整：协议服务生成的计划" in report.json()["markdown"]
+        assert report.json()["data"]["task_result"]["result_type"] == "assessment"
+        assert "handoff_summary" in report.json()["data"]
         audit = client.get(f"/api/v1/runs/{run_id}/audit").json()
         assert audit["model_calls"] and audit["tool_calls"] and audit["evidence"]
         assert audit["steps"]
