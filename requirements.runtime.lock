@@ -8,3 +8,9 @@ langgraph==1.2.9
 cryptography==46.0.7
 jsonschema==4.26.0
 mcp==1.26.0
+# Docker 在无隔离构建中使用项目已声明的构建后端，避免每次镜像构建临时下载未锁定版本。
+hatchling==1.31.0
+packaging==26.2
+pathspec==1.1.1
+pluggy==1.6.0
+trove-classifiers==2026.6.1.19
