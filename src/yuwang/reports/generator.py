@@ -69,6 +69,10 @@ def _uuid_values(values: list[dict[str, Any]]) -> list[UUID]:
     return result
 
 
+def _step_number(value: object) -> int | None:
+    return value if isinstance(value, int) and value >= 1 else None
+
+
 def deterministic_conclusion(facts: ReportFacts) -> str:
     """最终结论只组合已持久化的答案、候选和验证状态。"""
 
@@ -124,7 +128,7 @@ class ReportGenerator:
                 source=str(item.get("source_call_id") or item.get("source_kind") or "persisted-run"),
                 content_summary=str(item.get("verification_summary") or item.get("candidate") or "持久化证据"),
                 raw_ref=str(item.get("location") or item.get("source_call_id") or "run"),
-                source_step=item.get("source_step"),
+                source_step=_step_number(item.get("source_step")),
                 reliable=bool(item.get("verified") or item.get("platform_verified")),
                 tool_verified=bool(item.get("source_call_id")),
             )
@@ -150,7 +154,10 @@ class ReportGenerator:
             validated_at=run.finished_at if facts.validation_status == "validated" else None,
             validation_explanation=facts.validation_label,
             confidence=confidence,
-            source_steps=[int(item.get("sequence")) for item in facts.timeline if item.get("sequence")],
+            source_steps=[
+                number for item in facts.timeline
+                if (number := _step_number(item.get("sequence"))) is not None
+            ],
             tool_call_ids=_uuid_values(facts.timeline),
         )
         data = {

@@ -105,7 +105,11 @@ class EvaluationScorer:
             return passed, "已冻结 Provider 快照" if passed else "未找到 Provider 快照"
         if criterion.validator_type == "tool_called":
             calls = self.repository.list_tool_calls(run.id)
-            expected_tools = {expected} if isinstance(expected, str) else set(expected or [])
+            expected_tools = (
+                {expected}
+                if isinstance(expected, str)
+                else set(expected if isinstance(expected, list) else [])
+            )
             actual = {call.tool_id or call.tool_name for call in calls}
             passed = expected_tools <= actual
             return (
