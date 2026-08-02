@@ -109,6 +109,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        field_labels = {
+            "name": "名称",
+            "budget": "预算",
+            "max_steps": "最大步骤",
+            "max_model_calls": "最大模型调用次数",
+            "max_tool_calls": "最大工具调用次数",
+            "max_tokens": "最大 Token",
+            "max_model_cost": "最大模型费用",
+            "max_duration_seconds": "总时长（秒）",
+            "step_timeout_seconds": "单步超时（秒）",
+            "context_policy": "上下文策略",
+            "recent_message_limit": "最近消息数量",
+            "text_attachment_char_limit": "附件字符数",
+            "memory_policy": "记忆策略",
+            "max_facts": "最大事实数量",
+        }
+
         def validation_message(error: dict[str, object]) -> str:
             context = error.get("ctx")
             context = context if isinstance(context, dict) else {}
@@ -140,8 +157,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             location = ".".join(
                 str(item) for item in error.get("loc", ()) if item not in {"body", "query"}
             )
+            display_location = ".".join(
+                field_labels.get(item, item) for item in location.split(".") if item
+            )
             message = validation_message(error)
-            details.append(f"{location}：{message}" if location else message)
+            details.append(f"{display_location}：{message}" if display_location else message)
         message = "请求参数校验失败"
         if details:
             message += "：" + "；".join(dict.fromkeys(details))
