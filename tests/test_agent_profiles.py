@@ -8,6 +8,7 @@ from yuwang.settings import (
     AgentProfileExport,
     AgentProfileInput,
     AgentProfileService,
+    AgentProfileVersion,
     SafeTemplateRenderer,
 )
 from yuwang.settings.models import ProviderConfig, ProviderPreset
@@ -100,6 +101,28 @@ def test_platform_default_upgrades_to_disable_extra_fact_extraction(tmp_path):
     assert upgraded.profile_id == legacy.profile_id
     assert upgraded.version == legacy.version + 1
     assert upgraded.memory_policy.persist_important_facts is False
+
+
+def test_ensure_default_repairs_duplicate_default_markers(tmp_path):
+    repository = SQLiteRepository(tmp_path / "duplicate-defaults.db")
+    service = AgentProfileService(repository)
+    canonical = service.create(AgentProfileInput(name="canonical", is_default=True))
+    duplicate_input = AgentProfileInput(name="duplicate", is_default=True)
+    duplicate = AgentProfileVersion(
+        **duplicate_input.model_dump(),
+        version=1,
+        created_at="2099-01-01T00:00:00+00:00",
+    )
+    # Simulate malformed historical data imported before default uniqueness existed.
+    repository.save_agent_profile_version(duplicate)
+
+    resolved = service.ensure_default()
+    profiles = repository.list_agent_profiles()
+
+    assert resolved.profile_id == canonical.profile_id
+    assert [profile.profile_id for profile in profiles if profile.is_default] == [canonical.profile_id]
+    assert service.require(duplicate.profile_id).version == 2
+    assert service.require(duplicate.profile_id).is_default is False
 
 
 def test_profile_export_import_is_secretless_and_template_safe(tmp_path):

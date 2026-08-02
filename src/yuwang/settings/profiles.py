@@ -249,8 +249,21 @@ class AgentProfileService:
 
     def ensure_default(self, budget: Budget | None = None) -> AgentProfileVersion:
         profiles = self.repository.list_agent_profiles()
-        default = next((value for value in profiles if value.is_default), None)
+        defaults = sorted(
+            (value for value in profiles if value.is_default),
+            key=lambda value: value.created_at,
+        )
+        default = defaults[0] if defaults else None
         if default:
+            # Older data imports could contain more than one default profile. Keep the
+            # earliest one so existing automatic selection remains stable, then make
+            # the additional profiles regular selectable profiles again.
+            for duplicate in defaults[1:]:
+                data = duplicate.model_dump(
+                    exclude={"profile_id", "version", "schema_version", "created_at"}
+                )
+                data["is_default"] = False
+                self.update(duplicate.profile_id, AgentProfileInput.model_validate(data))
             if self._needs_default_upgrade(default, budget or Budget()):
                 data = default.model_dump(
                     exclude={"profile_id", "version", "schema_version", "created_at"}
