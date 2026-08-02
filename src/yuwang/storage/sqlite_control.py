@@ -753,6 +753,28 @@ class SQLiteControlStore(SQLiteStore):
             )
         return value
 
+    def update_plan_revision(self, value: PlanRevision) -> PlanRevision:
+        """更新同一计划版本的公开步骤状态，不产生新的计划版本。"""
+
+        with self.connect() as db:
+            existing = db.execute(
+                "SELECT 1 FROM run_plan_revisions WHERE run_id=? AND version=?",
+                (str(value.run_id), value.version),
+            ).fetchone()
+            if not existing:
+                raise ValueError("计划版本不存在，不能更新步骤状态")
+            db.execute(
+                "UPDATE run_plan_revisions SET source=?, data=?, created_at=? WHERE run_id=? AND version=?",
+                (
+                    str(value.source),
+                    self._dump(value),
+                    value.created_at.isoformat(),
+                    str(value.run_id),
+                    value.version,
+                ),
+            )
+        return value
+
     def list_plan_revisions(self, run_id: UUID | str) -> list[PlanRevision]:
         with self.connect() as db:
             rows = db.execute(

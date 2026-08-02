@@ -152,6 +152,7 @@ class ReportGenerator:
             "limitations": [trust_notice(facts.validation_status)],
             "failure_analysis": metrics.get("failure_analysis"),
             "retrospective": retrospective,
+            "handoff_summary": facts.handoff,
         }
         safe = redact_data(data)
         assert isinstance(safe, dict)
@@ -175,6 +176,17 @@ class ReportGenerator:
                 f"赛题平台验证：{display_value(item['platform_validation_status'])}；来源：{display_value(item['discovery_source'])}"
                 for item in facts.candidates
             ] or ["- 未发现 Flag 候选。"])
+        handoff = data.get("handoff_summary", {})
+        if isinstance(handoff, dict):
+            lines.extend([
+                "", "## 人机交接摘要",
+                f"- 当前目标：{handoff.get('current_goal', '未记录')}",
+                f"- 已完成步骤：{', '.join(str(item) for item in handoff.get('completed_steps', [])) or '无'}",
+                f"- 已验证结果：{', '.join(str(item) for item in handoff.get('validated_results', [])) or '无'}",
+                f"- 当前阻塞：{'；'.join(handoff.get('current_blockers', [])) or '无'}",
+                f"- 待审批事项：{'；'.join(handoff.get('pending_approvals', [])) or '无'}",
+                f"- 建议接手动作：{handoff.get('recommended_action', '复核证据')}",
+            ])
         retrospective = data["retrospective"]
         source_label = "模型复盘" if retrospective.get("source") == "model" else "确定性摘要"
         lines.extend(["", f"## 全过程复盘（{source_label}）"])

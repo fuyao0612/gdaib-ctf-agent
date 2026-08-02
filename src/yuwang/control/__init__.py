@@ -5,6 +5,7 @@ from yuwang.control.models import (
     AgentPlanDraft,
     PlanRevision,
     PlanSource,
+    PlanStepDraft,
     RunGuidance,
     TaskBrief,
     TaskBriefDraft,
@@ -14,6 +15,7 @@ from yuwang.control.models import (
 __all__ = [
     "AgentActionDraft",
     "AgentPlanDraft",
+    "PlanStepDraft",
     "PlanRevision",
     "PlanSource",
     "RunGuidance",

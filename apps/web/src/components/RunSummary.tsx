@@ -222,6 +222,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
   const failureSummary = failureAnalysisSummary(report, events);
   const candidates = flagCandidates(report);
   const review = retrospective(report);
+  const handoff = report?.data.handoff_summary;
   const reason =
     (run.status === "failed" ? failureSummary : null) ??
     nonEmpty(run.error) ??
@@ -263,6 +264,15 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
         <section className="result-conclusion" data-testid="failure-analysis">
           <strong>失败复盘</strong>
           <p>{conciseAnswer(reason)}</p>
+        </section>
+      )}
+      {handoff && (
+        <section className="result-conclusion" data-testid="handoff-summary">
+          <strong>人机交接摘要</strong>
+          <p>当前目标：{handoff.current_goal ?? "未记录"}</p>
+          <p>已验证结果：{handoff.validated_results?.join("；") || "无"}</p>
+          <p>当前阻塞：{handoff.current_blockers?.join("；") || "无"}</p>
+          <p>建议接手动作：{handoff.recommended_action ?? "复核证据"}</p>
         </section>
       )}
       <details className="full-report">

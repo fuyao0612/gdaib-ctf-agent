@@ -392,6 +392,7 @@ class WorkflowNodes:
         state = engine._state(raw)
         if not state.action or not state.action.tool_name:
             raise AgentDeclaredFailure("没有可执行工具动作")
+        engine._set_plan_step_status(state, "running")
         tool_id = engine.run_tool_id(state.task, state.action.tool_name)
         if tool_id is None:
             raise AgentDeclaredFailure("工具不在本次 Run 的允许快照中，拒绝执行")
@@ -528,6 +529,7 @@ class WorkflowNodes:
         else:
             state.no_progress_count = 0
         state.observations.append(observation)
+        engine._set_plan_step_status(state, "succeeded" if result.success else "failed")
         # Flag 格式检查只会产生“候选”证据，不会把格式匹配误报成赛题平台验证成功。
         candidate = result.structured_output.get("candidate")
         validation = result.structured_output.get("validation_status")

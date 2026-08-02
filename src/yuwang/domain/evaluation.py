@@ -25,6 +25,7 @@ FailureCategory = Literal[
     "assertion_failed",
     "provider_unavailable",
     "internal_error",
+    "configuration_error",
 ]
 
 
@@ -57,6 +58,12 @@ class EvaluationRecord(BaseModel):
     run_id: UUID | None = None
     trace_path: str | None = Field(default=None, max_length=300)
     report_path: str | None = Field(default=None, max_length=300)
+    score: float = Field(default=0, ge=0)
+    max_score: float = Field(default=0, ge=0)
+    criterion_results: list[dict[str, object]] = Field(default_factory=list)
+    retry_count: int = Field(default=0, ge=0)
+    manual_interventions: int = Field(default=0, ge=0)
+    context_compressions: int = Field(default=0, ge=0)
 
 
 class EvaluationStatistics(BaseModel):

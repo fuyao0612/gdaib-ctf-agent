@@ -15,6 +15,7 @@ from yuwang.domain.models import (
     DomainModel,
     EvidenceCandidate,
     Observation,
+    PlanStep,
     utcnow,
 )
 
@@ -79,23 +80,56 @@ class TaskBrief(DomainModel):
         return self
 
 
+class PlanStepDraft(BaseModel):
+    """模型输出的公开步骤字段；服务端仍会校验工具和授权。"""
+
+    model_config = ConfigDict(extra="forbid")
+    step_id: str = Field(pattern=r"^step-[1-9][0-9]{0,2}$")
+    goal: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=600)
+    expected_result: str = Field(min_length=1, max_length=1000)
+    verification_method: str = Field(min_length=1, max_length=1000)
+    capabilities: list[str] = Field(default_factory=list, max_length=20)
+    dependencies: list[str] = Field(default_factory=list, max_length=20)
+    risk: Literal["low", "medium", "high"] = "low"
+
+
 class AgentPlanDraft(BaseModel):
     """模型仅生成稳定的计划骨架，完整计划字段由服务端确定性补齐。"""
 
     model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=500)
-    steps: list[str] = Field(min_length=1, max_length=30)
+    steps: list[str | PlanStepDraft] = Field(min_length=1, max_length=30)
 
     def to_agent_plan(self) -> AgentPlan:
         """保持计划展示完整，但不把安全执行决策交给模型的自由文本。"""
 
         success_approach = "使用当前 Run 快照中已启用且经策略允许的工具收集证据，并按任务规则核对结果。"
+        drafts = [
+            value
+            if isinstance(value, PlanStepDraft)
+            else PlanStepDraft(
+                step_id=f"step-{index}",
+                goal=value,
+                reason="按任务目标推进并收集公开证据。",
+                expected_result=f"完成：{value}",
+                verification_method=success_approach,
+            )
+            for index, value in enumerate(self.steps, 1)
+        ]
+        details = [PlanStep(**value.model_dump()) for value in drafts]
         return AgentPlan(
             summary=self.summary,
-            steps=self.steps,
+            steps=[value.goal for value in details],
             success_approach=success_approach,
             risks=["工具、目标范围和参数仍须通过 Run 快照与 PolicyEngine 校验。"],
+            expected_results=[value.expected_result for value in details],
+            verification_methods=[value.verification_method for value in details],
+            step_details=details,
         )
+
+
+AgentPlanDraft.model_rebuild()
 
 
 class AgentActionDraft(BaseModel):
