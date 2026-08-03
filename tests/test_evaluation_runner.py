@@ -1,7 +1,12 @@
 import pytest
 
 from tests.fakes import FakeEchoTool, FakeModelProvider
-from yuwang.evaluation import EvaluationCase, EvaluationRunner, builtin_evaluation_cases
+from yuwang.evaluation import (
+    EvaluationCase,
+    EvaluationCriterion,
+    EvaluationRunner,
+    builtin_evaluation_cases,
+)
 from yuwang.settings import ProviderConfig, ProviderPreset
 from yuwang.tooling import ToolRegistry
 
@@ -106,3 +111,40 @@ async def test_executed_evaluation_with_unmapped_assertion_is_not_provider_unava
     assert saved is not None
     assert saved.run_id == result.run_id
     assert saved.failure_category is None
+
+
+@pytest.mark.asyncio
+async def test_required_configuration_error_is_preserved_in_evaluation_record(tmp_path):
+    registry = ToolRegistry()
+    registry.register(FakeEchoTool())
+    runner = EvaluationRunner(
+        tmp_path / "evaluation.db",
+        provider=FakeModelProvider(),
+        registry=registry,
+        artifact_root=tmp_path / "artifacts",
+    )
+    case = EvaluationCase(
+        case_id="configuration-error",
+        name="配置错误保留",
+        category="测试",
+        version="2.0",
+        user_messages=("执行一个可验证任务",),
+        expected_outcome="task",
+        criteria=(
+            EvaluationCriterion(
+                criterion_id="unsupported",
+                description="不支持的验证器",
+                validator_type="unknown_validator",
+            ),
+        ),
+        assertions=("创建 Run",),
+    )
+
+    result = await runner.run_case(case)
+
+    saved = runner.repository.get_evaluation_record(result.record_id)
+    assert result.status == "failed"
+    assert saved is not None
+    assert saved.failure_category == "configuration_error"
+    assert saved.case_version == "2.0"
+    assert saved.execution_status == "completed"

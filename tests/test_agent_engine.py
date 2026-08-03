@@ -21,6 +21,7 @@ from yuwang.domain.models import (
     Message,
     MessageRole,
     Observation,
+    PlanStep,
     Run,
     RunStatus,
     TaskSpec,
@@ -81,6 +82,42 @@ class NativeFakeModelProvider(FakeModelProvider):
                 provider_tool_call_id="provider-call-1",
             )
         )
+
+
+def test_replan_keeps_completed_and_failed_structured_steps():
+    previous = AgentPlan(
+        summary="old plan",
+        steps=["collect log", "verify IOC"],
+        success_approach="verify",
+        step_details=[
+            PlanStep(
+                step_id="step-1", goal="collect log", reason="read input",
+                expected_result="log summary", verification_method="check artifact hash",
+                status="succeeded",
+            ),
+            PlanStep(
+                step_id="step-2", goal="verify IOC", reason="old route failed",
+                expected_result="IOC", verification_method="check result field",
+                status="failed",
+            ),
+        ],
+    )
+    proposed = AgentPlan(
+        summary="new plan",
+        steps=["inspect new clue"],
+        success_approach="verify",
+        step_details=[
+            PlanStep(
+                step_id="step-3", goal="inspect new clue", reason="observation changed",
+                expected_result="verifiable IOC", verification_method="check evidence",
+            )
+        ],
+    )
+
+    merged = WorkflowNodes._merge_replanned_plan(previous, proposed)
+
+    assert [step.status for step in merged.step_details] == ["planned", "succeeded", "failed"]
+    assert merged.steps[-2:] == ["collect log", "verify IOC"]
 
 
 def tool_snapshot(spec: ToolSpec) -> ToolSnapshot:
@@ -221,6 +258,26 @@ async def test_complete_failure_replan_success_report(tmp_path):
     assert [item.checkpoint_sequence for item in checkpoints] == list(
         range(1, len(checkpoints) + 1)
     )
+
+
+@pytest.mark.asyncio
+async def test_completed_run_generates_the_report_once(tmp_path, monkeypatch):
+    repository, engine = build_engine(tmp_path, profile=profile_for())
+    thread = repository.save_thread(Thread(title="single report"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    calls = 0
+    original = engine.reporter.generate
+
+    def counted_generate(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(engine.reporter, "generate", counted_generate)
+    await engine.run(run.id, TaskSpec(body="complete an auditable task"))
+
+    assert repository.get_run(run.id).status == RunStatus.COMPLETED
+    assert calls == 1
 
 
 @pytest.mark.asyncio

@@ -94,6 +94,12 @@ def test_evaluation_api_reads_persisted_results_and_statistics(tmp_path):
         detail = client.get(f"/api/v1/evaluations/{saved.id}")
         assert detail.status_code == 200, detail.text
         assert detail.json()["case_id"] == "api-case"
+        exported_json = client.get("/api/v1/evaluations/export.json", params={"category": "API"})
+        assert exported_json.status_code == 200, exported_json.text
+        assert exported_json.json()[0]["case_version"] == "1.0"
+        exported_csv = client.get("/api/v1/evaluations/export.csv", params={"category": "API"})
+        assert exported_csv.status_code == 200, exported_csv.text
+        assert "provider_requests" in exported_csv.text
 
 
 @pytest.mark.asyncio

@@ -121,7 +121,12 @@ class ReportGenerator:
             ).model_dump(mode="json")
         else:
             retrospective = RunRetrospective.model_validate(retrospective).model_dump(mode="json")
-        result_type = "flag" if facts.report_kind == "ctf" and facts.candidates else "assessment"
+        result_type = {
+            "ctf": "flag",
+            "incident_response": "indicator",
+            "vulnerability_analysis": "vulnerability",
+            "reverse_static": "finding",
+        }.get(facts.report_kind, "assessment")
         evidence_refs = [
             EvidenceReference(
                 evidence_type=str(item.get("rule_kind") or item.get("source_kind") or "observation"),
@@ -145,7 +150,12 @@ class ReportGenerator:
         # 只读兼容视图，绝不写回 Run 或作为新运行的结果来源。
         task_result = run.results[0] if run.results else TaskResult(
             result_type=result_type,
-            title="CTF Flag 结果" if result_type == "flag" else "通用安全任务结果",
+            title={
+                "flag": "CTF Flag 结果",
+                "indicator": "应急响应 IOC 结果",
+                "vulnerability": "漏洞分析结果",
+                "finding": "逆向静态分析结果",
+            }.get(result_type, "通用安全任务结果"),
             summary=deterministic_conclusion(facts),
             structured_data={"candidates": facts.candidates} if facts.candidates else {},
             scenario=facts.report_kind,

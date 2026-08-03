@@ -6,9 +6,11 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from apps.api.context import ApiContext
 from yuwang.domain.evaluation import EvaluationRecord, EvaluationStatistics, summarize_evaluations
+from yuwang.evaluation.exports import records_as_csv, records_as_json
 
 
 def create_evaluation_router(context: ApiContext) -> APIRouter:
@@ -59,6 +61,34 @@ def create_evaluation_router(context: ApiContext) -> APIRouter:
     ) -> EvaluationStatistics:
         return summarize_evaluations(
             records(case_id, category, difficulty, provider, model, status, limit)
+        )
+
+    @router.get("/export.json")
+    async def export_json(
+        case_id: str | None = None,
+        category: str | None = None,
+        difficulty: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        status: Literal["passed", "failed", "skipped"] | None = None,
+        limit: int = Query(default=500, ge=1, le=500),
+    ) -> JSONResponse:
+        return JSONResponse(records_as_json(records(case_id, category, difficulty, provider, model, status, limit)))
+
+    @router.get("/export.csv")
+    async def export_csv(
+        case_id: str | None = None,
+        category: str | None = None,
+        difficulty: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        status: Literal["passed", "failed", "skipped"] | None = None,
+        limit: int = Query(default=500, ge=1, le=500),
+    ) -> PlainTextResponse:
+        return PlainTextResponse(
+            records_as_csv(records(case_id, category, difficulty, provider, model, status, limit)),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="evaluations.csv"'},
         )
 
     @router.get("/{record_id}", response_model=EvaluationRecord)

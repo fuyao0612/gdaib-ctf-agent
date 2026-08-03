@@ -254,6 +254,8 @@ class EvaluationRunner:
         calls = self.repository.list_model_calls(run.id) if run else []
         tools = self.repository.list_tool_calls(run.id) if run else []
         report = self.repository.get_report(run.id) if run else None
+        persisted_task = self.repository.get_run_task(run.id) if run else None
+        events = self.repository.list_events(run.id) if run else []
         finished_at = run.finished_at if run and run.finished_at else datetime.now().astimezone()
         actual_started = started_at or finished_at
         duration_ms = max(0, int((finished_at - actual_started).total_seconds() * 1000))
@@ -282,6 +284,8 @@ class EvaluationRunner:
         )
         record = EvaluationRecord(
             case_id=case.case_id,
+            case_version=case.version,
+            scenario=(persisted_task.scenario if persisted_task else case.category),
             category=case.category,
             difficulty=case.difficulty,
             provider=provider,
@@ -291,12 +295,16 @@ class EvaluationRunner:
             finished_at=finished_at,
             duration_ms=duration_ms,
             model_calls=(len(calls) if calls else sum(item.request_count for item in metrics)),
+            provider_requests=len(calls) if calls else sum(item.request_count for item in metrics),
             tool_calls=len(tools),
+            tool_failures=sum(1 for item in tools if str(item.status) == "failed"),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             estimated_cost=estimated_cost,
             success=result.status == "passed",
             status=result.status,
+            execution_status=str(run.status) if run else "not_executed",
+            validation_status=run.validation_status if run else "not_executed",
             submitted_flag=None,
             flag_verified=bool(run and run.validation_status == "validated"),
             finish_reason=(run.error if run and run.error else result.reason or "断言全部通过"),
@@ -308,6 +316,8 @@ class EvaluationRunner:
             max_score=result.max_score,
             criterion_results=[item.model_dump(mode="json") for item in result.criteria],
             retry_count=max(0, attempt - 1),
+            retries=max(0, attempt - 1),
+            replans=sum(1 for event in events if str(event.type) == str(EventType.REPLANNED)),
             manual_interventions=0,
             context_compressions=0,
         )
@@ -333,6 +343,9 @@ class EvaluationRunner:
         if result.status == "skipped":
             # 已真实执行的 Run 因断言尚未映射而跳过时，不能误报 Provider 不可用。
             return "provider_unavailable" if run is None else None
+        criterion_statuses = {item.status for item in result.criteria}
+        if "configuration_error" in criterion_statuses:
+            return "configuration_error"
         error = (run.error if run and run.error else result.reason or "").casefold()
         if "上下文" in error:
             return "context_failure"
