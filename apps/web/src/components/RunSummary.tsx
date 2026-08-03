@@ -110,6 +110,11 @@ const STEP_STATUS_LABEL: Record<ExecutionStep["observation_status"], string> = {
   running: "执行中", success: "成功", error: "失败", timeout: "超时", blocked: "已阻止", stopped: "已停止",
 };
 
+const RESULT_TYPE_LABEL: Record<string, string> = {
+  answer: "回答", finding: "发现", assessment: "研判", flag: "Flag", artifact: "资料",
+  handoff: "交接", indicator: "IOC", vulnerability: "漏洞", patch: "修复建议",
+};
+
 export function ExecutionTimeline({ steps }: { steps: ExecutionStep[] }) {
   if (!steps.length) return <p className="muted">暂无已持久化的工具执行步骤。</p>;
   return (
@@ -223,7 +228,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
   const candidates = flagCandidates(report);
   const review = retrospective(report);
   const handoff = report?.data.handoff_summary;
-  const taskResult = report?.data.task_result;
+  const taskResults = report?.data.task_results ?? (report?.data.task_result ? [report.data.task_result] : []);
   const reason =
     (run.status === "failed" ? failureSummary : null) ??
     nonEmpty(run.error) ??
@@ -243,13 +248,13 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
           <p>{conciseAnswer(answer)}</p>
         </section>
       )}
-      {taskResult && (
-        <section className="result-conclusion" data-testid="task-result">
+      {taskResults.map((taskResult) => (
+        <section key={taskResult.id} className="result-conclusion" data-testid="task-result">
           <strong>{taskResult.title}</strong>
-          <p>结果类型：{taskResult.result_type}；验证器：{taskResult.validator_name} v{taskResult.validator_version}</p>
-          <p>置信度：{Math.round(taskResult.confidence * 100)}% · {taskResult.validation_explanation}</p>
+          <p>结果类型：{RESULT_TYPE_LABEL[taskResult.result_type] ?? taskResult.result_type}；验证状态：{taskResult.validation_status}；验证器：{taskResult.validator_name} v{taskResult.validator_version}</p>
+          <p>置信度：{Math.round(taskResult.confidence * 100)}% · 证据 {taskResult.evidence.length} 条 · {taskResult.validation_explanation}</p>
         </section>
-      )}
+      ))}
       {candidates.length > 0 && (
         <section className="result-conclusion" data-testid="flag-candidates">
           <strong>Flag 候选与验证状态</strong>
@@ -279,6 +284,8 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
           <strong>人机交接摘要</strong>
           <p>当前目标：{handoff.current_goal ?? "未记录"}</p>
           <p>已验证结果：{handoff.validated_results?.join("；") || "无"}</p>
+          <p>部分验证结果：{handoff.partial_results?.join("；") || "无"}</p>
+          <p>未验证候选：{handoff.unverified_results?.join("；") || "无"}</p>
           <p>当前阻塞：{handoff.current_blockers?.join("；") || "无"}</p>
           <p>建议接手动作：{handoff.recommended_action ?? "复核证据"}</p>
         </section>

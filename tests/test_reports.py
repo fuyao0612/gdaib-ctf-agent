@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from yuwang.domain.models import (
     Artifact,
     CallStatus,
@@ -146,6 +148,32 @@ def test_final_answer_flag_is_reported_without_evidence_record() -> None:
     assert data["flag_candidates"][0]["platform_verified"] is False
     assert "未发现 Flag 候选" not in markdown
     assert "尚未完成外部验证" in markdown
+
+
+@pytest.mark.parametrize(
+    ("scenario", "kind", "result_type"),
+    [
+        ("incident_response", "incident_response", "indicator"),
+        ("vulnerability_analysis", "vulnerability_analysis", "vulnerability"),
+        ("reverse_static", "reverse_static", "finding"),
+    ],
+)
+def test_non_ctf_scenario_reports_use_domain_result_type_without_flag_section(
+    scenario: str, kind: str, result_type: str
+) -> None:
+    run = Run(thread_id=uuid4())
+    markdown, data = ReportGenerator().generate(
+        run,
+        TaskSpec(body="analyze controlled input", scenario=scenario),
+        [],
+        {
+            "final_answer": "analysis includes flag{text} but is not a CTF",
+            "trace": {"steps": [], "metrics": {}, "artifacts": []},
+        },
+    )
+    assert data["report_kind"] == kind
+    assert data["task_result"]["result_type"] == result_type
+    assert "Flag" not in markdown
 
 
 def test_report_uses_persisted_run_result_instead_of_reconstructing_it() -> None:

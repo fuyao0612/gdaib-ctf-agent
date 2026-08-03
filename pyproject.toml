@@ -18,6 +18,7 @@ dependencies = [
   "cryptography>=44,<47",
   "jsonschema>=4.23,<5",
   "mcp>=1.26,<2",
+  "PyYAML>=6,<7",
 ]
 
 [project.optional-dependencies]

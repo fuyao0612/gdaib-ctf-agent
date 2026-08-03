@@ -111,7 +111,30 @@ def provider_server():
                     response_content = json.dumps(
                         {
                             "summary": "协议服务生成的计划",
-                            "steps": ["调用测试工具", "验证候选"],
+                            "steps": [
+                                {
+                                    "step_id": "step-1",
+                                    "goal": "调用测试工具",
+                                    "reason": "收集当前任务的真实观察。",
+                                    "expected_result": "得到受控工具输出。",
+                                    "verification_method": "检查工具调用状态。",
+                                    "capabilities": ["tool_call"],
+                                    "dependencies": [],
+                                    "risk": "low",
+                                    "status": "planned",
+                                },
+                                {
+                                    "step_id": "step-2",
+                                    "goal": "验证候选",
+                                    "reason": "将结果绑定到真实来源。",
+                                    "expected_result": "记录验证状态。",
+                                    "verification_method": "核对证据与验证器输出。",
+                                    "capabilities": [],
+                                    "dependencies": ["step-1"],
+                                    "risk": "low",
+                                    "status": "planned",
+                                },
+                            ],
                         }
                     )
                 else:

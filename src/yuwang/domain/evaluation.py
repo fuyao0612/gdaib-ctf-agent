@@ -36,6 +36,8 @@ class EvaluationRecord(BaseModel):
 
     id: UUID = Field(default_factory=uuid4)
     case_id: str = Field(min_length=1, max_length=80)
+    case_version: str = Field(default="1.0", min_length=1, max_length=20)
+    scenario: str = Field(default="general", min_length=1, max_length=80)
     category: str = Field(min_length=1, max_length=80)
     difficulty: str = Field(min_length=1, max_length=40)
     provider: str | None = Field(default=None, max_length=120)
@@ -45,12 +47,16 @@ class EvaluationRecord(BaseModel):
     finished_at: datetime = Field(default_factory=utcnow)
     duration_ms: int = Field(ge=0)
     model_calls: int = Field(ge=0)
+    provider_requests: int = Field(default=0, ge=0)
     tool_calls: int = Field(ge=0)
+    tool_failures: int = Field(default=0, ge=0)
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     estimated_cost: float = Field(ge=0)
     success: bool
     status: EvaluationStatus
+    execution_status: str = Field(default="unknown", min_length=1, max_length=40)
+    validation_status: str = Field(default="pending", min_length=1, max_length=40)
     submitted_flag: str | None = Field(default=None, max_length=500)
     flag_verified: bool = False
     finish_reason: str = Field(min_length=1, max_length=500)
@@ -62,6 +68,8 @@ class EvaluationRecord(BaseModel):
     max_score: float = Field(default=0, ge=0)
     criterion_results: list[dict[str, object]] = Field(default_factory=list)
     retry_count: int = Field(default=0, ge=0)
+    retries: int = Field(default=0, ge=0)
+    replans: int = Field(default=0, ge=0)
     manual_interventions: int = Field(default=0, ge=0)
     context_compressions: int = Field(default=0, ge=0)
 

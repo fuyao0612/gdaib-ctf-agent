@@ -1,0 +1,3 @@
+judge_type: structured_value
+field: algorithm
+expected_value: AES-256-GCM

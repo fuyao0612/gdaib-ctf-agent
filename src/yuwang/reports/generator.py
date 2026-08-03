@@ -121,7 +121,12 @@ class ReportGenerator:
             ).model_dump(mode="json")
         else:
             retrospective = RunRetrospective.model_validate(retrospective).model_dump(mode="json")
-        result_type = "flag" if facts.report_kind == "ctf" and facts.candidates else "assessment"
+        result_type = {
+            "ctf": "flag",
+            "incident_response": "indicator",
+            "vulnerability_analysis": "vulnerability",
+            "reverse_static": "finding",
+        }.get(facts.report_kind, "assessment")
         evidence_refs = [
             EvidenceReference(
                 evidence_type=str(item.get("rule_kind") or item.get("source_kind") or "observation"),
@@ -141,11 +146,16 @@ class ReportGenerator:
             "pending": 0.0,
             "failed": 0.0,
         }.get(facts.validation_status, 0.0)
-        # New runs must persist their result before this report is finalized.  The fallback keeps
-        # historical rows readable without modifying their immutable JSON payloads.
+        # 新 Run 必须已由 TaskResultService 在报告前落库。空结果仅生成历史数据的
+        # 只读兼容视图，绝不写回 Run 或作为新运行的结果来源。
         task_result = run.results[0] if run.results else TaskResult(
             result_type=result_type,
-            title="CTF Flag 结果" if result_type == "flag" else "通用安全任务结果",
+            title={
+                "flag": "CTF Flag 结果",
+                "indicator": "应急响应 IOC 结果",
+                "vulnerability": "漏洞分析结果",
+                "finding": "逆向静态分析结果",
+            }.get(result_type, "通用安全任务结果"),
             summary=deterministic_conclusion(facts),
             structured_data={"candidates": facts.candidates} if facts.candidates else {},
             scenario=facts.report_kind,
@@ -213,6 +223,8 @@ class ReportGenerator:
             "retrospective": retrospective,
             "handoff_summary": facts.handoff,
             "task_result": task_result.model_dump(mode="json"),
+            "task_results": [item.model_dump(mode="json") for item in run.results]
+            or [task_result.model_dump(mode="json")],
         }
         safe = redact_data(data)
         assert isinstance(safe, dict)
@@ -243,6 +255,8 @@ class ReportGenerator:
                 f"- 当前目标：{handoff.get('current_goal', '未记录')}",
                 f"- 已完成步骤：{', '.join(str(item) for item in handoff.get('completed_steps', [])) or '无'}",
                 f"- 已验证结果：{', '.join(str(item) for item in handoff.get('validated_results', [])) or '无'}",
+                f"- 部分验证结果：{', '.join(str(item) for item in handoff.get('partial_results', [])) or '无'}",
+                f"- 未验证候选：{', '.join(str(item) for item in handoff.get('unverified_results', [])) or '无'}",
                 f"- 当前阻塞：{'；'.join(handoff.get('current_blockers', [])) or '无'}",
                 f"- 待审批事项：{'；'.join(handoff.get('pending_approvals', [])) or '无'}",
                 f"- 建议接手动作：{handoff.get('recommended_action', '复核证据')}",

@@ -30,6 +30,7 @@ from yuwang.agent.state import (
 from yuwang.domain.models import CallStatus, EventType, Run, RunStatus, TaskSpec
 from yuwang.policy import redact
 from yuwang.reports.trace import RunTraceService
+from yuwang.results import TaskResultService
 
 if TYPE_CHECKING:
     from yuwang.agent.engine import AgentEngine
@@ -300,6 +301,21 @@ class AgentRunCoordinator:
         run.transition(RunStatus.FAILED, fallback.summary[:500])
         self._close_latest_step(run.id, run.error or fallback.summary)
         engine.repository.save_run(run)
+        checkpoint = engine.repository.latest_checkpoint(run.id)
+        state = (
+            AgentStateModel.model_validate(checkpoint.state)
+            if checkpoint is not None
+            else None
+        )
+        # 失败轨迹同样可能已经收集到候选和证据，不能因为终态变化而丢失。
+        TaskResultService(engine.repository).persist(
+            run,
+            task,
+            state.structured_output if state else None,
+            final_answer=state.final_answer if state else None,
+            validation_status="failed",
+        )
+        run = engine.repository.get_run(run.id) or run
         analysis = await self._failure_analysis(run, task, error, fallback)
         engine.events.emit(
             run.id,

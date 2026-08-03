@@ -1,0 +1,4 @@
+HARMLESS_EVALUATION_SAMPLE
+algorithm=AES-256-GCM
+constant=0xC0FFEE
+behavior=collects_local_metadata

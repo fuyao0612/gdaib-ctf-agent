@@ -152,9 +152,9 @@ class ReportFacts:
         final_answer = str(metrics.get("final_answer") or trace.get("final_answer") or "").strip() or None
         is_ctf = (
             str(task.scenario).casefold() == "ctf"
+            or "ctf" in task.body.casefold()
             or any(str(step.get("tool_id", "")).startswith("ctf.") for step in timeline)
             or any(item.get("rule_kind") == "flag_format" for item in evidence)
-            or bool(find_flag_candidates(final_answer or "", task.verification_rules))
         )
         reason = (
             "任务场景明确为 CTF" if str(task.scenario).casefold() == "ctf"
@@ -162,7 +162,8 @@ class ReportFacts:
             if is_ctf else "未发现 CTF 专用持久化事实"
         )
         candidates = cls._candidates(
-            evidence, timeline, tool_calls, final_answer, task.verification_rules
+            evidence, timeline, tool_calls, final_answer, task.verification_rules,
+            allow_final_answer=is_ctf,
         )
         artifacts = cls._artifacts(_items(trace.get("artifacts")), timeline, tool_calls)
         clues = [
@@ -204,11 +205,9 @@ class ReportFacts:
         handoff = {
             "current_goal": redact(task.body[:500]),
             "completed_steps": completed_steps,
-            "validated_results": [
-                item.get("candidate") for item in candidates
-                if item.get("deterministic_validation_status") == "passed"
-                or item.get("platform_validation_status") == "passed"
-            ],
+            "validated_results": [item.title for item in run.results if item.validation_status == "validated"],
+            "partial_results": [item.title for item in run.results if item.validation_status == "partial"],
+            "unverified_results": [item.title for item in run.results if item.validation_status == "unverified"],
             "key_evidence": [item["summary"] for item in clues[:8] if item.get("summary")],
             "failed_paths": [
                 step.get("sequence") for step in timeline
@@ -225,8 +224,13 @@ class ReportFacts:
                 else "复核报告和证据后决定是否进行下一步授权验证"
             ),
         }
+        scenario_kind = str(task.scenario).casefold()
+        report_kind = "ctf" if is_ctf else (
+            scenario_kind if scenario_kind in {"incident_response", "vulnerability_analysis", "reverse_static"}
+            else "general"
+        )
         return cls(
-            report_kind="ctf" if is_ctf else "general",
+            report_kind=report_kind,
             report_kind_reason=reason,
             execution_status=str(run.status),
             validation_status=str(metrics.get("validation_status", run.validation_status)),
@@ -252,6 +256,7 @@ class ReportFacts:
     def _candidates(
         evidence: list[dict[str, Any]], timeline: list[dict[str, Any]],
         tool_calls: list[dict[str, Any]], final_answer: str | None, rules: list[Any],
+        *, allow_final_answer: bool = True,
     ) -> list[dict[str, Any]]:
         values: dict[str, dict[str, Any]] = {}
         source_steps = {
@@ -330,10 +335,11 @@ class ReportFacts:
         for call in tool_calls:
             for candidate in find_flag_candidates(str(call.get("result_summary", "")), rules):
                 add(candidate, "tool_call", call.get("id"), None)
-        for candidate in find_flag_candidates(
-            final_answer or "", rules, allow_whole_text_sha256=True
-        ):
-            add(candidate, "final_answer")
+        if allow_final_answer:
+            for candidate in find_flag_candidates(
+                final_answer or "", rules, allow_whole_text_sha256=True
+            ):
+                add(candidate, "final_answer")
         return list(values.values())
 
     @staticmethod

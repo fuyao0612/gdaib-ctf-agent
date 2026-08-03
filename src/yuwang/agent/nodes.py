@@ -654,10 +654,12 @@ class WorkflowNodes:
                 payload,
             )
             return engine._result("replan", state)
-        state.plan = await engine.planner.plan(
+        previous_plan = state.plan
+        proposed_plan = await engine.planner.plan(
             state,
             cast(Any, engine._model_call),
         )
+        state.plan = self._merge_replanned_plan(previous_plan, proposed_plan)
         previous = engine.repository.latest_plan_revision(state.run_id)
         revision = PlanRevision(
             run_id=state.run_id,
@@ -668,16 +670,52 @@ class WorkflowNodes:
         )
         engine.repository.save_plan_revision(revision)
         engine._track_plan_progress(state)
-        payload = {"steps": state.plan.steps, "replan_count": state.replan_count}
+        replan_payload: dict[str, Any] = {
+            "steps": state.plan.steps,
+            "replan_count": state.replan_count,
+        }
+        if state.observations:
+            # 仅记录可公开的工具观察摘要，不复制原始工具输出或模型推理。
+            replan_payload["trigger_observation"] = state.observations[-1].summary[:500]
         if guidance_sequences:
-            payload["guidance_sequences"] = guidance_sequences
+            replan_payload["guidance_sequences"] = guidance_sequences
         engine.events.emit(
             state.run_id,
             EventType.REPLANNED,
             state.plan.summary,
-            payload,
+            replan_payload,
         )
         return engine._result("replan", state)
+
+    @staticmethod
+    def _merge_replanned_plan(previous: AgentPlan | None, proposed: AgentPlan) -> AgentPlan:
+        """保留旧计划已结束步骤，让恢复和报告能看到成功、失败两条路径。"""
+
+        if previous is None:
+            return proposed
+        terminal = {"succeeded", "failed", "skipped"}
+        previous_by_id = {item.step_id: item for item in previous.step_details}
+        details = []
+        present_ids: set[str] = set()
+        for item in proposed.step_details:
+            prior = previous_by_id.get(item.step_id)
+            details.append(
+                item.model_copy(update={"status": prior.status})
+                if prior and prior.status in terminal
+                else item
+            )
+            present_ids.add(item.step_id)
+        for item in previous.step_details:
+            if item.step_id not in present_ids and item.status in terminal:
+                details.append(item)
+        return proposed.model_copy(
+            update={
+                "steps": [item.goal for item in details],
+                "expected_results": [item.expected_result for item in details],
+                "verification_methods": [item.verification_method for item in details],
+                "step_details": details,
+            }
+        )
 
     def route_task_brief(self, raw: GraphState) -> str:
         brief = self.engine._state(raw).task_brief

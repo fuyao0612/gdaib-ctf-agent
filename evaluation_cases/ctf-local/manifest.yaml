@@ -1,0 +1,16 @@
+case_id: ctf-local
+version: "1.0"
+scenario: ctf
+title: 本地 Flag 验证
+objective: 从受控文本提取并验证 Flag。
+authorization_scope: ["evaluation_cases/ctf-local/inputs"]
+input_artifacts: [challenge.txt]
+allowed_tools: ["ctf.file_inspect", "ctf.flag_candidate_verify"]
+budget: {max_steps: 8, max_tool_calls: 4}
+timeout: 60
+max_attempts: 1
+expected_result_schema: {result_type: flag}
+criteria: [{validator_type: result_exists, expected_value: flag}]
+judge: judge.yaml
+tags: [ctf, local]
+difficulty: 基础
