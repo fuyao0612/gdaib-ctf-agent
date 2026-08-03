@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import mimetypes
 import re
+import zipfile
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
+import yaml  # type: ignore[import-untyped]
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
@@ -26,6 +30,8 @@ from yuwang.domain.models import (
 _PROMPT_INJECTION_MARKERS = re.compile(
     r"(?i)(ignore\s+(all|previous)|system\s+message|developer\s+message|reveal\s+api\s*key|disable\s+policy)"
 )
+_PREVIEW_LIMIT = 12_000
+_ZIP_MAX_RATIO = 100
 
 
 def _artifact_metadata(content: bytes, mime_type: str) -> tuple[dict[str, Any], str | None, bool]:
@@ -34,14 +40,66 @@ def _artifact_metadata(content: bytes, mime_type: str) -> tuple[dict[str, Any], 
     metadata: dict[str, Any] = {"byte_length": len(content)}
     preview: str | None = None
     contains_injection = False
-    if mime_type.startswith("text/") or mime_type in {"application/json", "application/xml"}:
+    is_text = mime_type.startswith("text/") or mime_type in {
+        "application/json", "application/xml", "application/x-yaml", "text/yaml"
+    }
+    if mime_type in {"application/zip", "application/x-zip-compressed"}:
+        return _zip_metadata(content, metadata)
+    if is_text:
         text = content.decode("utf-8", errors="replace")
-        preview = text[:12_000]
-        metadata.update({"encoding": "utf-8-replacement", "line_count": text.count("\n") + 1})
+        preview = text[:_PREVIEW_LIMIT]
+        metadata.update({
+            "encoding": "utf-8-replacement",
+            "line_count": text.count("\n") + 1,
+            "truncated": len(text) > _PREVIEW_LIMIT,
+        })
+        _structured_metadata(text, mime_type, metadata)
         contains_injection = bool(_PROMPT_INJECTION_MARKERS.search(text))
     else:
         metadata["binary"] = True
     return metadata, preview, contains_injection
+
+
+def _structured_metadata(text: str, mime_type: str, metadata: dict[str, Any]) -> None:
+    """只解析可展示的结构信息，解析失败也不影响原始 Artifact 保存。"""
+
+    try:
+        if mime_type == "application/json":
+            value = __import__("json").loads(text)
+            metadata["structured_kind"] = "json"
+            metadata["top_level"] = sorted(value)[:50] if isinstance(value, dict) else type(value).__name__
+        elif mime_type in {"application/x-yaml", "text/yaml"}:
+            value = yaml.safe_load(text)
+            metadata["structured_kind"] = "yaml"
+            metadata["top_level"] = sorted(value)[:50] if isinstance(value, dict) else type(value).__name__
+        elif mime_type in {"text/csv", "application/csv"}:
+            rows = list(csv.reader(io.StringIO(text)))
+            metadata.update({
+                "structured_kind": "csv", "columns": rows[0][:100] if rows else [],
+                "row_count": max(0, len(rows) - 1),
+            })
+    except (ValueError, csv.Error, yaml.YAMLError) as exc:
+        metadata["parse_error"] = type(exc).__name__
+
+
+def _zip_metadata(content: bytes, metadata: dict[str, Any]) -> tuple[dict[str, Any], str | None, bool]:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            entries = archive.infolist()
+            total_compressed = sum(item.compress_size for item in entries)
+            total_uncompressed = sum(item.file_size for item in entries)
+            unsafe_paths = [item.filename for item in entries if Path(item.filename).is_absolute() or ".." in Path(item.filename).parts]
+            ratio = total_uncompressed / max(1, total_compressed)
+            metadata.update({
+                "structured_kind": "zip", "entry_count": len(entries),
+                "entries": [item.filename for item in entries[:100]], "uncompressed_size": total_uncompressed,
+                "compression_ratio": round(ratio, 2), "unsafe_paths": unsafe_paths[:20],
+                "suspicious_compression_ratio": ratio > _ZIP_MAX_RATIO,
+            })
+            return metadata, None, False
+    except zipfile.BadZipFile:
+        metadata["parse_error"] = "BadZipFile"
+        return metadata, None, False
 
 
 def create_thread_router(context: ApiContext) -> APIRouter:
@@ -204,7 +262,7 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             extracted_metadata=metadata,
             preview=preview,
             contains_prompt_injection=contains_injection,
-            truncated=False,
+            truncated=bool(metadata.get("truncated", False)),
             original_ref=f"upload:{artifact_id}",
         )
         return repository.save_artifact(artifact)
