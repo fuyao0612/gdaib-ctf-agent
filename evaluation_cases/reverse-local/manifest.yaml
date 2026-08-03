@@ -1,0 +1,16 @@
+case_id: reverse-local
+version: "1.0"
+scenario: reverse_static
+title: 无害逆向静态分析
+objective: 从受控字符串表提取算法名称和常量。
+authorization_scope: ["evaluation_cases/reverse-local/inputs"]
+input_artifacts: [sample.strings]
+allowed_tools: ["ctf.file_inspect", "ctf.strings_extract"]
+budget: {max_steps: 8, max_tool_calls: 4}
+timeout: 60
+max_attempts: 1
+expected_result_schema: {result_type: finding}
+criteria: [{validator_type: result_exists, expected_value: finding}]
+judge: judge.yaml
+tags: [reverse, static, harmless]
+difficulty: 基础

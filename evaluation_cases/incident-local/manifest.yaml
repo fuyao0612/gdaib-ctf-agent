@@ -1,0 +1,16 @@
+case_id: incident-local
+version: "1.0"
+scenario: incident_response
+title: 本地日志 IOC 提取
+objective: 从日志提取 IP、域名和文件哈希。
+authorization_scope: ["evaluation_cases/incident-local/inputs"]
+input_artifacts: [events.log]
+allowed_tools: ["ctf.file_inspect"]
+budget: {max_steps: 8, max_tool_calls: 4}
+timeout: 60
+max_attempts: 1
+expected_result_schema: {result_type: indicator}
+criteria: [{validator_type: result_exists, expected_value: indicator}]
+judge: judge.yaml
+tags: [incident, local]
+difficulty: 基础
