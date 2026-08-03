@@ -110,7 +110,7 @@ class EvidenceBinder:
             tool_item = tools[identifier]
             return EvidenceReference(
                 evidence_type=kind if kind != "evidence" else "tool_call",
-                source=str(tool_item.tool_id or tool_item.tool_name),
+                source=str(tool_item.id),
                 content_summary=tool_item.result_summary,
                 raw_ref=f"tool_call:{tool_item.id}",
                 reliable=str(tool_item.status) == "succeeded",

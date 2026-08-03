@@ -30,7 +30,7 @@ from yuwang.tooling import ToolRegistry, ToolSpec
 
 from .cases import BUILTIN_EVALUATION_CASES, EvaluationCase
 from .results import EvaluationRecord, EvaluationStatus, FailureCategory
-from .scorer import CriterionResult, EvaluationScorer
+from .scorer import CriterionResult, CriterionStatus, EvaluationScorer
 
 
 class EvaluationAssertionResult(BaseModel):
@@ -39,9 +39,11 @@ class EvaluationAssertionResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     assertion: str
-    status: EvaluationStatus
+    status: EvaluationStatus | CriterionStatus
     detail: str
     criterion_id: str | None = None
+    validator_type: str | None = None
+    validator_version: str | None = None
     score: float = 0
     max_score: float = 0
 
@@ -177,7 +179,7 @@ class EvaluationRunner:
         assertions = self._evaluate_criteria(case, persisted, task)
         statuses = {item.status for item in assertions}
         failed_required = any(
-            item.status == "failed"
+            item.status != "passed"
             for item, criterion in zip(assertions, case.criteria, strict=False)
             if criterion.required
         )
@@ -212,14 +214,15 @@ class EvaluationRunner:
 
     @staticmethod
     def _criterion_result(item: CriterionResult) -> EvaluationAssertionResult:
-        status: EvaluationStatus = "failed" if item.status != "passed" else "passed"
         return EvaluationAssertionResult(
             assertion=item.criterion_id,
             criterion_id=item.criterion_id,
-            status=status,
+            status=item.status,
             detail=item.detail,
             score=item.score,
             max_score=item.max_score,
+            validator_type=item.validator_type,
+            validator_version=item.validator_version,
         )
 
     def _skipped(self, case: EvaluationCase, reason: str, attempt: int) -> EvaluationResult:

@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from yuwang.domain.models import Run, TaskSpec
+from yuwang.domain.models import Artifact, EvidenceRecord, Run, TaskResult, TaskSpec
+from yuwang.evaluation.local_judge import JudgeResult, LocalJudge
 from yuwang.storage import SQLiteRepository
 
 CriterionStatus = Literal["passed", "failed", "not_executed", "configuration_error"]
@@ -26,6 +28,7 @@ class EvaluationCriterion(BaseModel):
     validator_type: str = Field(min_length=1, max_length=80)
     expected_value: str | bool | list[str] | dict[str, Any] | None = None
     required: bool = True
+    private_config: dict[str, Any] = Field(default_factory=dict, exclude=True, repr=False)
 
 
 class CriterionResult(BaseModel):
@@ -34,6 +37,8 @@ class CriterionResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     criterion_id: str
+    validator_type: str
+    validator_version: str
     status: CriterionStatus
     score: float = Field(ge=0)
     max_score: float = Field(gt=0)
@@ -268,6 +273,26 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
             else ("failed", "结果未引用目标证据")
         )
 
+    def local_judge(
+        ctx: ValidationContext, item: EvaluationCriterion
+    ) -> tuple[CriterionStatus, str]:
+        judge_type = str(item.private_config.get("judge_type", ""))
+        result_type = item.private_config.get("result_type")
+        candidate = next(
+            (value for value in ctx.run.results if result_type is None or value.result_type == result_type),
+            None,
+        )
+        if candidate is None:
+            return "not_executed", "当前 Run 没有可供 Judge 检查的结果"
+        judge = LocalJudge(judge_type)
+        result = judge.validate(
+            candidate,
+            item.private_config,
+            artifact_lookup=lambda raw: _artifact_for_judge(ctx, raw),
+        )
+        _record_judge_evidence(ctx, candidate, result)
+        return result.status, result.summary
+
     return tuple(
         FunctionValidator(name, fn)
         for name, fn in {
@@ -285,7 +310,41 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
             "result_field_equals": result_field_equals,
             "result_contains": result_contains,
             "evidence_reference": evidence_reference,
+            "local_judge": local_judge,
         }.items()
+    )
+
+
+def _artifact_for_judge(context: ValidationContext, raw: str) -> Artifact | None:
+    try:
+        return context.repository.get_artifact(UUID(raw))
+    except ValueError:
+        return None
+
+
+def _record_judge_evidence(
+    context: ValidationContext, candidate: TaskResult, result: JudgeResult
+) -> None:
+    """Judge 完成后由服务端写入审计证据，Agent 无法伪造该记录。"""
+
+    call_id = next(iter(candidate.tool_call_ids), None)
+    if call_id is None:
+        return
+    context.repository.save_evidence(
+        EvidenceRecord(
+            run_id=context.run.id,
+            candidate=candidate.summary[:10_000],
+            source_call_id=call_id,
+            location="/task_result",
+            verified=result.status == "passed",
+            verification_summary=result.summary,
+            rule_kind="local_judge",
+            verification_scope="deterministic_rule",
+            deterministic_validation_status=(
+                "passed" if result.status == "passed" else "failed" if result.status == "failed" else "not_run"
+            ),
+            discovery_source=result.validator_name,
+        )
     )
 
 
@@ -318,6 +377,8 @@ class EvaluationScorer:
         )
         return CriterionResult(
             criterion_id=criterion.criterion_id,
+            validator_type=criterion.validator_type,
+            validator_version=validator.version if validator else "0",
             status=status,
             score=criterion.weight if status == "passed" else 0,
             max_score=criterion.weight,
