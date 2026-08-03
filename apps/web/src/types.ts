@@ -191,6 +191,8 @@ export interface ReportData extends Record<string, unknown> {
     current_goal?: string;
     completed_steps?: number[];
     validated_results?: string[];
+    partial_results?: string[];
+    unverified_results?: string[];
     key_evidence?: string[];
     failed_paths?: number[];
     current_blockers?: string[];
@@ -199,6 +201,7 @@ export interface ReportData extends Record<string, unknown> {
     recommended_action?: string;
   };
   task_result?: TaskResult;
+  task_results?: TaskResult[];
 }
 export interface TaskResult {
   id: string;
