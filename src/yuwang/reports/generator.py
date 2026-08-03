@@ -141,8 +141,8 @@ class ReportGenerator:
             "pending": 0.0,
             "failed": 0.0,
         }.get(facts.validation_status, 0.0)
-        # New runs must persist their result before this report is finalized.  The fallback keeps
-        # historical rows readable without modifying their immutable JSON payloads.
+        # 新 Run 必须已由 TaskResultService 在报告前落库。空结果仅生成历史数据的
+        # 只读兼容视图，绝不写回 Run 或作为新运行的结果来源。
         task_result = run.results[0] if run.results else TaskResult(
             result_type=result_type,
             title="CTF Flag 结果" if result_type == "flag" else "通用安全任务结果",
@@ -213,6 +213,8 @@ class ReportGenerator:
             "retrospective": retrospective,
             "handoff_summary": facts.handoff,
             "task_result": task_result.model_dump(mode="json"),
+            "task_results": [item.model_dump(mode="json") for item in run.results]
+            or [task_result.model_dump(mode="json")],
         }
         safe = redact_data(data)
         assert isinstance(safe, dict)
@@ -243,6 +245,8 @@ class ReportGenerator:
                 f"- 当前目标：{handoff.get('current_goal', '未记录')}",
                 f"- 已完成步骤：{', '.join(str(item) for item in handoff.get('completed_steps', [])) or '无'}",
                 f"- 已验证结果：{', '.join(str(item) for item in handoff.get('validated_results', [])) or '无'}",
+                f"- 部分验证结果：{', '.join(str(item) for item in handoff.get('partial_results', [])) or '无'}",
+                f"- 未验证候选：{', '.join(str(item) for item in handoff.get('unverified_results', [])) or '无'}",
                 f"- 当前阻塞：{'；'.join(handoff.get('current_blockers', [])) or '无'}",
                 f"- 待审批事项：{'；'.join(handoff.get('pending_approvals', [])) or '无'}",
                 f"- 建议接手动作：{handoff.get('recommended_action', '复核证据')}",

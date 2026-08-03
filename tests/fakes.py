@@ -73,7 +73,41 @@ class FakeModelProvider:
             return output_type.model_validate(
                 {
                     "summary": "基于测试工具生成计划",
-                    "steps": ["执行测试工具", "核对候选证据", "提交验证"],
+                    "steps": [
+                        {
+                            "step_id": "step-1",
+                            "goal": "执行测试工具",
+                            "reason": "收集当前任务的真实观察。",
+                            "expected_result": "获得工具输出。",
+                            "verification_method": "检查工具调用状态。",
+                            "capabilities": ["tool_call"],
+                            "dependencies": [],
+                            "risk": "low",
+                            "status": "planned",
+                        },
+                        {
+                            "step_id": "step-2",
+                            "goal": "核对候选证据",
+                            "reason": "将候选绑定到真实来源。",
+                            "expected_result": "获得可引用证据。",
+                            "verification_method": "检查证据来源。",
+                            "capabilities": [],
+                            "dependencies": ["step-1"],
+                            "risk": "low",
+                            "status": "planned",
+                        },
+                        {
+                            "step_id": "step-3",
+                            "goal": "提交验证",
+                            "reason": "独立检查结果。",
+                            "expected_result": "记录验证状态。",
+                            "verification_method": "执行确定性验证。",
+                            "capabilities": [],
+                            "dependencies": ["step-2"],
+                            "risk": "low",
+                            "status": "planned",
+                        },
+                    ],
                 }
             )
         if output_type is TaskBriefDraft:

@@ -94,7 +94,11 @@ class Handler(BaseHTTPRequestHandler):
         if "slow" in user_input["task"].lower():
             time.sleep(1.2)
         purpose = context.get("purpose", "")
-        if schema_name == "agentplan" or purpose.startswith(("生成动态计划", "重新规划")):
+        if (
+            schema_name in {"agentplan", "agentplandraft"}
+            or "agent_plan_draft" in purpose
+            or purpose.startswith(("生成动态计划", "重新规划"))
+        ):
             task = user_input["task"].lower()
             guidance = user_input["supplemental_inputs"]
             return {
@@ -107,18 +111,34 @@ class Handler(BaseHTTPRequestHandler):
                         else "Inspect the uploaded artifact metadata and verify its digest."
                     )
                 ),
-                "steps": (
-                    [
-                        "Apply queued guidance without expanding scope",
-                        "Reuse controlled attachment evidence",
-                        "Return sourced digest evidence",
-                    ]
-                    if guidance
-                    else [
-                        "Read controlled attachment metadata",
-                        "Return sourced digest evidence",
-                    ]
-                ),
+                "steps": [
+                    {
+                        "step_id": f"step-{index}",
+                        "goal": goal,
+                        "reason": "推进当前授权任务并保留公开证据。",
+                        "expected_result": "获得可核对的持久化观察。",
+                        "verification_method": "检查步骤、工具调用和证据引用。",
+                        "capabilities": ["tool_call"],
+                        "dependencies": [f"step-{index - 1}"] if index > 1 else [],
+                        "risk": "low",
+                        "status": "planned",
+                    }
+                    for index, goal in enumerate(
+                        (
+                            [
+                                "Apply queued guidance without expanding scope",
+                                "Reuse controlled attachment evidence",
+                                "Return sourced digest evidence",
+                            ]
+                            if guidance
+                            else [
+                                "Read controlled attachment metadata",
+                                "Return sourced digest evidence",
+                            ]
+                        ),
+                        1,
+                    )
+                ],
             }
         if schema_name == "importantfacts":
             return {"facts": ["用户偏好分阶段、可回滚的实施方案"]}

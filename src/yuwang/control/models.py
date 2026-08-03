@@ -92,6 +92,7 @@ class PlanStepDraft(BaseModel):
     capabilities: list[str] = Field(default_factory=list, max_length=20)
     dependencies: list[str] = Field(default_factory=list, max_length=20)
     risk: Literal["low", "medium", "high"] = "low"
+    status: Literal["planned", "running", "succeeded", "failed", "skipped", "replanned"] = "planned"
 
 
 class AgentPlanDraft(BaseModel):
@@ -99,25 +100,40 @@ class AgentPlanDraft(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=500)
-    steps: list[str | PlanStepDraft] = Field(min_length=1, max_length=30)
+    steps: list[PlanStepDraft] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def validate_dependencies(self) -> AgentPlanDraft:
+        identifiers = [item.step_id for item in self.steps]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("计划 step_id 不能重复")
+        known = set(identifiers)
+        if any(dependency not in known for item in self.steps for dependency in item.dependencies):
+            raise ValueError("计划依赖必须引用当前计划中的 step_id")
+        graph = {item.step_id: item.dependencies for item in self.steps}
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(step_id: str) -> None:
+            if step_id in visiting:
+                raise ValueError("计划依赖不能形成循环")
+            if step_id in visited:
+                return
+            visiting.add(step_id)
+            for dependency in graph[step_id]:
+                visit(dependency)
+            visiting.remove(step_id)
+            visited.add(step_id)
+
+        for step_id in identifiers:
+            visit(step_id)
+        return self
 
     def to_agent_plan(self) -> AgentPlan:
         """保持计划展示完整，但不把安全执行决策交给模型的自由文本。"""
 
         success_approach = "使用当前 Run 快照中已启用且经策略允许的工具收集证据，并按任务规则核对结果。"
-        drafts = [
-            value
-            if isinstance(value, PlanStepDraft)
-            else PlanStepDraft(
-                step_id=f"step-{index}",
-                goal=value,
-                reason="按任务目标推进并收集公开证据。",
-                expected_result=f"完成：{value}",
-                verification_method=success_approach,
-            )
-            for index, value in enumerate(self.steps, 1)
-        ]
-        details = [PlanStep(**value.model_dump()) for value in drafts]
+        details = [PlanStep(**value.model_dump()) for value in self.steps]
         return AgentPlan(
             summary=self.summary,
             steps=[value.goal for value in details],

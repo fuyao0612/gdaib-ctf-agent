@@ -204,11 +204,9 @@ class ReportFacts:
         handoff = {
             "current_goal": redact(task.body[:500]),
             "completed_steps": completed_steps,
-            "validated_results": [
-                item.get("candidate") for item in candidates
-                if item.get("deterministic_validation_status") == "passed"
-                or item.get("platform_validation_status") == "passed"
-            ],
+            "validated_results": [item.title for item in run.results if item.validation_status == "validated"],
+            "partial_results": [item.title for item in run.results if item.validation_status == "partial"],
+            "unverified_results": [item.title for item in run.results if item.validation_status == "unverified"],
             "key_evidence": [item["summary"] for item in clues[:8] if item.get("summary")],
             "failed_paths": [
                 step.get("sequence") for step in timeline

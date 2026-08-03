@@ -21,10 +21,10 @@ from yuwang.domain.models import (
     MessageRole,
     Run,
     RunStatus,
-    TaskResult,
 )
 from yuwang.reports.facts import ReportFacts
 from yuwang.reports.trace import RunTraceService
+from yuwang.results import TaskResultService
 from yuwang.settings import SafeTemplateRenderer
 
 if TYPE_CHECKING:
@@ -54,6 +54,16 @@ class AgentFinalizer:
         run = engine.repository.get_run(state.run_id)
         if not run:
             raise RuntimeError("运行记录不存在")
+        # 结果必须先由服务端把候选、当前 Run 证据和验证结论绑定并落库。
+        # ReportGenerator 只读取这里持久化的结果，不能反向制造 TaskResult。
+        TaskResultService(engine.repository).persist(
+            run,
+            state.task,
+            state.structured_output,
+            final_answer=state.final_answer,
+            validation_status=state.validation_status,
+        )
+        run = engine.repository.get_run(state.run_id) or run
         retrospective = await self.generate_retrospective(state, run)
         # 复盘优先于低优先级记忆提取，避免预算不足时丢失终态说明。
         await self.persist_memories(state, run)
@@ -86,12 +96,6 @@ class AgentFinalizer:
                 "trace": RunTraceService(engine.repository).snapshot(run.id),
             },
         )
-        # ReportGenerator first derives a result from persisted execution facts.  Persist that
-        # exact object before rendering the final report so reports, handoff, UI, and evaluation
-        # all point at Run.results instead of independently reconstructing an answer.
-        generated_result = TaskResult.model_validate(data["task_result"])
-        if not run.results:
-            run.results.append(generated_result)
         run.completion_mode = engine.profile.completion_mode
         run.validation_status = state.validation_status
         run.evidence_level = state.evidence_level

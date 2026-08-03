@@ -12,6 +12,7 @@ from yuwang.control import (
     AgentPlanDraft,
     PlanRevision,
     PlanSource,
+    PlanStepDraft,
     TaskBrief,
     TaskBriefSource,
 )
@@ -22,13 +23,48 @@ from yuwang.storage import SQLiteRepository
 def test_plan_draft_materializes_complete_plan() -> None:
     plan = AgentPlanDraft(
         summary="检查已授权目标的公开线索",
-        steps=["读取首页", "核对工具证据"],
+        steps=[
+            PlanStepDraft(
+                step_id="step-1",
+                goal="读取首页",
+                reason="先收集公开线索。",
+                expected_result="获得首页中的公开线索。",
+                verification_method="检查工具观察记录。",
+            ),
+            PlanStepDraft(
+                step_id="step-2",
+                goal="核对工具证据",
+                reason="确认候选来源。",
+                expected_result="得到可引用的证据记录。",
+                verification_method="核对步骤和工具调用。",
+                dependencies=["step-1"],
+            ),
+        ],
     ).to_agent_plan()
 
     assert plan.summary == "检查已授权目标的公开线索"
-    assert plan.expected_results == ["完成：读取首页", "完成：核对工具证据"]
+    assert plan.expected_results == ["获得首页中的公开线索。", "得到可引用的证据记录。"]
     assert len(plan.verification_methods) == len(plan.steps)
     assert plan.risks == ["工具、目标范围和参数仍须通过 Run 快照与 PolicyEngine 校验。"]
+
+
+def test_new_plan_draft_rejects_legacy_strings_and_invalid_dependencies() -> None:
+    with pytest.raises(ValueError):
+        AgentPlanDraft(summary="旧计划", steps=["完成：某步骤"])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="依赖"):
+        AgentPlanDraft(
+            summary="错误依赖",
+            steps=[
+                PlanStepDraft(
+                    step_id="step-1",
+                    goal="检查",
+                    reason="收集事实。",
+                    expected_result="观察记录。",
+                    verification_method="检查记录。",
+                    dependencies=["step-2"],
+                )
+            ],
+        )
 
 
 def test_action_draft_binds_candidate_to_actual_tool_observation() -> None:
