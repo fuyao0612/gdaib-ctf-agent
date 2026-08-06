@@ -48,7 +48,10 @@ class SandboxRuntime:
         except httpx.HTTPError as exc:
             raise SandboxUnavailable("Docker 工具沙箱不可用，未在宿主机执行") from exc
         if response.status_code != 200:
-            raise SandboxUnavailable("Docker 工具沙箱拒绝执行请求")
+            # A non-200 response still means the request was never executed locally.
+            # Keep the same contract as transport failures so callers cannot mistake
+            # a sandbox rejection for a permitted host fallback.
+            raise SandboxUnavailable("Docker 工具沙箱不可用，未在宿主机执行")
         body = response.json()
         if not isinstance(body, dict):
             raise SandboxUnavailable("Docker 工具沙箱返回格式无效")
