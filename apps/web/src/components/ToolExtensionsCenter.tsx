@@ -16,6 +16,8 @@ interface Props {
   onChanged: () => Promise<void>;
   onNotice: (value: string) => void;
   onError: (value: string) => void;
+  initialMcpTemplate?: McpServerInput | null;
+  onTemplateConsumed?: () => void;
 }
 
 const sourceLabels = {
@@ -73,6 +75,8 @@ export default function ToolExtensionsCenter({
   onChanged,
   onNotice,
   onError,
+  initialMcpTemplate,
+  onTemplateConsumed,
 }: Props) {
   const [tools, setTools] = useState<ToolSpec[]>([]);
   const [servers, setServers] = useState<McpServerView[]>([]);
@@ -84,6 +88,7 @@ export default function ToolExtensionsCenter({
   const [formOpen, setFormOpen] = useState(false);
   const [pendingEnable, setPendingEnable] = useState<McpServerView | null>(null);
   const [deletionImpact, setDeletionImpact] = useState<McpDeletionImpact | null>(null);
+  const [activeSection, setActiveSection] = useState<"tools" | "mcp">("tools");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,6 +112,21 @@ export default function ToolExtensionsCenter({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!initialMcpTemplate) return;
+    setEditingId(null);
+    setForm({
+      ...initialMcpTemplate,
+      command:
+        initialMcpTemplate.transport === "stdio"
+          ? initialMcpTemplate.command ?? allowedCommands[0] ?? null
+          : null,
+    });
+    setActiveSection("mcp");
+    setFormOpen(true);
+    onTemplateConsumed?.();
+  }, [allowedCommands, initialMcpTemplate, onTemplateConsumed]);
 
   const serverById = useMemo(
     () => new Map(servers.map((item) => [item.id, item])),
@@ -208,6 +228,11 @@ export default function ToolExtensionsCenter({
 
   return (
     <section className="tool-extensions" data-testid="tool-extensions-center">
+      <div className="extensions-tabs" role="tablist" aria-label="工具与 MCP 分类">
+        <button role="tab" aria-selected={activeSection === "tools"} className={activeSection === "tools" ? "active" : ""} onClick={() => setActiveSection("tools")}>已发现工具</button>
+        <button role="tab" aria-selected={activeSection === "mcp"} className={activeSection === "mcp" ? "active" : ""} onClick={() => setActiveSection("mcp")}>MCP 服务</button>
+      </div>
+      {activeSection === "tools" && <>
       <div className="settings-title">
         <div>
           <h3>工具与扩展</h3>
@@ -267,7 +292,9 @@ export default function ToolExtensionsCenter({
           )}
         </div>
       )}
+      </>}
 
+      {activeSection === "mcp" && <>
       <div className="settings-title tool-server-title">
         <div>
           <h4>MCP 服务</h4>
@@ -289,7 +316,7 @@ export default function ToolExtensionsCenter({
                 {server.enabled ? "停用" : "启用"}
               </button>
               {mode === "advanced" && <>
-                <button type="button" onClick={() => { setEditingId(server.id); setForm(serverInput(server)); }}>编辑</button>
+                <button type="button" onClick={() => { setEditingId(server.id); setForm(serverInput(server)); setFormOpen(true); }}>编辑</button>
                 <button type="button" className="danger" onClick={() => void requestDelete(server)}>删除</button>
               </>}
             </div>
@@ -374,6 +401,7 @@ export default function ToolExtensionsCenter({
           <button type="button" onClick={() => setDeletionImpact(null)}>取消</button>
         </div>
       )}
+      </>}
     </section>
   );
 }

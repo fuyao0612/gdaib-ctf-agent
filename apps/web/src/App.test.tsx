@@ -88,8 +88,8 @@ describe("App", () => {
 
   it("新建对话只要求名称，不展示模式选择", async () => {
     render(<App />);
-    await screen.findByText("开始一个新任务");
-    fireEvent.click(screen.getByText("创建第一个任务"));
+    await screen.findByText("从一个明确的安全场景开始");
+    fireEvent.click(screen.getByText("创建通用任务"));
     expect(screen.getByLabelText("任务名称")).toBeInTheDocument();
     expect(screen.queryByLabelText("默认回复方式")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
@@ -114,7 +114,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    await screen.findByText("开始一个新任务");
+    await screen.findByText("从一个明确的安全场景开始");
     await waitFor(() =>
       expect(requests.some((request) => request.url.endsWith("/tools"))).toBe(true),
     );
@@ -131,7 +131,7 @@ describe("App", () => {
 
   it("支持使用 Esc 关闭设置弹层", async () => {
     render(<App />);
-    await screen.findByText("开始一个新任务");
+    await screen.findByText("从一个明确的安全场景开始");
     fireEvent.click(screen.getByRole("button", { name: /设置中心/ }));
     expect(screen.getByRole("dialog", { name: "设置中心" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });

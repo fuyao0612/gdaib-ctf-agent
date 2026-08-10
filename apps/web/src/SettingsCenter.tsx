@@ -1,6 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import AgentProfileCenter from "./components/AgentProfileCenter";
+import CapabilityMarketplace, { type McpMarketplaceTemplate } from "./components/CapabilityMarketplace";
 import ProviderSettings from "./components/ProviderSettings";
 import SkillSettings from "./components/SkillSettings";
 import SetupProgress from "./components/SetupProgress";
@@ -11,13 +12,15 @@ import type { AgentDefaults, ProviderConfig, SkillDefinition, SetupStatus } from
 import "./settings.css";
 
 interface Props { onClose: () => void; onChanged: () => Promise<void>; initialSetup?: boolean; }
-type Category = "quick" | "providers" | "agents" | "extensions" | "runtime";
+type Category = "quick" | "providers" | "marketplace" | "extensions" | "agents" | "runtime";
+type InstalledTab = "knowledge" | "tools" | "skills";
 
 const categories: { id: Category; label: string; hint: string }[] = [
-  { id: "quick", label: "快速配置", hint: "首次连接与默认值" },
-  { id: "providers", label: "模型连接", hint: "Provider 与健康状态" },
-  { id: "agents", label: "Agent 配置", hint: "配置档案与继承关系" },
-  { id: "extensions", label: "扩展能力", hint: "工具、MCP、Skills" },
+  { id: "quick", label: "开始使用", hint: "三步完成首次任务" },
+  { id: "providers", label: "模型与中转", hint: "连接、发现与切换模型" },
+  { id: "marketplace", label: "能力广场", hint: "安装 Skills、接入 MCP" },
+  { id: "extensions", label: "已安装能力", hint: "知识库、工具、MCP、Skills" },
+  { id: "agents", label: "Agent 策略", hint: "配置档案与继承关系" },
   { id: "runtime", label: "运行与安全", hint: "系统默认预算与边界" },
 ];
 
@@ -31,6 +34,8 @@ export default function SettingsCenter({ onClose, onChanged, initialSetup = fals
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [installedTab, setInstalledTab] = useState<InstalledTab>("knowledge");
+  const [mcpTemplate, setMcpTemplate] = useState<McpMarketplaceTemplate | null>(null);
   const session = useAdminSession();
 
   const load = useCallback(async (csrf: string) => {
@@ -70,7 +75,7 @@ export default function SettingsCenter({ onClose, onChanged, initialSetup = fals
             {categories.map((item) => (
               <button key={item.id} type="button" className={item.id === category ? "active" : ""}
                 aria-current={item.id === category ? "page" : undefined}
-                onClick={() => { setCategory(item.id); setShowAdvanced(false); }}>
+                onClick={() => { setCategory(item.id); setShowAdvanced(false); setNotice(""); setError(""); }}>
                 <strong>{item.label}</strong><small>{item.hint}</small>
               </button>
             ))}
@@ -78,21 +83,33 @@ export default function SettingsCenter({ onClose, onChanged, initialSetup = fals
           <div className="settings-scroll">
             <div className="settings-content">
               <div className="settings-breadcrumb"><div><span className="eyebrow">当前分类</span><h3>{current.label}</h3><p>{current.hint}</p></div>
-                {category !== "quick" && category !== "runtime" && <button type="button" className={showAdvanced ? "active" : ""} aria-pressed={showAdvanced} onClick={() => setShowAdvanced((value) => !value)}>高级选项</button>}</div>
-              <SetupProgress authenticated={session.authenticated} status={setupStatus} />
+                {(["providers", "agents", "extensions"] as Category[]).includes(category) && <button type="button" className={showAdvanced ? "active" : ""} aria-pressed={showAdvanced} onClick={() => setShowAdvanced((value) => !value)}>高级选项</button>}</div>
+              {(category === "quick" || category === "providers") && <SetupProgress authenticated={session.authenticated} status={setupStatus} />}
               {initialSetup && category === "quick" && <p className="setup-hint">先完成 Provider 连接测试，再选择默认 Agent，即可开始第一个任务。</p>}
               {!session.authenticated ? <div className="admin-login" role={session.error ? "alert" : "status"}>{session.error ? `无法建立本地安全会话：${session.error}` : "正在建立本地安全会话..."}</div> : (
                 <>
-                  {category === "quick" && <section className="quick-config">
+                  {category === "quick" && <section className="quick-config onboarding-guide">
+                    <div className="onboarding-intro"><div><span className="eyebrow">FIRST RUN</span><h3>第一次使用只需要三步</h3><p>先连接中转模型，再安装需要的能力，最后关闭设置并创建安全任务。</p></div><span className={setupStatus?.configured ? "onboarding-ready" : "onboarding-pending"}>{setupStatus?.configured ? "已可开始" : "待完成"}</span></div>
                     <div className="quick-grid">
-                      <article><span className="quick-label">默认 Provider</span><strong>{providers.find((item) => item.is_default)?.name ?? "尚未设置"}</strong><small>{providers.length ? `${providers.length} 个可用连接` : "连接模型后显示"}</small><button type="button" onClick={() => setCategory("providers")}>管理模型连接</button></article>
-                      <article><span className="quick-label">默认 Agent</span><strong>{setupStatus?.checks.agent ? "已就绪" : "待完成"}</strong><small>系统默认 → Agent 配置 → 单次任务</small><button type="button" onClick={() => setCategory("agents")}>管理 Agent 配置</button></article>
-                      <article><span className="quick-label">连接健康</span><strong>{providers.filter((item) => item.connection_status === "ok").length}/{providers.length || 0}</strong><small>仅显示真实服务端状态</small><button type="button" onClick={() => setCategory("providers")}>测试连接</button></article>
+                      <article><span className="quick-step">步骤 1</span><strong>连接模型与中转</strong><small>{providers.filter((item) => item.connection_status === "ok").length ? `${providers.filter((item) => item.connection_status === "ok").length} 个连接已通过测试` : "填写地址和密钥，然后发现可用模型"}</small><button type="button" className="primary" onClick={() => setCategory("providers")}>{providers.length ? "管理模型" : "连接第一个模型"}</button></article>
+                      <article><span className="quick-step">步骤 2</span><strong>安装任务能力</strong><small>{skills.length ? `已安装 ${skills.length} 个 Skill` : "从 CTF、应急、漏洞、逆向模板中选择"}</small><button type="button" onClick={() => setCategory("marketplace")}>打开能力广场</button></article>
+                      <article><span className="quick-step">步骤 3</span><strong>创建安全任务</strong><small>选择场景、模型和授权目标，Agent 才会开始执行。</small><button type="button" disabled={!setupStatus?.configured} onClick={onClose}>关闭设置并开始</button></article>
                     </div>
+                    <div className="onboarding-help"><strong>不知道输入什么？</strong><span>CTF：上传题目附件并要求“先检查文件类型，再给出证据化解题计划”。</span><span>应急：上传日志并要求“统一时区、建立时间线、提取 IOC”。</span></div>
                   </section>}
                   {category === "providers" && <ProviderSettings csrf={session.csrf} providers={providers} onRefresh={() => load(session.csrf)} onChanged={onChanged} onNotice={setNotice} onError={setError} mode={showAdvanced ? "advanced" : "beginner"} />}
+                  {category === "marketplace" && <CapabilityMarketplace csrf={session.csrf} skills={skills} onSkillsChanged={async () => { await load(session.csrf); await onChanged(); }} onConfigureMcp={(template) => { setMcpTemplate(template); setInstalledTab("tools"); setCategory("extensions"); setShowAdvanced(true); }} onNotice={setNotice} onError={setError} />}
                   {category === "agents" && <AgentProfileCenter csrf={session.csrf} providers={providers} onChanged={syncPublicState} mode="advanced" />}
-                  {category === "extensions" && <><KnowledgeBaseSettings csrf={session.csrf} onNotice={setNotice} onError={setError} /><ToolExtensionsCenter csrf={session.csrf} mode={showAdvanced ? "advanced" : "beginner"} onChanged={syncPublicState} onNotice={setNotice} onError={setError} /><SkillSettings csrf={session.csrf} skills={skills} onRefresh={async () => { await load(session.csrf); await onChanged(); }} onNotice={setNotice} onError={setError} /></>}
+                  {category === "extensions" && <section className="installed-capabilities">
+                    <div className="installed-tabs" role="tablist" aria-label="已安装能力类型">
+                      <button role="tab" aria-selected={installedTab === "knowledge"} className={installedTab === "knowledge" ? "active" : ""} onClick={() => setInstalledTab("knowledge")}>安全知识库</button>
+                      <button role="tab" aria-selected={installedTab === "tools"} className={installedTab === "tools" ? "active" : ""} onClick={() => setInstalledTab("tools")}>工具与 MCP</button>
+                      <button role="tab" aria-selected={installedTab === "skills"} className={installedTab === "skills" ? "active" : ""} onClick={() => setInstalledTab("skills")}>Skills</button>
+                    </div>
+                    {installedTab === "knowledge" && <KnowledgeBaseSettings csrf={session.csrf} onNotice={setNotice} onError={setError} />}
+                    {installedTab === "tools" && <ToolExtensionsCenter csrf={session.csrf} mode={showAdvanced ? "advanced" : "beginner"} onChanged={syncPublicState} onNotice={setNotice} onError={setError} initialMcpTemplate={mcpTemplate?.input ?? null} onTemplateConsumed={() => setMcpTemplate(null)} />}
+                    {installedTab === "skills" && <SkillSettings csrf={session.csrf} skills={skills} onRefresh={async () => { await load(session.csrf); await onChanged(); }} onNotice={setNotice} onError={setError} />}
+                  </section>}
                   {category === "runtime" && agentDefaults && <section><div className="settings-title"><div><h3>系统默认预算与上下文</h3><p className="muted">这些是系统默认值；Agent 配置可以覆盖它们，单次任务的明确配置优先级最高。</p></div></div><form className="settings-form" onSubmit={saveAgentDefaults}><div className="form-grid">{([['最大步骤','max_steps'],['模型调用','max_model_calls'],['工具调用','max_tool_calls'],['最大 Token','max_tokens'],['最大模型费用','max_model_cost'],['总时长（秒）','max_duration_seconds'],['单步超时（秒）','step_timeout_seconds']] as const).map(([label,key]) => <label key={key}>{label}<input type="number" value={agentDefaults.budget[key]} onChange={(event) => setAgentDefaults({ ...agentDefaults, budget: { ...agentDefaults.budget, [key]: Number(event.target.value) } })} /></label>)}<label>Provider 重试预算<input type="number" value={agentDefaults.provider_retry_budget} onChange={(event) => setAgentDefaults({ ...agentDefaults, provider_retry_budget: Number(event.target.value) })} /></label><label>上下文窗口 Token<input type="number" min={32768} value={agentDefaults.context_token_budget} onChange={(event) => setAgentDefaults({ ...agentDefaults, context_token_budget: Number(event.target.value) })} /></label><label>观察字符预算<input type="number" value={agentDefaults.observation_char_budget} onChange={(event) => setAgentDefaults({ ...agentDefaults, observation_char_budget: Number(event.target.value) })} /></label></div><p className="settings-inheritance">系统默认值 → Agent 配置覆盖 → 单次任务选择</p><button className="primary" disabled={busy}>保存系统默认值</button></form></section>}
                 </>
               )}

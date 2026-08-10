@@ -103,6 +103,7 @@ describe("ToolExtensionsCenter", () => {
 
     await screen.findByText("文件元数据");
     expect(screen.getByText("内置")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "MCP 服务" }));
     fireEvent.click(screen.getByRole("button", { name: "检查并刷新" }));
     await waitFor(() =>
       expect(onNotice).toHaveBeenCalledWith("已检查“本地测试 MCP”，发现 1 个可用工具"),

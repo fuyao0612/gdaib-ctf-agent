@@ -40,6 +40,7 @@ export default function ProviderSettings(props: Props) {
   const [deleteConfirmed, setDeleteConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formOpen, setFormOpen] = useState(Boolean(props.autoOpenEmpty && props.providers.length === 0));
+  const [discoveredModels, setDiscoveredModels] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     void api
@@ -155,11 +156,31 @@ export default function ProviderSettings(props: Props) {
     props.onError("");
     try {
       const result = await api.discoverProviderModels(props.csrf, id);
+      setDiscoveredModels((current) => ({ ...current, [id]: result.models }));
       props.onNotice(
         result.models.length
-          ? `发现模型：${result.models.join("、")}`
+          ? `已发现 ${result.models.length} 个模型，请在连接卡片下方搜索并选择。`
           : "端点未返回模型列表，可继续手动填写模型名称",
       );
+    } catch (cause) {
+      props.onError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function selectDiscoveredModel(provider: ProviderConfig, model: string) {
+    setBusy(true);
+    props.onError("");
+    try {
+      await api.updateProvider(props.csrf, provider.id, {
+        ...providerToInput(provider),
+        api_key: null,
+        model,
+      });
+      await props.onRefresh();
+      await props.onChanged();
+      props.onNotice(`“${provider.name}”已切换到 ${model}。建议立即执行连接测试。`);
     } catch (cause) {
       props.onError(String(cause));
     } finally {
@@ -180,9 +201,10 @@ export default function ProviderSettings(props: Props) {
       <ProviderList
         providers={props.providers}
         busy={busy}
-        mode={props.mode}
+        discoveredModels={discoveredModels}
         onTest={(id) => void testProvider(id)}
         onDiscoverModels={(id) => void discoverModels(id)}
+        onUseModel={(provider, model) => void selectDiscoveredModel(provider, model)}
         onEdit={edit}
         onRemove={(provider) => void requestRemove(provider)}
       />

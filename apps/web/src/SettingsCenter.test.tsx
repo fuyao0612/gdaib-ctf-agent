@@ -142,7 +142,7 @@ describe("SettingsCenter", () => {
   it("自动建立本机会话并创建脱敏 Provider", async () => {
     const changed = vi.fn(async () => undefined);
     render(<SettingsCenter onClose={() => undefined} onChanged={changed} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /模型连接/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /模型与中转/ })[0]);
     await screen.findByText("模型 Provider");
     fireEvent.click(screen.getByRole("button", { name: "新增配置" }));
     const keyInput = screen.getByPlaceholderText("输入 Provider API Key");
@@ -175,7 +175,7 @@ describe("SettingsCenter", () => {
     );
     expect(screen.getByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("输入 Provider API Key")).not.toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: /模型连接/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /模型与中转/ })[0]);
     fireEvent.click(screen.getByRole("button", { name: "新增配置" }));
     const keyInput = await screen.findByPlaceholderText("输入 Provider API Key");
     fireEvent.change(keyInput, { target: { value: "provider-secret" } });
@@ -216,7 +216,7 @@ describe("SettingsCenter", () => {
         onChanged={async () => undefined}
       />,
     );
-    fireEvent.click(screen.getAllByRole("button", { name: /模型连接/ })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /模型与中转/ })[0]);
     await screen.findByText("模型 Provider");
     expect(screen.queryByLabelText("管理员令牌")).not.toBeInTheDocument();
     const sessionRequest = vi.mocked(fetch).mock.calls.find(

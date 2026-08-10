@@ -461,6 +461,12 @@ export default function App() {
     [events],
   );
 
+  function openStarter(title: string, scenario: SecurityScenario) {
+    setNewTitle(title);
+    setNewScenario(scenario);
+    setCreateOpen(true);
+  }
+
   return (
     <div
       className={`shell ${sidebarExpanded ? "sidebar-expanded" : "sidebar-collapsed"}`}
@@ -552,15 +558,20 @@ export default function App() {
           </div>
         </header>
         {!detail ? (
-          <section className="empty">
-            <div className="radar">⌁</div>
-            <h2>开始一个新任务</h2>
-            <p>
-              创建任务后，由 Agent 决定计划、工具和验证步骤。
-            </p>
-            <button className="primary" onClick={() => setCreateOpen(true)}>
-              创建第一个任务
-            </button>
+          <section className="empty empty-onboarding">
+            <span className="eyebrow">SECURITY WORKSPACE</span>
+            <h2>从一个明确的安全场景开始</h2>
+            <p>选择场景后，再上传材料、确认模型和授权目标。Agent 会先给出计划，再调用受控工具。</p>
+            <div className="starter-grid">
+              <button type="button" onClick={() => openStarter("CTF 题目分析", "ctf")}><strong>CTF 题目</strong><small>附件识别、解码、取证与 Flag 验证</small></button>
+              <button type="button" onClick={() => openStarter("应急响应日志分析", "incident_response")}><strong>应急响应</strong><small>日志归一化、时间线与 IOC 提取</small></button>
+              <button type="button" onClick={() => openStarter("Web 漏洞研判", "vulnerability_analysis")}><strong>漏洞分析</strong><small>证据、CWE 映射与修复验证</small></button>
+              <button type="button" onClick={() => openStarter("可疑样本静态分析", "reverse_static")}><strong>静态逆向</strong><small>不执行样本，分析结构、导入和字符串</small></button>
+            </div>
+            <div className="starter-actions">
+              <button className="primary" onClick={() => openStarter("新任务", "general")}>创建通用任务</button>
+              <button onClick={() => setSettingsOpen(true)}>先配置模型与能力</button>
+            </div>
           </section>
         ) : (
           <>
