@@ -28,6 +28,14 @@ import type {
 import "./styles.css";
 import "./thread-management.css";
 
+const taskStarterPrompts: Record<SecurityScenario, string> = {
+  general: "请分析我接下来提供的安全材料，先说明判断依据，再给出可复现的验证步骤和修复建议。",
+  ctf: "请分析这道 CTF 题目。先识别题型和已有线索，再给出逐步解题计划；对 Flag 做格式与证据验证。",
+  incident_response: "请分析这批应急响应材料，整理事件时间线、提取 IOC、判断影响范围，并给出处置与复盘建议。",
+  vulnerability_analysis: "请在已授权范围内分析该漏洞，给出可复现证据、影响判断、CWE 映射，以及可验证的修复方案。",
+  reverse_static: "请仅做静态分析，不执行样本。检查文件结构、导入、字符串和可疑行为，并给出证据与后续隔离建议。",
+};
+
 export default function App() {
   const workspace = useWorkbenchData();
   const {
@@ -65,6 +73,9 @@ export default function App() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("新任务");
   const [newScenario, setNewScenario] = useState<SecurityScenario>("general");
+  const [newPrompt, setNewPrompt] = useState(taskStarterPrompts.general);
+  const [newProviderId, setNewProviderId] = useState("");
+  const [newAuthorizedTarget, setNewAuthorizedTarget] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [evaluationOpen, setEvaluationOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -163,6 +174,17 @@ export default function App() {
     void refreshProviders().catch(() => setProviders([]));
   }, [bootstrapReady, refreshProviders]);
 
+  useEffect(() => {
+    if (providers.length === 0) {
+      setNewProviderId("");
+      return;
+    }
+    if (providers.some((provider) => provider.id === newProviderId)) return;
+    setNewProviderId(
+      providers.find((provider) => provider.is_default)?.id ?? providers[0].id,
+    );
+  }, [newProviderId, providers]);
+
   const refreshSkills = useCallback(async () => {
     const result = await api.listSkills();
     setSkills(Array.isArray(result) ? result.filter((skill) => skill.enabled) : []);
@@ -231,14 +253,65 @@ export default function App() {
     setPendingArtifacts([]);
     setBusy(true);
     setError("");
+    let createdThreadId: string | null = null;
     try {
       const value = await api.createThread(newTitle, [], newScenario);
+      createdThreadId = value.id;
+      if (newProviderId) {
+        await api.updateThread(value.id, { provider_config_id: newProviderId });
+      }
       await loadThreads();
       currentThreadIdRef.current = value.id;
       await selectThread(value.id);
+      const authorizedTargets = newAuthorizedTarget
+        .split(/[\n,]/)
+        .map((target) => target.trim())
+        .filter(Boolean);
+      await api.message(
+        value.id,
+        {
+          request_id: crypto.randomUUID(),
+          content: newPrompt.trim(),
+          artifact_ids: [],
+          provider_config_id: newProviderId || null,
+          authorized_targets: authorizedTargets,
+        },
+        new AbortController().signal,
+        (event) => {
+          if (event.type === "execution_started") {
+            setEvents([]);
+            setReport(null);
+            setControl(null);
+            setActiveRun(event.data.run);
+            setCreateOpen(false);
+            connect(event.data.run);
+          }
+          if (event.type === "execution_stopped") {
+            if (event.data.run) setActiveRun(event.data.run);
+            setCreateOpen(false);
+          }
+          if (
+            event.type === "guidance_queued" ||
+            event.type === "input_received" ||
+            event.type === "clarification_received"
+          ) {
+            setActiveRun(event.data.run);
+            setCreateOpen(false);
+            connect(event.data.run);
+          }
+        },
+      );
+      setDetail(await api.detail(value.id));
       setCreateOpen(false);
+      setNewAuthorizedTarget("");
     } catch (cause) {
-      setError(String(cause));
+      if (createdThreadId) {
+        setCreateOpen(false);
+        await selectThread(createdThreadId).catch(() => undefined);
+        setError(`任务已创建，但启动失败：${String(cause)}`);
+      } else {
+        setError(String(cause));
+      }
     } finally {
       setBusy(false);
     }
@@ -464,6 +537,14 @@ export default function App() {
   function openStarter(title: string, scenario: SecurityScenario) {
     setNewTitle(title);
     setNewScenario(scenario);
+    setNewPrompt(taskStarterPrompts[scenario]);
+    setNewProviderId(
+      providers.find((provider) => provider.is_default)?.id ?? providers[0]?.id ?? "",
+    );
+    setNewAuthorizedTarget("");
+    setInspectorOpen(false);
+    if (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 700px)").matches)
+      setSidebarExpanded(false);
     setCreateOpen(true);
   }
 
@@ -486,7 +567,7 @@ export default function App() {
             ‹
           </button>
         </div>
-        <button className="primary full" onClick={() => setCreateOpen(true)}>
+        <button className="primary full" onClick={() => openStarter("新任务", "general")}>
           ＋ 新建任务
         </button>
         <button
@@ -528,8 +609,10 @@ export default function App() {
             )}
             <div className="topbar-title" data-testid="thread-heading">
               <span className="eyebrow">TASK</span>
-              <h2>{detail?.title ?? "选择或创建一个任务"}</h2>
-              {detail && (
+              <h2>{createOpen ? "新建安全任务" : detail?.title ?? "选择或创建一个任务"}</h2>
+              {createOpen ? (
+                <small>确认场景、目标与运行配置后立即开始</small>
+              ) : detail && (
                 <small>
                   {activeRun?.status === "completed" ? "任务已完成" : activeRun?.status === "failed" ? "任务失败" : activeRun?.status === "stopped" ? "任务已停止" : activeRun?.status === "waiting_input" ? "等待输入" : activeRun ? "执行中" : "提交任务后由 Agent 自主执行"}
                 </small>
@@ -537,12 +620,12 @@ export default function App() {
             </div>
           </div>
           <div className="topbar-actions">
-            {detail && (
+            {!createOpen && detail && (
               <div className="top-meta" data-testid="thread-status">
                 {activeRun && <StatusBadge status={activeRun.status} />}
               </div>
             )}
-            {activeRun && (
+            {!createOpen && activeRun && (
               <button
               className="inspector-toggle"
               aria-expanded={inspectorOpen}
@@ -557,7 +640,28 @@ export default function App() {
             )}
           </div>
         </header>
-        {!detail ? (
+        {createOpen ? (
+          <CreateThreadDialog
+            title={newTitle}
+            prompt={newPrompt}
+            scenario={newScenario}
+            providerConfigId={newProviderId}
+            authorizedTarget={newAuthorizedTarget}
+            providers={providers}
+            busy={busy}
+            onTitleChange={setNewTitle}
+            onPromptChange={setNewPrompt}
+            onScenarioChange={(scenario) => {
+              setNewScenario(scenario);
+              setNewPrompt(taskStarterPrompts[scenario]);
+            }}
+            onProviderChange={setNewProviderId}
+            onAuthorizedTargetChange={setNewAuthorizedTarget}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onCancel={() => setCreateOpen(false)}
+            onSubmit={() => void createThread()}
+          />
+        ) : !detail ? (
           <section className="empty empty-onboarding">
             <span className="eyebrow">SECURITY WORKSPACE</span>
             <h2>从一个明确的安全场景开始</h2>
@@ -637,7 +741,7 @@ export default function App() {
         )}
       </main>
 
-      {activeRun && (
+      {!createOpen && activeRun && (
         <InspectorPanel
         open={inspectorOpen}
         metrics={metrics}
@@ -655,17 +759,6 @@ export default function App() {
         />
       )}
 
-      {createOpen && (
-        <CreateThreadDialog
-          title={newTitle}
-          scenario={newScenario}
-          busy={busy}
-          onTitleChange={setNewTitle}
-          onScenarioChange={setNewScenario}
-          onCancel={() => setCreateOpen(false)}
-          onSubmit={() => void createThread()}
-        />
-      )}
       {settingsOpen && (
         <SettingsCenter
           initialSetup={initialSetup}
