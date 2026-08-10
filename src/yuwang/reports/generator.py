@@ -198,6 +198,18 @@ class ReportGenerator:
             "evidence": [item["summary"] for item in facts.key_clues if item.get("summary")],
             "verification_evidence": metrics.get("evidence_records", []),
             "artifacts": facts.artifacts,
+            "knowledge_sources": [
+                {
+                    "document_id": str(item.document_id),
+                    "chunk_id": str(item.chunk_id),
+                    "title": item.title,
+                    "source_uri": item.source_uri,
+                    "chunk_ordinal": item.chunk_ordinal,
+                    "content_sha256": item.content_sha256,
+                    "score": item.score,
+                }
+                for item in task.knowledge_matches
+            ],
             "reproduction_steps": facts.reproduction_steps,
             "failed_attempts": facts.failed_attempts,
             "policy_summary": facts.policy_summary,
@@ -301,6 +313,14 @@ class ReportGenerator:
             f"下载：{item.get('download_url')}"
             for item in facts.artifacts
         ] or ["- 无关联 Artifact。"])
+        lines.extend(["", "## RAG 知识引用"])
+        knowledge_sources = data.get("knowledge_sources", [])
+        lines.extend([
+            f"- {item.get('title')}；片段 {item.get('chunk_ordinal')}；"
+            f"SHA-256：`{item.get('content_sha256')}`；来源：{item.get('source_uri') or '本地知识库'}"
+            for item in knowledge_sources
+            if isinstance(item, dict)
+        ] or ["- 本次任务未命中知识库片段。"])
         lines.extend([
             "", "## 资源消耗与审计",
             f"- 逻辑模型调用：{data['model_metrics']['logical_model_calls']}，"

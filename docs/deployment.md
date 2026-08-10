@@ -43,6 +43,8 @@ Linux/macOS：
 
 可通过 `.env` 调整 `YUWANG_WEB_PORT`、`YUWANG_DATA_PATH`、CORS、Cookie Secure 标志和 API/Web 的 CPU、内存上限。Compose 的一次性 `data-init` 服务把 SQLite 与 Artifact 放入 Docker 命名卷 `yuwang-data`，随后把目录所有权交给固定 UID 10001；长期运行的 API 仍是非 root 用户。API/Web 使用只读根文件系统、受限 tmpfs、最小 capabilities 且禁止提权。HTTPS 部署必须设置 `YUWANG_COOKIE_SECURE=true`，并把 `YUWANG_CORS_ORIGINS` 改为准确的 HTTPS 来源。
 
+默认 Compose 端口显式绑定 `127.0.0.1`，局域网设备不能直接领取本机管理会话。需要远程访问时，不应修改 Compose 为全网卡暴露；应在前置反向代理配置 HTTPS、OIDC 或等价身份认证、限流和准确的 Trusted Host/Origin。
+
 ## 健康与就绪
 
 - `/api/v1/health`：只表明进程存活并返回版本。

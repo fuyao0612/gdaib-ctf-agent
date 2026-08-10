@@ -9,6 +9,12 @@ export type ToolRisk = "low" | "medium" | "high";
 export type ToolHealthStatus = "healthy" | "degraded" | "unavailable" | "disabled";
 export type ProfileToolSelectionMode = "all" | "selected";
 export type ThreadToolSelectionMode = "inherit" | "selected";
+export type SecurityScenario =
+  | "general"
+  | "ctf"
+  | "incident_response"
+  | "vulnerability_analysis"
+  | "reverse_static";
 export interface ToolSpec {
   id: string;
   namespace: string;
@@ -83,6 +89,7 @@ export interface Thread {
   id: string;
   title: string;
   mode: Mode;
+  scenario: SecurityScenario;
   interaction_mode?: InteractionMode;
   provider_config_id: string | null;
   provider_fallback_notice: string | null;
@@ -539,6 +546,7 @@ export interface RunAudit {
     memory_policy: AgentProfileInput["memory_policy"];
     intervention_policy: AgentProfileInput["intervention_policy"];
   } | null;
+  knowledge?: KnowledgeHit[];
   model_calls?: Array<{
     id: string;
     provider: string;
@@ -571,6 +579,52 @@ export interface RunAudit {
     elapsed_seconds: number;
     created_at: string;
   }>;
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  source_uri: string | null;
+  tags: string[];
+  scenarios: string[];
+  enabled: boolean;
+  allow_provider_context: boolean;
+  origin: "builtin" | "user";
+  sha256: string;
+  size_chars: number;
+  chunk_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeDocumentInput {
+  title: string;
+  content: string;
+  source_uri: string | null;
+  tags: string[];
+  scenarios: string[];
+  enabled: boolean;
+  allow_provider_context: boolean;
+}
+
+export interface KnowledgeDocumentUpdate {
+  title?: string;
+  source_uri?: string | null;
+  tags?: string[];
+  scenarios?: string[];
+  enabled?: boolean;
+  allow_provider_context?: boolean;
+}
+
+export interface KnowledgeHit {
+  document_id: string;
+  chunk_id: string;
+  title: string;
+  source_uri: string | null;
+  chunk_ordinal: number;
+  content: string;
+  content_sha256: string;
+  score: number;
 }
 
 export interface ExecutionStep {

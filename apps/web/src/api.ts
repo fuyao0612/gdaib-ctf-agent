@@ -28,6 +28,11 @@ import type {
   McpServerInput,
   McpServerView,
   ToolSpec,
+  KnowledgeDocument,
+  KnowledgeDocumentInput,
+  KnowledgeDocumentUpdate,
+  KnowledgeHit,
+  SecurityScenario,
 } from "./types";
 
 const API = "/api/v1";
@@ -86,10 +91,14 @@ export const api = {
   },
   listThreads: () => request<Thread[]>("/threads"),
   listAgentProfiles: () => request<AgentProfileSummary[]>("/agent-profiles"),
-  createThread: (title: string, skillIds: string[] = []) =>
+  createThread: (
+    title: string,
+    skillIds: string[] = [],
+    scenario: SecurityScenario = "general",
+  ) =>
     request<Thread>("/threads", {
       method: "POST",
-      body: JSON.stringify({ title, skill_ids: skillIds }),
+      body: JSON.stringify({ title, skill_ids: skillIds, scenario }),
     }),
   detail: (id: string) => request<ThreadDetail>(`/threads/${id}`),
   message: async (
@@ -275,6 +284,42 @@ export const api = {
   adminSkills: (csrf: string) =>
     request<SkillDefinition[]>("/admin/settings/skills", {
       headers: adminHeaders(csrf),
+    }),
+  knowledgeDocuments: (csrf: string) =>
+    request<KnowledgeDocument[]>("/admin/knowledge/documents", {
+      headers: adminHeaders(csrf),
+    }),
+  createKnowledgeDocument: (csrf: string, value: KnowledgeDocumentInput) =>
+    request<KnowledgeDocument>("/admin/knowledge/documents", {
+      method: "POST",
+      headers: adminHeaders(csrf),
+      body: JSON.stringify(value),
+    }),
+  updateKnowledgeDocument: (
+    csrf: string,
+    id: string,
+    value: KnowledgeDocumentUpdate,
+  ) =>
+    request<KnowledgeDocument>(`/admin/knowledge/documents/${id}`, {
+      method: "PUT",
+      headers: adminHeaders(csrf),
+      body: JSON.stringify(value),
+    }),
+  deleteKnowledgeDocument: (csrf: string, id: string) =>
+    request<void>(`/admin/knowledge/documents/${id}`, {
+      method: "DELETE",
+      headers: adminHeaders(csrf),
+    }),
+  searchKnowledge: (
+    csrf: string,
+    query: string,
+    scenario: SecurityScenario,
+    limit = 4,
+  ) =>
+    request<KnowledgeHit[]>("/admin/knowledge/search", {
+      method: "POST",
+      headers: adminHeaders(csrf),
+      body: JSON.stringify({ query, scenario, limit }),
     }),
   mcpServers: (csrf: string) =>
     request<McpServerView[]>("/admin/settings/mcp-servers", {

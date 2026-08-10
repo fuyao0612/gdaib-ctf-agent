@@ -93,7 +93,12 @@ function Test-NativeCommand([scriptblock]$Command) {
     }
 }
 
-$python = Get-Command python -ErrorAction SilentlyContinue
+$venvPython = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
+$python = if (Test-Path -LiteralPath $venvPython) {
+    Get-Command $venvPython
+} else {
+    Get-Command python -ErrorAction SilentlyContinue
+}
 if ($python) {
     $versionResult = Invoke-ReadOnlyPython $python.Source @('--version')
     $text = $versionResult.Output.Trim()

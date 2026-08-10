@@ -23,6 +23,7 @@ import type {
   SkillDefinition,
   Thread,
   ToolSpec,
+  SecurityScenario,
 } from "./types";
 import "./styles.css";
 import "./thread-management.css";
@@ -63,6 +64,7 @@ export default function App() {
   const [tools, setTools] = useState<ToolSpec[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("新任务");
+  const [newScenario, setNewScenario] = useState<SecurityScenario>("general");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [evaluationOpen, setEvaluationOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -230,7 +232,7 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      const value = await api.createThread(newTitle);
+      const value = await api.createThread(newTitle, [], newScenario);
       await loadThreads();
       currentThreadIdRef.current = value.id;
       await selectThread(value.id);
@@ -645,8 +647,10 @@ export default function App() {
       {createOpen && (
         <CreateThreadDialog
           title={newTitle}
+          scenario={newScenario}
           busy={busy}
           onTitleChange={setNewTitle}
+          onScenarioChange={setNewScenario}
           onCancel={() => setCreateOpen(false)}
           onSubmit={() => void createThread()}
         />

@@ -1252,3 +1252,8 @@ textarea:disabled {
     min-height: 56px;
   }
 }
+.knowledge-audit { display: grid; gap: 8px; }
+.knowledge-audit article { padding: 10px; border: 1px solid var(--line, #dce3ec); border-radius: 10px; background: #fff; }
+.knowledge-audit strong, .knowledge-audit small { display: block; }
+.knowledge-audit small { color: var(--muted, #637083); margin-top: 3px; }
+.knowledge-audit p { margin: 8px 0 0; white-space: pre-wrap; max-height: 150px; overflow: auto; }

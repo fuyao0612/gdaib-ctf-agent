@@ -35,6 +35,7 @@ function thread(id: string, title: string) {
     id,
     title,
     mode: "normal",
+    scenario: "general",
     interaction_mode: "chat",
     provider_config_id: null,
     provider_fallback_notice: null,

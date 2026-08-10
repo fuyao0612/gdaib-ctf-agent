@@ -23,6 +23,7 @@ from yuwang.settings.models import ProviderConfig
 from yuwang.settings.profiles import AgentProfileVersion
 from yuwang.storage.sqlite_control import SQLiteControlStore
 from yuwang.storage.sqlite_evaluation import SQLiteEvaluationStore
+from yuwang.storage.sqlite_knowledge import SQLiteKnowledgeStore
 from yuwang.storage.sqlite_mcp import SQLiteMcpStore
 from yuwang.storage.sqlite_settings import SQLiteSettingsStore
 from yuwang.storage.sqlite_workspace import SQLiteWorkspaceStore
@@ -34,6 +35,7 @@ class SQLiteRepository(
     SQLiteMcpStore,
     SQLiteControlStore,
     SQLiteEvaluationStore,
+    SQLiteKnowledgeStore,
 ):
     """显式 SQLite 数据访问层。
 
@@ -81,6 +83,9 @@ class SQLiteRepository(
                 CREATE TABLE IF NOT EXISTS mcp_servers(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS evaluation_results(id TEXT PRIMARY KEY, case_id TEXT NOT NULL, category TEXT NOT NULL, difficulty TEXT NOT NULL, provider TEXT, model TEXT, status TEXT NOT NULL, run_id TEXT, finished_at TEXT NOT NULL, data TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS idx_evaluation_results_filters ON evaluation_results(case_id, category, difficulty, provider, model, status, finished_at DESC);
+                CREATE TABLE IF NOT EXISTS knowledge_documents(id TEXT PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS knowledge_chunks(id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE, ordinal INTEGER NOT NULL, data TEXT NOT NULL, UNIQUE(document_id,ordinal));
+                CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document ON knowledge_chunks(document_id,ordinal);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (8);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (7);
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
@@ -95,6 +100,8 @@ class SQLiteRepository(
                 -- v13 仅扩展 JSON 领域契约：旧行由 Pydantic 默认值兼容读取，
                 -- 不改写历史 Run、Artifact、报告或 CTF 记录。
                 INSERT OR IGNORE INTO schema_migrations(version) VALUES (13);
+                -- v14 新增本地 RAG 文档与片段；历史 Run 不改写。
+                INSERT OR IGNORE INTO schema_migrations(version) VALUES (14);
                 """
             )
             rows = db.execute("SELECT id,data FROM threads").fetchall()
@@ -102,6 +109,8 @@ class SQLiteRepository(
                 data = json.loads(row["data"])
                 if "interaction_mode" not in data:
                     data["interaction_mode"] = "agent"
+                if "scenario" not in data:
+                    data["scenario"] = "general"
                 # 旧 Thread 没有对话级 Provider 选择时保持可读；首次读取会按当时的
                 # 全局默认安全补齐，避免升级把历史会话错误绑定到任意 Provider。
                 if "provider_config_id" not in data:

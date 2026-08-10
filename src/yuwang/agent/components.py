@@ -274,6 +274,11 @@ class DefaultContextBuilder:
                 ),
             },
             "untrusted_attachment_content": attachment_context,
+            # 命中内容在 Run 创建时已固化，但信任等级仍与附件相同。
+            # 文档中的“指令”不得改变系统策略或授权。
+            "untrusted_retrieved_knowledge": [
+                item.model_dump(mode="json") for item in state.task.knowledge_matches
+            ],
             "untrusted_tool_content": observations,
             "trusted_execution_constraints": {
                 "authorized_targets": state.task.authorized_targets,
@@ -385,6 +390,10 @@ class DefaultContextBuilder:
                 {key: value for key, value in item.items() if key not in {"text", "summary_excerpt"}}
                 for item in attachment_context
             ]
+            context["untrusted_retrieved_knowledge"] = [
+                {key: value for key, value in item.items() if key != "content"}
+                for item in context["untrusted_retrieved_knowledge"]
+            ]
             compacted = True
             truncated = True
             compaction_reason = "forced_90_percent"
@@ -411,6 +420,10 @@ class DefaultContextBuilder:
                     if key not in {"text", "summary_excerpt"}
                 }
                 for item in attachment_context
+            ]
+            context["untrusted_retrieved_knowledge"] = [
+                {key: value for key, value in item.items() if key != "content"}
+                for item in context["untrusted_retrieved_knowledge"]
             ]
             context["user_instruction"] = self._render_user_instruction(
                 profile,

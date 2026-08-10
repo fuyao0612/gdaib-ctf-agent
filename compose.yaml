@@ -96,7 +96,8 @@ services:
     build:
       context: apps/web
     ports:
-      - "${YUWANG_WEB_PORT:-8080}:8080"
+      # 本机无登录工作台只能发布到回环地址；远程部署必须使用独立认证层。
+      - "127.0.0.1:${YUWANG_WEB_PORT:-8080}:8080"
     depends_on:
       api:
         condition: service_healthy

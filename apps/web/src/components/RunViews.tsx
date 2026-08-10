@@ -348,6 +348,18 @@ export function InspectorPanel(props: InspectorProps) {
           </dl>
         </section>
       )}
+      {props.audit?.knowledge && props.audit.knowledge.length > 0 && (
+        <section className="knowledge-audit" data-testid="knowledge-audit">
+          <div className="section-label">RAG 知识引用</div>
+          {props.audit.knowledge.map((hit) => (
+            <article key={hit.chunk_id}>
+              <strong>{hit.title} · 片段 {hit.chunk_ordinal}</strong>
+              <small>相关度 {hit.score.toFixed(2)} · SHA-256 {hit.content_sha256.slice(0, 12)}…</small>
+              <p>{hit.content}</p>
+            </article>
+          ))}
+        </section>
+      )}
       <div className="section-label">完整公开事件</div>
       <div className="tool-list">
         {progressEvents.map((event) => (

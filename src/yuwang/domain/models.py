@@ -33,6 +33,13 @@ class InteractionMode(StrEnum):
 
 ToolSelectionMode = Literal["all", "selected"]
 ThreadToolSelectionMode = Literal["inherit", "selected"]
+SecurityScenario = Literal[
+    "general",
+    "ctf",
+    "incident_response",
+    "vulnerability_analysis",
+    "reverse_static",
+]
 
 
 class RunStatus(StrEnum):
@@ -132,6 +139,7 @@ class Thread(DomainModel):
     id: UUID = Field(default_factory=uuid4)
     title: str = Field(min_length=1, max_length=160)
     mode: ThreadMode = ThreadMode.NORMAL
+    scenario: SecurityScenario = "general"
     # Deprecated：仅用于读取历史 SQLite JSON，UI 与新建流程均不再使用。
     interaction_mode: InteractionMode = InteractionMode.AGENT
     # 对话级模型选择独立于全局默认值。Run 启动时再把实际 Provider 固化为快照，
@@ -370,6 +378,19 @@ class ToolSnapshot(BaseModel):
     supports_progress: bool = False
 
 
+class KnowledgeMatchSnapshot(DomainModel):
+    """模型可见的 RAG 片段快照；它始终属于不可信参考资料。"""
+
+    document_id: UUID
+    chunk_id: UUID
+    title: str = Field(min_length=1, max_length=200)
+    source_uri: str | None = Field(default=None, max_length=2_048)
+    chunk_ordinal: int = Field(ge=1)
+    content: str = Field(min_length=1, max_length=2_400)
+    content_sha256: str = Field(min_length=64, max_length=64)
+    score: float = Field(ge=0)
+
+
 class TaskSpec(DomainModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True, frozen=True)
     body: str = Field(min_length=1, max_length=100_000)
@@ -379,6 +400,8 @@ class TaskSpec(DomainModel):
     scenario: str = "general"
     mode: ThreadMode = ThreadMode.NORMAL
     artifact_ids: list[UUID] = Field(default_factory=list)
+    # RAG 命中在 Run 开始时固化；知识文档后续更新不会改写历史上下文。
+    knowledge_matches: list[KnowledgeMatchSnapshot] = Field(default_factory=list, max_length=8)
     authorized_targets: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
     budget: Budget = Field(default_factory=Budget)
