@@ -1,68 +1,208 @@
+.thread-section {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  margin-top: 8px;
+}
+
+.thread-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 0 3px 0 8px;
+  color: #898b88;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.thread-section-header > div {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.thread-section-header .icon-button {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+}
+
+.thread-section-header .icon-button[aria-pressed="true"] {
+  color: #355d9f;
+  background: #e1e8f3;
+}
+
+.thread-search-wrap {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  margin: 2px 3px 6px;
+  padding: 0 2px 0 9px;
+  color: #898d92;
+  border: 1px solid #d8d9d6;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 76%);
+}
+
 .thread-search {
   width: 100%;
-  padding: 8px 9px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 2px;
   color: var(--text);
-  border: 1px solid #dce0e5;
-  border-radius: 9px;
-  background: rgb(255 255 255 / 72%);
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.thread-search-wrap:focus-within {
+  border-color: #92add8;
+  box-shadow: 0 0 0 2px #dbe6f7;
 }
 
 .thread-search::placeholder {
-  color: #999fa7;
+  color: #999d9a;
 }
 
-.archive-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 1px 4px 4px;
-  color: var(--muted);
-  font-size: 10px;
+.thread-search-wrap .icon-button {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
 }
 
 .thread-row {
   width: 100%;
   min-width: 0;
-  min-height: 54px;
+  min-height: 50px;
+  position: relative;
   flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  overflow: hidden;
   border-radius: 9px;
+}
+
+.thread-row:hover,
+.thread-row:focus-within {
+  background: #eaeae7;
+}
+
+.thread-row.selected {
+  background: #dfdfdc;
 }
 
 .thread-row .thread-item {
   min-width: 0;
-  min-height: 54px;
-  padding-block: 7px;
-}
-
-.thread-actions {
-  display: none;
+  min-height: 50px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 1px;
-  padding-right: 4px;
+  gap: 9px;
+  padding: 6px 5px 6px 9px;
 }
 
-.thread-row.selected .thread-actions,
-.thread-row:hover .thread-actions,
-.thread-row:focus-within .thread-actions {
+.thread-row .thread-item > svg {
+  color: #777b78;
+}
+
+.thread-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.thread-copy > span,
+.thread-copy small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-copy > span {
+  color: #444643;
+  font-size: 13px;
+}
+
+.thread-copy small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.thread-more {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  margin-right: 3px;
+  visibility: hidden;
+}
+
+.thread-row.selected .thread-more,
+.thread-row:hover .thread-more,
+.thread-row:focus-within .thread-more,
+.thread-more[aria-expanded="true"] {
+  visibility: visible;
+}
+
+.thread-menu {
+  position: fixed;
+  z-index: 30;
+  width: 154px;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid #dedfdd;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 34px rgb(35 40 48 / 18%);
+}
+
+.thread-menu button {
+  width: 100%;
+  min-height: 34px;
   display: flex;
-}
-
-.thread-actions button {
-  width: 25px;
-  min-height: 28px;
-  padding: 0;
-  color: #767d86;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
   border: 0;
   background: transparent;
+  text-align: left;
+}
+
+.thread-menu button:hover {
+  background: #f1f1ef;
+}
+
+.thread-menu button.danger {
+  color: var(--danger);
 }
 
 .thread-empty {
-  margin: 10px 5px;
+  margin: 12px 9px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
+}
+
+@media (max-width: 700px) {
+  .thread-section-header .icon-button,
+  .thread-more {
+    width: 40px;
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .thread-row {
+    min-height: 56px;
+  }
+
+  .thread-row .thread-item {
+    min-height: 56px;
+  }
+
 }

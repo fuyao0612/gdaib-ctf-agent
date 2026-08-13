@@ -110,6 +110,37 @@ describe("App", () => {
     expect(container.querySelector(".shell")).toHaveClass("sidebar-collapsed");
     expect(window.localStorage.getItem("yuwang.sidebarExpanded")).toBe("true");
     expect(setItem).not.toHaveBeenCalledWith("yuwang.sidebarExpanded", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开侧栏" }));
+    expect(screen.getByRole("button", { name: "关闭导航" })).toBeInTheDocument();
+    expect(container.querySelector("main")).toHaveAttribute("inert");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("button", { name: "关闭导航" })).not.toBeInTheDocument();
+    expect(container.querySelector("main")).not.toHaveAttribute("inert");
+    expect(window.localStorage.getItem("yuwang.sidebarExpanded")).toBe("true");
+  });
+
+  it("桌面侧栏可用图标按钮收起和恢复，并持久化用户偏好", async () => {
+    const { container } = render(<App />);
+    await screen.findByText("从一个明确的安全场景开始");
+
+    const collapse = screen.getByRole("button", { name: "收起侧栏" });
+    expect(collapse).toHaveAttribute("aria-controls", "app-sidebar");
+    expect(collapse).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(collapse);
+
+    expect(container.querySelector(".shell")).toHaveClass("sidebar-collapsed");
+    const expand = screen.getByRole("button", { name: "展开侧栏" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() =>
+      expect(window.localStorage.getItem("yuwang.sidebarExpanded")).toBe("false"),
+    );
+
+    fireEvent.click(expand);
+    expect(container.querySelector(".shell")).toHaveClass("sidebar-expanded");
+    await waitFor(() =>
+      expect(window.localStorage.getItem("yuwang.sidebarExpanded")).toBe("true"),
+    );
   });
 
   it("新建任务在连续启动页中确认场景、说明和模型", async () => {
@@ -241,6 +272,23 @@ describe("App", () => {
     expect(screen.getByRole("dialog", { name: "设置中心" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "设置中心" })).not.toBeInTheDocument();
+  });
+
+  it("从新建任务打开设置后，Esc 只关闭设置并保留任务草稿", async () => {
+    render(<App />);
+    await screen.findByText("从一个明确的安全场景开始");
+    fireEvent.click(screen.getByText("创建通用任务"));
+    fireEvent.change(screen.getByLabelText("任务说明"), {
+      target: { value: "保留这段尚未提交的安全分析要求" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "管理模型连接" }));
+    expect(await screen.findByRole("dialog", { name: "设置中心" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "设置中心" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /把目标说清楚/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("任务说明")).toHaveValue("保留这段尚未提交的安全分析要求");
   });
 
   it("普通消息走统一入口并显示自然语言回复，不创建任务卡", async () => {

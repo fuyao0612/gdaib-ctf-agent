@@ -47,7 +47,7 @@ async function configure(page: Page) {
     "连接测试成功",
   );
 
-  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await page.getByRole("button", { name: "关闭设置中心", exact: true }).click();
 }
 
 async function createThread(page: Page, title: string) {
@@ -125,7 +125,7 @@ async function openTaskControls(page: Page) {
 test("first setup exposes a focused security workspace", async ({ page }) => {
   await configure(page);
   await expect(page.getByRole("heading", { name: "从一个明确的安全场景开始" })).toBeVisible();
-  await expect(page.locator("body")).toHaveCSS("background-color", "rgb(246, 245, 242)");
+  await expect(page.locator("body")).toHaveCSS("background-color", "rgb(247, 247, 245)");
   await expectNoHorizontalOverflow(page);
 
   await createThread(page, "无需工具的任务");
@@ -235,7 +235,7 @@ test("one hundred task histories scroll independently from the fixed sidebar con
   await page.reload();
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  const list = page.getByRole("navigation", { name: "任务历史" });
+  const list = page.getByRole("navigation", { name: "项目任务" });
   await expect(list.getByRole("button", { name: /^滚动验收任务 100 更新于/ })).toBeVisible();
   const sizes = await list.evaluate((element) => ({
     scrollHeight: element.scrollHeight,

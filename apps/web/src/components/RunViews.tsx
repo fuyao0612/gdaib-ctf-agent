@@ -1,5 +1,6 @@
 /** 运行状态、对话时间线与审计抽屉等只读视图。 */
 import { useLayoutEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { api } from "../api";
 import type {
   Event,
@@ -19,6 +20,7 @@ import {
 import TaskPlanControl from "./TaskPlanControl";
 import RunControlPanel from "./RunControlPanel";
 import { TrajectoryReplay } from "./TrajectoryReplay";
+import IconButton from "./IconButton";
 
 export function StatusBadge({ status }: { status: string }) {
   const labels: Record<string, string> = {
@@ -273,14 +275,13 @@ export function InspectorPanel(props: InspectorProps) {
       <div className="inspector-head">
         <span>运行审计</span>
         <div>
-          <small>LIVE</small>
-          <button
+          <small>实时</small>
+          <IconButton
             className="inspector-close"
-            aria-label="关闭运行审计"
+            icon={X}
+            label="关闭运行审计"
             onClick={props.onClose}
-          >
-            关闭
-          </button>
+          />
         </div>
       </div>
       <div className="metrics">

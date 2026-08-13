@@ -1,7 +1,23 @@
 /** 单页工作台协调器：只管理共享状态和网络动作，页面区域由小组件渲染。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  Binary,
+  Boxes,
+  Bug,
+  ClipboardCheck,
+  FilePlus2,
+  Flag,
+  FolderOpen,
+  Menu,
+  PanelLeftClose,
+  Settings,
+  ShieldCheck,
+  Siren,
+  X,
+} from "lucide-react";
 import { api } from "./api";
-import SettingsCenter from "./SettingsCenter";
+import SettingsCenter, { type SettingsCategory } from "./SettingsCenter";
 import EvaluationResults from "./components/EvaluationResults";
 import CreateThreadDialog from "./components/CreateThreadDialog";
 import MessageComposer from "./components/MessageComposer";
@@ -13,6 +29,7 @@ import {
   StatusBadge,
 } from "./components/RunViews";
 import ThreadSidebar from "./components/ThreadSidebar";
+import IconButton from "./components/IconButton";
 import { useTaskActions } from "./hooks/useTaskActions";
 import { useWorkbenchData } from "./hooks/useWorkbenchData";
 import { useRunControlActions } from "./hooks/useRunControlActions";
@@ -89,9 +106,12 @@ export default function App() {
   const [newProviderId, setNewProviderId] = useState("");
   const [newAuthorizedTarget, setNewAuthorizedTarget] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("quick");
   const [evaluationOpen, setEvaluationOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const inspectorUserRunRef = useRef<string | null>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const compactSidebarReturnFocusRef = useRef<HTMLElement | null>(null);
   const [sidebarExpanded, setSidebarExpanded] = useState(initialSidebarExpanded);
   const [compactLayout, setCompactLayout] = useState(isCompactViewport);
   const [initialSetup, setInitialSetup] = useState(false);
@@ -237,21 +257,62 @@ export default function App() {
   useEffect(() => {
     const closeOverlay = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // 只关闭最上层界面，避免从新建任务打开设置后按一次 Esc，连底层草稿
+      // 一起丢失。
+      if (settingsOpen) {
+        setSettingsOpen(false);
+        return;
+      }
+      if (evaluationOpen) {
+        setEvaluationOpen(false);
+        return;
+      }
+      if (inspectorOpen) {
+        if (activeRunId) inspectorUserRunRef.current = activeRunId;
+        setInspectorOpen(false);
+        return;
+      }
       if (compactLayout && sidebarExpanded) {
         setSidebarExpanded(false);
         return;
       }
-      // Esc 也能关闭设置或新建对话弹层；只有审计抽屉本来打开时才把它
-      // 记为用户选择，避免无关弹层影响新 Run 的审计默认展开状态。
-      if (inspectorOpen && activeRunId) inspectorUserRunRef.current = activeRunId;
-      setInspectorOpen(false);
-      setCreateOpen(false);
-      setSettingsOpen(false);
-      setEvaluationOpen(false);
+      if (createOpen) setCreateOpen(false);
     };
     window.addEventListener("keydown", closeOverlay);
     return () => window.removeEventListener("keydown", closeOverlay);
-  }, [activeRunId, compactLayout, inspectorOpen, sidebarExpanded]);
+  }, [activeRunId, compactLayout, createOpen, evaluationOpen, inspectorOpen, settingsOpen, sidebarExpanded]);
+
+  useEffect(() => {
+    if (!compactLayout || !sidebarExpanded) return undefined;
+    compactSidebarReturnFocusRef.current = document.activeElement as HTMLElement | null;
+    const sidebar = sidebarRef.current;
+    const focusable = () => Array.from(
+      sidebar?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    ).filter((item) => !item.hasAttribute("hidden"));
+    requestAnimationFrame(() => focusable()[0]?.focus());
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    sidebar?.addEventListener("keydown", trapFocus);
+    return () => {
+      sidebar?.removeEventListener("keydown", trapFocus);
+      compactSidebarReturnFocusRef.current?.focus();
+      compactSidebarReturnFocusRef.current = null;
+    };
+  }, [compactLayout, sidebarExpanded]);
 
   useEffect(() => {
     if (!compactLayout)
@@ -580,36 +641,59 @@ export default function App() {
     setCreateOpen(true);
   }
 
+  function openSettings(category: SettingsCategory = "quick") {
+    setSettingsCategory(category);
+    setSettingsOpen(true);
+  }
+
   return (
     <div
       className={`shell ${sidebarExpanded ? "sidebar-expanded" : "sidebar-collapsed"}`}
     >
-      <aside className="sidebar">
+      <aside ref={sidebarRef} id="app-sidebar" className="sidebar" aria-label="主导航">
         <div className="brand">
           <span className="brand-mark">御</span>
           <div>
             <h1>御网智元</h1>
-            <p>安全 Agent 工作台</p>
+            <p>安全智能体工作台</p>
           </div>
-          <button
+          <IconButton
             className="sidebar-close"
-            aria-label="收起侧栏"
+            icon={PanelLeftClose}
+            label="收起侧栏"
+            aria-controls="app-sidebar"
+            aria-expanded={sidebarExpanded}
             onClick={() => setSidebarExpanded(false)}
-          >
-            ‹
-          </button>
+          />
         </div>
-        <button className="primary full" onClick={() => openStarter("新任务", "general")}>
-          新建任务
+
+        <button className="primary sidebar-action" onClick={() => openStarter("新任务", "general")}>
+          <FilePlus2 size={18} aria-hidden="true" />
+          <span>新建任务</span>
         </button>
-        <button
-          className="settings-button full"
-          onClick={() => setSettingsOpen(true)}
-        >
-          设置中心
-        </button>
-        <div className="section-label">任务历史</div>
-        <button className="settings-button full" onClick={() => setEvaluationOpen(true)}>评测</button>
+
+        <nav className="sidebar-global-nav" aria-label="工作台入口">
+          <button type="button" onClick={() => openSettings("marketplace")}>
+            <Boxes size={18} aria-hidden="true" />
+            <span>能力中心</span>
+          </button>
+          <button type="button" onClick={() => setEvaluationOpen(true)}>
+            <ClipboardCheck size={18} aria-hidden="true" />
+            <span>评测中心</span>
+          </button>
+        </nav>
+
+        <section className="project-summary" aria-label="当前项目">
+          <div className="section-label">当前项目</div>
+          <div className="project-card">
+            <span className="project-icon"><FolderOpen size={18} aria-hidden="true" /></span>
+            <span>
+              <strong>安全分析工作区</strong>
+              <small>{threads.filter((thread) => !thread.archived).length} 个任务</small>
+            </span>
+          </div>
+        </section>
+
         <ThreadSidebar
           threads={threads}
           selectedId={detail?.id}
@@ -618,11 +702,18 @@ export default function App() {
           onToggleArchive={(thread) => void toggleArchive(thread)}
           onDelete={(thread) => void removeThread(thread)}
         />
-        <div className="security-note">
-          <span>●</span>
-          <div>
-            <strong>安全边界已启用</strong>
-            <p>公网默认拒绝 · 凭据自动脱敏</p>
+
+        <div className="sidebar-footer">
+          <button type="button" className="sidebar-settings" onClick={() => openSettings("quick")}>
+            <Settings size={18} aria-hidden="true" />
+            <span>设置中心</span>
+          </button>
+          <div className="security-note">
+            <ShieldCheck size={18} aria-hidden="true" />
+            <div>
+              <strong>安全边界已启用</strong>
+              <p>公网默认拒绝 · 凭据自动脱敏</p>
+            </div>
           </div>
         </div>
       </aside>
@@ -635,20 +726,25 @@ export default function App() {
         />
       )}
 
-      <main className="workspace">
+      <main
+        className="workspace"
+        inert={compactLayout && sidebarExpanded}
+        aria-hidden={compactLayout && sidebarExpanded ? "true" : undefined}
+      >
         <header className="topbar">
           <div className="topbar-heading">
             {!sidebarExpanded && (
-              <button
+              <IconButton
                 className="navigation-toggle"
-                aria-label="展开侧栏"
+                icon={Menu}
+                label="展开侧栏"
+                aria-controls="app-sidebar"
+                aria-expanded={sidebarExpanded}
                 onClick={() => setSidebarExpanded(true)}
-              >
-                菜单
-              </button>
+              />
             )}
             <div className="topbar-title" data-testid="thread-heading">
-              <span className="eyebrow">TASK</span>
+              <span className="eyebrow">任务</span>
               <h2>{createOpen ? "新建安全任务" : detail?.title ?? "选择或创建一个任务"}</h2>
               {createOpen ? (
                 <small>确认场景、目标与运行配置后立即开始</small>
@@ -675,6 +771,7 @@ export default function App() {
                 setInspectorOpen((value) => !value);
               }}
             >
+              <Activity size={17} aria-hidden="true" />
               运行审计
               </button>
             )}
@@ -697,24 +794,24 @@ export default function App() {
             }}
             onProviderChange={setNewProviderId}
             onAuthorizedTargetChange={setNewAuthorizedTarget}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={(category) => openSettings(category)}
             onCancel={() => setCreateOpen(false)}
             onSubmit={() => void createThread()}
           />
         ) : !detail ? (
           <section className="empty empty-onboarding">
-            <span className="eyebrow">SECURITY WORKSPACE</span>
+            <span className="eyebrow">安全工作台</span>
             <h2>从一个明确的安全场景开始</h2>
             <p>选择场景后，再上传材料、确认模型和授权目标。Agent 会先给出计划，再调用受控工具。</p>
             <div className="starter-grid">
-              <button type="button" onClick={() => openStarter("CTF 题目分析", "ctf")}><strong>CTF 题目</strong><small>附件识别、解码、取证与 Flag 验证</small></button>
-              <button type="button" onClick={() => openStarter("应急响应日志分析", "incident_response")}><strong>应急响应</strong><small>日志归一化、时间线与 IOC 提取</small></button>
-              <button type="button" onClick={() => openStarter("Web 漏洞研判", "vulnerability_analysis")}><strong>漏洞分析</strong><small>证据、CWE 映射与修复验证</small></button>
-              <button type="button" onClick={() => openStarter("可疑样本静态分析", "reverse_static")}><strong>静态逆向</strong><small>不执行样本，分析结构、导入和字符串</small></button>
+              <button type="button" onClick={() => openStarter("CTF 题目分析", "ctf")}><Flag size={20} aria-hidden="true" /><span><strong>CTF 题目</strong><small>附件识别、解码、取证与 Flag 验证</small></span></button>
+              <button type="button" onClick={() => openStarter("应急响应日志分析", "incident_response")}><Siren size={20} aria-hidden="true" /><span><strong>应急响应</strong><small>日志归一化、时间线与 IOC 提取</small></span></button>
+              <button type="button" onClick={() => openStarter("Web 漏洞研判", "vulnerability_analysis")}><Bug size={20} aria-hidden="true" /><span><strong>漏洞分析</strong><small>证据、CWE 映射与修复验证</small></span></button>
+              <button type="button" onClick={() => openStarter("可疑样本静态分析", "reverse_static")}><Binary size={20} aria-hidden="true" /><span><strong>静态逆向</strong><small>不执行样本，分析结构、导入和字符串</small></span></button>
             </div>
             <div className="starter-actions">
               <button className="primary" onClick={() => openStarter("新任务", "general")}>创建通用任务</button>
-              <button onClick={() => setSettingsOpen(true)}>先配置模型与能力</button>
+              <button onClick={() => openSettings("providers")}><Settings size={17} aria-hidden="true" />先配置模型与能力</button>
             </div>
           </section>
         ) : (
@@ -802,6 +899,7 @@ export default function App() {
       {settingsOpen && (
         <SettingsCenter
           initialSetup={initialSetup}
+          initialCategory={settingsCategory}
           onClose={() => setSettingsOpen(false)}
           onChanged={async () => {
             await refreshProviders();
@@ -815,7 +913,7 @@ export default function App() {
       )}
       {evaluationOpen && (
         <div className="settings-backdrop" role="dialog" aria-modal="true" aria-label="评测中心">
-          <section className="evaluation-panel"><header><div><span className="eyebrow">EVALUATION</span><h2>评测中心</h2></div><button type="button" onClick={() => setEvaluationOpen(false)}>关闭</button></header><div className="settings-scroll"><EvaluationResults onError={setError} /></div></section>
+          <section className="evaluation-panel"><header><div><span className="eyebrow">质量验证</span><h2>评测中心</h2></div><IconButton icon={X} label="关闭评测中心" onClick={() => setEvaluationOpen(false)} /></header><div className="settings-scroll"><EvaluationResults onError={setError} /></div></section>
         </div>
       )}
     </div>

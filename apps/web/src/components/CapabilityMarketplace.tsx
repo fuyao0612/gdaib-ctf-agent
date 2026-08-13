@@ -1,5 +1,20 @@
 /** 本地策展的能力广场：Skill 可一键安装，MCP 只生成安全配置草稿。 */
 import { useMemo, useState } from "react";
+import {
+  Binary,
+  Blocks,
+  Bug,
+  Cable,
+  Check,
+  Download,
+  Flag,
+  Globe2,
+  Search,
+  Settings2,
+  ShieldAlert,
+  TerminalSquare,
+  type LucideIcon,
+} from "lucide-react";
 
 import { api } from "../api";
 import type { McpServerInput, SkillDefinition, SkillInput } from "../types";
@@ -131,6 +146,19 @@ const MCP_CATALOG: McpMarketplaceTemplate[] = [
   },
 ];
 
+const SKILL_ICONS: Record<string, LucideIcon> = {
+  "ctf-evidence": Flag,
+  "incident-timeline": ShieldAlert,
+  "web-vulnerability": Bug,
+  "static-malware": Binary,
+};
+
+const MCP_ICONS: Record<string, LucideIcon> = {
+  "remote-http": Globe2,
+  "local-stdio": TerminalSquare,
+  "remote-readonly": Cable,
+};
+
 export default function CapabilityMarketplace(props: Props) {
   const [tab, setTab] = useState<"skills" | "mcp">("skills");
   const [query, setQuery] = useState("");
@@ -170,39 +198,45 @@ export default function CapabilityMarketplace(props: Props) {
     <section className="capability-marketplace">
       <div className="marketplace-hero">
         <div>
-          <span className="eyebrow">CURATED CAPABILITIES</span>
+          <span className="eyebrow">安全能力目录</span>
           <h3>选择适合任务的能力</h3>
           <p>先选择能力，再进入任务。Skill 可以一键安装；MCP 会打开受控配置草稿，不会静默连接外部服务。</p>
         </div>
-        <label>
+        <label className="marketplace-search">
           <span className="sr-only">搜索能力</span>
+          <Search size={16} aria-hidden="true" />
           <input aria-label="搜索能力" placeholder="搜索 CTF、日志、MCP…" value={query} onChange={(event) => setQuery(event.target.value)} />
         </label>
       </div>
       <div className="marketplace-tabs" role="tablist" aria-label="能力类型">
-        <button role="tab" aria-selected={tab === "skills"} className={tab === "skills" ? "active" : ""} onClick={() => setTab("skills")}>Skills 模板</button>
-        <button role="tab" aria-selected={tab === "mcp"} className={tab === "mcp" ? "active" : ""} onClick={() => setTab("mcp")}>MCP 接入模板</button>
+        <button role="tab" aria-selected={tab === "skills"} className={tab === "skills" ? "active" : ""} onClick={() => setTab("skills")}><Blocks size={16} aria-hidden="true" />Skills 模板</button>
+        <button role="tab" aria-selected={tab === "mcp"} className={tab === "mcp" ? "active" : ""} onClick={() => setTab("mcp")}><Cable size={16} aria-hidden="true" />MCP 接入模板</button>
       </div>
       <div className="marketplace-grid">
         {tab === "skills" && skillItems.map((item) => {
           const installed = installedNames.has(item.name);
+          const SkillIcon = SKILL_ICONS[item.id] ?? Blocks;
           return <article className="marketplace-card" key={item.id}>
-            <div className="marketplace-card-top"><span>{item.category}</span><small>本地声明式 Skill</small></div>
+            <div className="marketplace-card-top"><span><SkillIcon size={16} aria-hidden="true" />{item.category}</span><small>本地声明式 Skill</small></div>
             <h4>{item.name}</h4>
             <p>{item.description}</p>
             <div className="marketplace-tags">{item.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
             <button className={installed ? "" : "primary"} disabled={installed || busyId === item.id} onClick={() => void installSkill(item)}>
+              {installed ? <Check size={16} aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
               {installed ? "已安装" : busyId === item.id ? "正在安装…" : "一键安装"}
             </button>
           </article>;
         })}
-        {tab === "mcp" && mcpItems.map((item) => <article className="marketplace-card" key={item.id}>
-          <div className="marketplace-card-top"><span>MCP</span><small>{item.input.transport === "stdio" ? "Stdio" : "Streamable HTTP"}</small></div>
-          <h4>{item.title}</h4>
-          <p>{item.description}</p>
-          <div className="marketplace-tags">{item.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
-          <button className="primary" onClick={() => props.onConfigureMcp(item)}>开始配置</button>
-        </article>)}
+        {tab === "mcp" && mcpItems.map((item) => {
+          const McpIcon = MCP_ICONS[item.id] ?? Cable;
+          return <article className="marketplace-card" key={item.id}>
+            <div className="marketplace-card-top"><span><McpIcon size={16} aria-hidden="true" />MCP</span><small>{item.input.transport === "stdio" ? "Stdio" : "Streamable HTTP"}</small></div>
+            <h4>{item.title}</h4>
+            <p>{item.description}</p>
+            <div className="marketplace-tags">{item.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+            <button className="primary" onClick={() => props.onConfigureMcp(item)}><Settings2 size={16} aria-hidden="true" />开始配置</button>
+          </article>;
+        })}
         {((tab === "skills" && !skillItems.length) || (tab === "mcp" && !mcpItems.length)) && <p className="marketplace-empty">没有匹配的能力，换个关键词试试。</p>}
       </div>
     </section>

@@ -1,4 +1,16 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  Blocks,
+  Bot,
+  Boxes,
+  Cable,
+  Rocket,
+  Settings,
+  ShieldCheck,
+  SlidersHorizontal,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { api } from "./api";
 import AgentProfileCenter from "./components/AgentProfileCenter";
 import CapabilityMarketplace, { type McpMarketplaceTemplate } from "./components/CapabilityMarketplace";
@@ -7,25 +19,27 @@ import SkillSettings from "./components/SkillSettings";
 import SetupProgress from "./components/SetupProgress";
 import ToolExtensionsCenter from "./components/ToolExtensionsCenter";
 import KnowledgeBaseSettings from "./components/KnowledgeBaseSettings";
+import IconButton from "./components/IconButton";
 import { useAdminSession } from "./hooks/useAdminSession";
 import type { AgentDefaults, ProviderConfig, SkillDefinition, SetupStatus } from "./types";
 import "./settings.css";
 
-interface Props { onClose: () => void; onChanged: () => Promise<void>; initialSetup?: boolean; }
-type Category = "quick" | "providers" | "marketplace" | "extensions" | "agents" | "runtime";
+interface Props { onClose: () => void; onChanged: () => Promise<void>; initialSetup?: boolean; initialCategory?: SettingsCategory; }
+export type SettingsCategory = "quick" | "providers" | "marketplace" | "extensions" | "agents" | "runtime";
 type InstalledTab = "knowledge" | "tools" | "skills";
 
-const categories: { id: Category; label: string; hint: string }[] = [
-  { id: "quick", label: "开始使用", hint: "三步完成首次任务" },
-  { id: "providers", label: "模型与中转", hint: "连接、发现与切换模型" },
-  { id: "marketplace", label: "能力广场", hint: "安装 Skills、接入 MCP" },
-  { id: "extensions", label: "已安装能力", hint: "知识库、工具、MCP、Skills" },
-  { id: "agents", label: "Agent 策略", hint: "配置档案与继承关系" },
-  { id: "runtime", label: "运行与安全", hint: "系统默认预算与边界" },
+const categories: { id: SettingsCategory; label: string; hint: string; icon: LucideIcon }[] = [
+  { id: "quick", label: "开始使用", hint: "三步完成首次任务", icon: Rocket },
+  { id: "providers", label: "模型与中转", hint: "连接、发现与切换模型", icon: Cable },
+  { id: "marketplace", label: "能力广场", hint: "安装 Skills、接入 MCP", icon: Boxes },
+  { id: "extensions", label: "已安装能力", hint: "知识库、工具、MCP、Skills", icon: Blocks },
+  { id: "agents", label: "智能体策略", hint: "配置档案与继承关系", icon: Bot },
+  { id: "runtime", label: "运行与安全", hint: "系统默认预算与边界", icon: ShieldCheck },
 ];
 
-export default function SettingsCenter({ onClose, onChanged, initialSetup = false }: Props) {
-  const [category, setCategory] = useState<Category>("quick");
+export default function SettingsCenter({ onClose, onChanged, initialSetup = false, initialCategory = "quick" }: Props) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [category, setCategory] = useState<SettingsCategory>(initialCategory);
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
   const [skills, setSkills] = useState<SkillDefinition[]>([]);
   const [agentDefaults, setAgentDefaults] = useState<AgentDefaults | null>(null);
@@ -53,6 +67,46 @@ export default function SettingsCenter({ onClose, onChanged, initialSetup = fals
 
   useEffect(() => { void api.setupStatus().then(setSetupStatus).catch(() => undefined); }, []);
   useEffect(() => { if (session.csrf) void load(session.csrf).catch((cause) => setError(String(cause))); }, [session.csrf, load]);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return undefined;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const siblings = Array.from(dialog.parentElement?.children ?? [])
+      .filter((item): item is HTMLElement => item instanceof HTMLElement && item !== dialog)
+      .map((item) => ({ item, inert: item.inert, ariaHidden: item.getAttribute("aria-hidden") }));
+    siblings.forEach(({ item }) => {
+      item.inert = true;
+      item.setAttribute("aria-hidden", "true");
+    });
+    const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    )).filter((item) => !item.hasAttribute("hidden"));
+    requestAnimationFrame(() => focusable()[0]?.focus());
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog.addEventListener("keydown", trapFocus);
+    return () => {
+      dialog.removeEventListener("keydown", trapFocus);
+      siblings.forEach(({ item, inert, ariaHidden }) => {
+        item.inert = inert;
+        if (ariaHidden === null) item.removeAttribute("aria-hidden");
+        else item.setAttribute("aria-hidden", ariaHidden);
+      });
+      previousFocus?.focus();
+    };
+  }, []);
 
   async function saveAgentDefaults(event: FormEvent) {
     event.preventDefault(); if (!agentDefaults) return;
@@ -64,32 +118,35 @@ export default function SettingsCenter({ onClose, onChanged, initialSetup = fals
 
   const current = categories.find((item) => item.id === category) ?? categories[0];
   return (
-    <div className="settings-backdrop" role="dialog" aria-modal="true" aria-label="设置中心">
+    <div ref={dialogRef} className="settings-backdrop" role="dialog" aria-modal="true" aria-label="设置中心">
       <section className="settings-panel">
         <header className="settings-panel-header">
-          <div><span className="eyebrow">AGENT SETTINGS</span><h2>设置中心</h2></div>
-          <button type="button" onClick={onClose}>关闭</button>
+          <div className="settings-heading"><span className="settings-heading-icon"><Settings size={20} aria-hidden="true" /></span><div><span className="eyebrow">工作台偏好与能力</span><h2>设置中心</h2></div></div>
+          <IconButton icon={X} label="关闭设置中心" onClick={onClose} />
         </header>
         <div className="settings-layout">
           <nav className="settings-nav" aria-label="设置分类">
-            {categories.map((item) => (
+            {categories.map((item) => {
+              const CategoryIcon = item.icon;
+              return (
               <button key={item.id} type="button" className={item.id === category ? "active" : ""}
                 aria-current={item.id === category ? "page" : undefined}
                 onClick={() => { setCategory(item.id); setShowAdvanced(false); setNotice(""); setError(""); }}>
-                <strong>{item.label}</strong><small>{item.hint}</small>
+                <CategoryIcon size={18} aria-hidden="true" />
+                <span><strong>{item.label}</strong><small>{item.hint}</small></span>
               </button>
-            ))}
+            )})}
           </nav>
           <div className="settings-scroll">
             <div className="settings-content">
-              <div className="settings-breadcrumb"><div><span className="eyebrow">当前分类</span><h3>{current.label}</h3><p>{current.hint}</p></div>
-                {(["providers", "agents", "extensions"] as Category[]).includes(category) && <button type="button" className={showAdvanced ? "active" : ""} aria-pressed={showAdvanced} onClick={() => setShowAdvanced((value) => !value)}>高级选项</button>}</div>
+              <div className="settings-breadcrumb"><div><h3>{current.label}</h3><p>{current.hint}</p></div>
+                {(["providers", "agents", "extensions"] as SettingsCategory[]).includes(category) && <button type="button" className={showAdvanced ? "active" : ""} aria-pressed={showAdvanced} onClick={() => setShowAdvanced((value) => !value)}><SlidersHorizontal size={16} aria-hidden="true" />高级选项</button>}</div>
               {(category === "quick" || category === "providers") && <SetupProgress authenticated={session.authenticated} status={setupStatus} />}
               {initialSetup && category === "quick" && <p className="setup-hint">先完成 Provider 连接测试，再选择默认 Agent，即可开始第一个任务。</p>}
               {!session.authenticated ? <div className="admin-login" role={session.error ? "alert" : "status"}>{session.error ? `无法建立本地安全会话：${session.error}` : "正在建立本地安全会话..."}</div> : (
                 <>
                   {category === "quick" && <section className="quick-config onboarding-guide">
-                    <div className="onboarding-intro"><div><span className="eyebrow">FIRST RUN</span><h3>第一次使用只需要三步</h3><p>先连接中转模型，再安装需要的能力，最后关闭设置并创建安全任务。</p></div><span className={setupStatus?.configured ? "onboarding-ready" : "onboarding-pending"}>{setupStatus?.configured ? "已可开始" : "待完成"}</span></div>
+                    <div className="onboarding-intro"><div><span className="eyebrow">首次配置</span><h3>第一次使用只需要三步</h3><p>先连接中转模型，再安装需要的能力，最后关闭设置并创建安全任务。</p></div><span className={setupStatus?.configured ? "onboarding-ready" : "onboarding-pending"}>{setupStatus?.configured ? "已可开始" : "待完成"}</span></div>
                     <div className="quick-grid">
                       <article><span className="quick-step">步骤 1</span><strong>连接模型与中转</strong><small>{providers.filter((item) => item.connection_status === "ok").length ? `${providers.filter((item) => item.connection_status === "ok").length} 个连接已通过测试` : "填写地址和密钥，然后发现可用模型"}</small><button type="button" className="primary" onClick={() => setCategory("providers")}>{providers.length ? "管理模型" : "连接第一个模型"}</button></article>
                       <article><span className="quick-step">步骤 2</span><strong>安装任务能力</strong><small>{skills.length ? `已安装 ${skills.length} 个 Skill` : "从 CTF、应急、漏洞、逆向模板中选择"}</small><button type="button" onClick={() => setCategory("marketplace")}>打开能力广场</button></article>

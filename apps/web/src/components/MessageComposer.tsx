@@ -1,5 +1,6 @@
 /** 统一输入区：文本和附件始终走同一消息入口，状态只改变服务端解释方式。 */
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
+import { ArrowUp, Paperclip, RotateCcw, Square } from "lucide-react";
 import type { Artifact, ProviderConfig, Run } from "../types";
 import ProviderSelector from "./ProviderSelector";
 
@@ -67,6 +68,7 @@ function inputCopy(run: Run | null) {
 }
 
 export default function MessageComposer(props: Props) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const taskSubmitting = props.taskSubmitting ?? false;
   const taskCanRetry = props.taskCanRetry ?? false;
   const onTaskRetry = props.onTaskRetry ?? (() => undefined);
@@ -133,6 +135,7 @@ export default function MessageComposer(props: Props) {
           value={props.message}
           onChange={(event) => props.onMessageChange(event.target.value)}
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               // 键盘提交必须遵守和按钮完全相同的附件/请求保护，不能在上传中
@@ -144,27 +147,35 @@ export default function MessageComposer(props: Props) {
           placeholder={copy.placeholder}
         />
         <div className="composer-actions">
-          <label className="file-button">
-            添加附件
-            <input
-              aria-label="上传附件"
-              type="file"
-              accept=".txt,.json,.md,.log,.bin"
-              disabled={props.uploading || taskSubmitting}
-              onChange={(event) => {
-                props.onUpload(event.target.files?.[0]);
-                // 允许用户在上传失败后重新选择同一个文件；待发送清单只在上传成功后更新。
-                event.currentTarget.value = "";
-              }}
-            />
-          </label>
+          <button
+            type="button"
+            className="file-button"
+            disabled={props.uploading || taskSubmitting}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Paperclip size={17} aria-hidden="true" />
+            <span>附件</span>
+          </button>
+          <input
+            ref={fileInputRef}
+            className="file-input"
+            aria-label="上传附件"
+            type="file"
+            accept=".txt,.json,.md,.log,.bin"
+            disabled={props.uploading || taskSubmitting}
+            onChange={(event) => {
+              props.onUpload(event.target.files?.[0]);
+              // 允许用户在上传失败后重新选择同一个文件；待发送清单只在上传成功后更新。
+              event.currentTarget.value = "";
+            }}
+          />
           <span className="authorization">Enter 发送 · Shift+Enter 换行</span>
           <div className="run-actions">
             {taskCanRetry && (
-              <button onClick={onTaskRetry}>重试任务请求</button>
+              <button onClick={onTaskRetry}><RotateCcw size={16} aria-hidden="true" />重试任务请求</button>
             )}
             {!taskCanRetry && props.activeRun && ["failed", "stopped"].includes(props.activeRun.status) && (
-              <button onClick={props.onRetry}>重试</button>
+              <button onClick={props.onRetry}><RotateCcw size={16} aria-hidden="true" />重试</button>
             )}
             {canStop && (
               <button
@@ -172,6 +183,7 @@ export default function MessageComposer(props: Props) {
                 disabled={stopPending}
                 onClick={props.onStop}
               >
+                <Square size={14} fill="currentColor" aria-hidden="true" />
                 {stopPending
                   ? "停止请求处理中"
                   : taskCanStop
@@ -179,8 +191,14 @@ export default function MessageComposer(props: Props) {
                     : "停止生成"}
               </button>
             )}
-            <button className="primary" disabled={sendDisabled} onClick={props.onSend}>
-              {props.uploading || taskSubmitting ? "正在提交…" : copy.send}
+            <button
+              className="primary composer-send"
+              aria-label={props.uploading || taskSubmitting ? "正在提交…" : copy.send}
+              title={copy.send}
+              disabled={sendDisabled}
+              onClick={props.onSend}
+            >
+              <ArrowUp size={18} strokeWidth={2.2} aria-hidden="true" />
             </button>
           </div>
         </div>
