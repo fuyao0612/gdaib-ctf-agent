@@ -30,6 +30,7 @@ services:
       YUWANG_DATABASE_PATH: /data/yuwang.db
       YUWANG_ARTIFACT_ROOT: /data/artifacts
       YUWANG_CORS_ORIGINS: ${YUWANG_CORS_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080}
+      YUWANG_ALLOWED_HOSTS: ${YUWANG_ALLOWED_HOSTS:-127.0.0.1,localhost}
       YUWANG_COOKIE_SECURE: ${YUWANG_COOKIE_SECURE:-false}
       YUWANG_MASTER_KEY: ${YUWANG_MASTER_KEY:?Set YUWANG_MASTER_KEY in .env}
       YUWANG_SANDBOX_URL: http://tool-sandbox:8081

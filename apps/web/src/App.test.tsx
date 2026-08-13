@@ -86,6 +86,32 @@ describe("App", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  it("390px 首次渲染默认收起侧栏且保留桌面端展开偏好", async () => {
+    window.localStorage.setItem("yuwang.sidebarExpanded", "true");
+    const setItem = vi.spyOn(window.localStorage, "setItem");
+    vi.stubGlobal("innerWidth", 390);
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query === "(max-width: 700px)",
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(() => true),
+      })),
+    );
+
+    const { container } = render(<App />);
+    await screen.findByText("从一个明确的安全场景开始");
+
+    expect(container.querySelector(".shell")).toHaveClass("sidebar-collapsed");
+    expect(window.localStorage.getItem("yuwang.sidebarExpanded")).toBe("true");
+    expect(setItem).not.toHaveBeenCalledWith("yuwang.sidebarExpanded", "false");
+  });
+
   it("新建任务在连续启动页中确认场景、说明和模型", async () => {
     render(<App />);
     await screen.findByText("从一个明确的安全场景开始");

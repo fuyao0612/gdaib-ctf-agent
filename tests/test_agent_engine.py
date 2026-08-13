@@ -1251,3 +1251,42 @@ async def test_resume_refuses_uncertain_non_idempotent_tool(tmp_path):
     failed = repository.get_run(run.id)
     assert failed and failed.status == RunStatus.FAILED
     assert "禁止自动重复" in (failed.error or "")
+
+
+@pytest.mark.asyncio
+async def test_resume_fails_closed_when_uncertain_tool_is_no_longer_registered(tmp_path):
+    repository = SQLiteRepository(tmp_path / "missing-tool.db")
+    engine = AgentEngine(repository, FakeModelProvider(), ToolRegistry(), PolicyEngine())
+    thread = repository.save_thread(Thread(title="missing tool resume"))
+    run = Run(thread_id=thread.id, provider="test-provider")
+    run.transition(RunStatus.RUNNING)
+    repository.save_run(run)
+    task = TaskSpec(body="resume with missing tool")
+    state = AgentStateModel(
+        run_id=run.id,
+        task=task,
+        action=AgentAction(
+            kind="call_tool",
+            summary="missing plugin action",
+            tool_name="missing_tool",
+            tool_input={},
+        ),
+    )
+    repository.save_checkpoint(run.id, "policy_check", state.model_dump(mode="json"))
+    repository.save_tool_call(
+        ToolCall(
+            run_id=run.id,
+            tool_id="mcp.removed.missing_tool",
+            tool_name="missing_tool",
+            input_summary="uncertain call",
+            duration_ms=0,
+            status=CallStatus.STARTED,
+        )
+    )
+
+    await engine.resume(run.id, task)
+
+    failed = repository.get_run(run.id)
+    assert failed and failed.status == RunStatus.FAILED
+    assert "mcp.removed.missing_tool" in (failed.error or "")
+    assert "不可用" in (failed.error or "")

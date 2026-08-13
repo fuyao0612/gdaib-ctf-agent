@@ -257,6 +257,7 @@ interface InspectorProps {
 }
 
 export function InspectorPanel(props: InspectorProps) {
+  if (!props.open) return null;
   const toolEvents = props.events.filter((event) =>
     event.type.startsWith("tool_"),
   );
@@ -266,7 +267,8 @@ export function InspectorPanel(props: InspectorProps) {
   return (
     <aside
       id="run-inspector"
-      className={`inspector ${props.open ? "open" : ""}`}
+      className="inspector open"
+      aria-label="运行审计"
     >
       <div className="inspector-head">
         <span>运行审计</span>

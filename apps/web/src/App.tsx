@@ -36,6 +36,18 @@ const taskStarterPrompts: Record<SecurityScenario, string> = {
   reverse_static: "请仅做静态分析，不执行样本。检查文件结构、导入、字符串和可疑行为，并给出证据与后续隔离建议。",
 };
 
+function initialSidebarExpanded(): boolean {
+  if (isCompactViewport()) return false;
+  return window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false";
+}
+
+function isCompactViewport(): boolean {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(max-width: 700px)").matches
+  );
+}
+
 export default function App() {
   const workspace = useWorkbenchData();
   const {
@@ -80,9 +92,8 @@ export default function App() {
   const [evaluationOpen, setEvaluationOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const inspectorUserRunRef = useRef<string | null>(null);
-  const [sidebarExpanded, setSidebarExpanded] = useState(
-    () => window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false",
-  );
+  const [sidebarExpanded, setSidebarExpanded] = useState(initialSidebarExpanded);
+  const [compactLayout, setCompactLayout] = useState(isCompactViewport);
   const [initialSetup, setInitialSetup] = useState(false);
   const [bootstrapReady, setBootstrapReady] = useState(false);
   // 上传是异步的。切换会话时先更新此 ref，旧会话的迟到响应不能混入新会话的
@@ -226,6 +237,10 @@ export default function App() {
   useEffect(() => {
     const closeOverlay = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (compactLayout && sidebarExpanded) {
+        setSidebarExpanded(false);
+        return;
+      }
       // Esc 也能关闭设置或新建对话弹层；只有审计抽屉本来打开时才把它
       // 记为用户选择，避免无关弹层影响新 Run 的审计默认展开状态。
       if (inspectorOpen && activeRunId) inspectorUserRunRef.current = activeRunId;
@@ -236,14 +251,31 @@ export default function App() {
     };
     window.addEventListener("keydown", closeOverlay);
     return () => window.removeEventListener("keydown", closeOverlay);
-  }, [activeRunId, inspectorOpen]);
+  }, [activeRunId, compactLayout, inspectorOpen, sidebarExpanded]);
 
   useEffect(() => {
-    window.localStorage?.setItem(
-      "yuwang.sidebarExpanded",
-      String(sidebarExpanded),
-    );
-  }, [sidebarExpanded]);
+    if (!compactLayout)
+      window.localStorage?.setItem(
+        "yuwang.sidebarExpanded",
+        String(sidebarExpanded),
+      );
+  }, [compactLayout, sidebarExpanded]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return undefined;
+    const media = window.matchMedia("(max-width: 700px)");
+    const syncLayout = (matches: boolean) => {
+      setCompactLayout(matches);
+      setSidebarExpanded(
+        matches
+          ? false
+          : window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false",
+      );
+    };
+    const onChange = (event: MediaQueryListEvent) => syncLayout(event.matches);
+    media.addEventListener?.("change", onChange);
+    return () => media.removeEventListener?.("change", onChange);
+  }, []);
 
   async function createThread() {
     // 新 Thread 不能继承旧会话尚未完成的请求、草稿或上传响应。
@@ -568,13 +600,13 @@ export default function App() {
           </button>
         </div>
         <button className="primary full" onClick={() => openStarter("新任务", "general")}>
-          ＋ 新建任务
+          新建任务
         </button>
         <button
           className="settings-button full"
           onClick={() => setSettingsOpen(true)}
         >
-          ⚙ 设置中心
+          设置中心
         </button>
         <div className="section-label">任务历史</div>
         <button className="settings-button full" onClick={() => setEvaluationOpen(true)}>评测</button>
@@ -594,6 +626,14 @@ export default function App() {
           </div>
         </div>
       </aside>
+      {compactLayout && sidebarExpanded && (
+        <button
+          type="button"
+          className="sidebar-scrim"
+          aria-label="关闭导航"
+          onClick={() => setSidebarExpanded(false)}
+        />
+      )}
 
       <main className="workspace">
         <header className="topbar">
@@ -604,7 +644,7 @@ export default function App() {
                 aria-label="展开侧栏"
                 onClick={() => setSidebarExpanded(true)}
               >
-                ☰
+                菜单
               </button>
             )}
             <div className="topbar-title" data-testid="thread-heading">

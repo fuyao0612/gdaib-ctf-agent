@@ -28,6 +28,28 @@ const audit: RunAudit = {
 };
 
 describe("InspectorPanel", () => {
+  it("关闭时不保留抽屉 DOM 或无障碍入口", () => {
+    render(
+      <InspectorPanel
+        open={false}
+        metrics={{ events: 0, tools: 0, replans: 0 }}
+        audit={audit}
+        events={[]}
+        detail={null}
+        memories={[]}
+        onClose={vi.fn()}
+        onToggleMemory={vi.fn()}
+        onDeleteMemory={vi.fn()}
+        onClearMemories={vi.fn()}
+      />,
+    );
+
+    expect(document.querySelector("#run-inspector")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("complementary", { name: "运行审计" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("明确标出本地估算和人工介入次数", () => {
     render(
       <InspectorPanel

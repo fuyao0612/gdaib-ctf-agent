@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from apps.api.config import Settings
 from apps.api.context import ApiContext
@@ -58,6 +59,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.registry = context.registry
     application.state.tasks = context.tasks
     application.state.context = context
+    application.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=context.config.allowed_hosts,
+    )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=context.config.cors_origins,

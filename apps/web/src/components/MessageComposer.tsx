@@ -100,85 +100,89 @@ export default function MessageComposer(props: Props) {
           附件正在上传，完成后会出现在下方列表并随下一条消息发送。
         </p>
       )}
-      <ProviderSelector
-        providers={props.providers}
-        value={props.providerConfigId}
-        disabled={props.uploading}
-        onChange={props.onProviderChange}
-      />
-      {props.children}
-      {!taskIsActive && (
-        <input
-          aria-label="本次运行授权目标"
-          className="authorized-target"
-          type="url"
-          value={props.authorizedTarget}
-          onChange={(event) => props.onAuthorizedTargetChange(event.target.value)}
-          disabled={props.uploading || taskSubmitting}
-          placeholder="本次运行授权目标（可选）"
-        />
-      )}
-      <div className="attachments">
-        {props.pendingArtifacts.map((file) => (
-          <span key={file.id}>
-            📎 {file.filename} · {file.size} B
-          </span>
-        ))}
-      </div>
-      <textarea
-        aria-label="消息"
-        value={props.message}
-        onChange={(event) => props.onMessageChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            // 键盘提交必须遵守和按钮完全相同的附件/请求保护，不能在上传中
-            // 绕过禁用状态把一条尚未关联附件的消息提前发出。
-            if (!sendDisabled) props.onSend();
-          }
-        }}
-        disabled={taskSubmitting}
-        placeholder={copy.placeholder}
-      />
-      <div className="composer-actions">
-        <label className="file-button">
-          ＋ 附件
-          <input
-            aria-label="上传附件"
-            type="file"
-            accept=".txt,.json,.md,.log,.bin"
-            disabled={props.uploading || taskSubmitting}
-            onChange={(event) => {
-              props.onUpload(event.target.files?.[0]);
-              // 允许用户在上传失败后重新选择同一个文件；待发送清单只在上传成功后更新。
-              event.currentTarget.value = "";
-            }}
+      <div className="composer-card">
+        <div className="composer-context">
+          <ProviderSelector
+            providers={props.providers}
+            value={props.providerConfigId}
+            disabled={props.uploading}
+            onChange={props.onProviderChange}
           />
-        </label>
-        <span className="authorization">Enter 发送 · Shift+Enter 换行</span>
-        <div className="run-actions">
-          {taskCanRetry && (
-            <button onClick={onTaskRetry}>重试任务请求</button>
-          )}
-          {!taskCanRetry && props.activeRun && ["failed", "stopped"].includes(props.activeRun.status) && (
-            <button onClick={props.onRetry}>重试</button>
-          )}
-          {canStop && (
-            <button
-              className="danger"
-              disabled={stopPending}
-              onClick={props.onStop}
-            >
-              {stopPending
-                ? "停止请求处理中"
-                : taskCanStop
-                  ? "停止任务"
-                  : "停止生成"}
+          {props.children}
+        </div>
+        {!taskIsActive && (
+          <input
+            aria-label="本次运行授权目标"
+            className="authorized-target"
+            type="url"
+            value={props.authorizedTarget}
+            onChange={(event) => props.onAuthorizedTargetChange(event.target.value)}
+            disabled={props.uploading || taskSubmitting}
+            placeholder="本次运行授权目标（可选）"
+          />
+        )}
+        <div className="attachments">
+          {props.pendingArtifacts.map((file) => (
+            <span key={file.id}>
+              {file.filename} · {file.size} B
+            </span>
+          ))}
+        </div>
+        <textarea
+          aria-label="消息"
+          value={props.message}
+          onChange={(event) => props.onMessageChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              // 键盘提交必须遵守和按钮完全相同的附件/请求保护，不能在上传中
+              // 绕过禁用状态把一条尚未关联附件的消息提前发出。
+              if (!sendDisabled) props.onSend();
+            }
+          }}
+          disabled={taskSubmitting}
+          placeholder={copy.placeholder}
+        />
+        <div className="composer-actions">
+          <label className="file-button">
+            添加附件
+            <input
+              aria-label="上传附件"
+              type="file"
+              accept=".txt,.json,.md,.log,.bin"
+              disabled={props.uploading || taskSubmitting}
+              onChange={(event) => {
+                props.onUpload(event.target.files?.[0]);
+                // 允许用户在上传失败后重新选择同一个文件；待发送清单只在上传成功后更新。
+                event.currentTarget.value = "";
+              }}
+            />
+          </label>
+          <span className="authorization">Enter 发送 · Shift+Enter 换行</span>
+          <div className="run-actions">
+            {taskCanRetry && (
+              <button onClick={onTaskRetry}>重试任务请求</button>
+            )}
+            {!taskCanRetry && props.activeRun && ["failed", "stopped"].includes(props.activeRun.status) && (
+              <button onClick={props.onRetry}>重试</button>
+            )}
+            {canStop && (
+              <button
+                className="danger"
+                disabled={stopPending}
+                onClick={props.onStop}
+              >
+                {stopPending
+                  ? "停止请求处理中"
+                  : taskCanStop
+                    ? "停止任务"
+                    : "停止生成"}
+              </button>
+            )}
+            <button className="primary" disabled={sendDisabled} onClick={props.onSend}>
+              {props.uploading || taskSubmitting ? "正在提交…" : copy.send}
             </button>
-          )}
-          <button className="primary" disabled={sendDisabled} onClick={props.onSend}>
-            {props.uploading || taskSubmitting ? "正在提交…" : copy.send}
-          </button>
+          </div>
         </div>
       </div>
     </footer>

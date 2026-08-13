@@ -124,8 +124,19 @@ class EvaluationRunner:
     async def run_case(self, case: EvaluationCase, *, attempt: int = 1) -> EvaluationResult:
         if not case.enabled:
             return self._skipped(case, "评测用例已停用", attempt)
+        registered_specs = self.registry.specs()
+        registered_ids = {spec.id for spec in registered_specs}
+        unknown_tool_ids = sorted(set(case.allowed_tools) - registered_ids)
+        if unknown_tool_ids:
+            return self._configuration_error(
+                case,
+                f"评测用例引用了未知、已停用或不可用的工具：{'、'.join(unknown_tool_ids)}",
+                attempt,
+            )
         if self.provider is None:
             return self._skipped(case, "未显式注入已配置的真实 Provider", attempt)
+        allowed_tool_ids = set(case.allowed_tools)
+        selected_specs = [spec for spec in registered_specs if spec.id in allowed_tool_ids]
         thread = self.repository.save_thread(Thread(title=f"评测：{case.name}"))
         messages = [
             self.repository.save_message(
@@ -139,7 +150,7 @@ class EvaluationRunner:
             scenario=f"evaluation:{case.case_id}",
             authorized_targets=list(case.authorized_targets),
             budget=case.budget,
-            tool_snapshots=[self._tool_snapshot(spec) for spec in self.registry.specs()],
+            tool_snapshots=[self._tool_snapshot(spec) for spec in selected_specs],
         )
         run = self.repository.save_run(
             Run(
@@ -236,6 +247,53 @@ class EvaluationRunner:
             reason=reason,
         )
         return self._persist_result(case, result, attempt, started_at=None, run=None)
+
+    def _configuration_error(
+        self,
+        case: EvaluationCase,
+        reason: str,
+        attempt: int,
+    ) -> EvaluationResult:
+        """在创建 Run 前持久化评测配置错误，禁止把无效工具白名单降级为全量授权。"""
+
+        assertions = tuple(
+            EvaluationAssertionResult(
+                assertion=value,
+                status="configuration_error",
+                detail=reason,
+            )
+            for value in case.assertions
+        )
+        criteria = tuple(
+            EvaluationAssertionResult(
+                assertion=criterion.criterion_id,
+                criterion_id=criterion.criterion_id,
+                status="configuration_error",
+                detail=reason,
+                validator_type=criterion.validator_type,
+                validator_version="evaluation-runner/1.0",
+                score=0,
+                max_score=criterion.weight,
+            )
+            for criterion in case.criteria
+        )
+        result = EvaluationResult(
+            case_id=case.case_id,
+            status="failed",
+            assertions=assertions,
+            criteria=criteria,
+            score=0,
+            max_score=sum(item.max_score for item in criteria),
+            reason=reason,
+        )
+        return self._persist_result(
+            case,
+            result,
+            attempt,
+            started_at=None,
+            run=None,
+            failure_category="configuration_error",
+        )
 
     def _persist_result(
         self,

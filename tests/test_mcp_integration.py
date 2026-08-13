@@ -151,6 +151,21 @@ def test_mcp_rejects_shell_programs_and_protected_http_targets(tmp_path) -> None
         service.create(
             McpServerInput(name="禁止 Shell", transport="stdio", command="pwsh", args=["-c", "echo"])
         )
+    python = str(Path("python").resolve())
+    interpreter_service = McpService(
+        repository,
+        SecretCipher(Fernet.generate_key().decode()),
+        McpClient(allowed_commands={python.casefold()}),
+    )
+    with pytest.raises(ValueError, match="内联代码"):
+        interpreter_service.create(
+            McpServerInput(
+                name="禁止解释器内联代码",
+                transport="stdio",
+                command=python,
+                args=["-c", "print('not allowed')"],
+            )
+        )
     with pytest.raises(ValueError, match="受保护网络"):
         assert_resolved_endpoint_is_safe("https://169.254.169.254/mcp", allow_insecure_local=False)
 

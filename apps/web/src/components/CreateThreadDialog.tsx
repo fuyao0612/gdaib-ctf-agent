@@ -35,6 +35,7 @@ export default function CreateThreadDialog(props: Props) {
   const selectedProvider = props.providers.find(
     (provider) => provider.id === props.providerConfigId,
   );
+  const selectedScenario = scenarios.find((scenario) => scenario.id === props.scenario);
   const canSubmit = Boolean(
     props.title.trim() &&
       props.prompt.trim() &&
@@ -66,20 +67,23 @@ export default function CreateThreadDialog(props: Props) {
                   key={scenario.id}
                   type="button"
                   className={props.scenario === scenario.id ? "selected" : ""}
+                  aria-label={`${scenario.label} ${scenario.description}`}
                   aria-pressed={props.scenario === scenario.id}
                   onClick={() => props.onScenarioChange(scenario.id)}
                 >
                   <strong>{scenario.label}</strong>
-                  <small>{scenario.description}</small>
                 </button>
               ))}
             </div>
+            {selectedScenario && (
+              <p className="selected-scenario-copy">{selectedScenario.description}</p>
+            )}
           </fieldset>
 
           <fieldset className="launcher-section">
             <legend><span>2</span>描述任务</legend>
             <label className="launcher-title-field">
-              <span>任务名称</span>
+              <span>任务名称（可稍后修改）</span>
               <input
                 aria-label="任务名称"
                 value={props.title}
@@ -88,7 +92,7 @@ export default function CreateThreadDialog(props: Props) {
               />
             </label>
             <label className="launcher-prompt-field">
-              <span>任务说明</span>
+              <span>你希望 Agent 完成什么？</span>
               <textarea
                 aria-label="任务说明"
                 value={props.prompt}
@@ -96,7 +100,7 @@ export default function CreateThreadDialog(props: Props) {
                 placeholder="说明已获授权的分析目标、已有材料，以及你希望 Agent 交付什么结果。"
               />
             </label>
-            <p className="launcher-hint">附件可在任务创建后继续添加；Agent 会先理解目标，再规划和调用受控工具。</p>
+            <p className="launcher-hint">附件可在任务创建后继续添加。写清授权范围、已有材料和期望交付，Agent 会先规划再调用受控工具。</p>
           </fieldset>
 
         </form>
@@ -156,13 +160,22 @@ export default function CreateThreadDialog(props: Props) {
           </ul>
         </section>
 
-        <div className="launcher-actions">
-          <button type="button" onClick={props.onCancel}>返回当前任务</button>
-          <button className="primary" type="button" disabled={!canSubmit} onClick={props.onSubmit}>
-            {props.busy ? "正在启动…" : "创建并开始"}
-          </button>
-        </div>
+        <button
+          type="button"
+          className="launcher-settings-link"
+          onClick={props.onOpenSettings}
+        >
+          管理模型、Skills 与 MCP
+        </button>
+
       </aside>
+
+      <div className="launcher-actions">
+        <button type="button" onClick={props.onCancel}>返回当前任务</button>
+        <button className="primary" type="button" disabled={!canSubmit} onClick={props.onSubmit}>
+          {props.busy ? "正在启动…" : "创建并开始"}
+        </button>
+      </div>
     </section>
   );
 }

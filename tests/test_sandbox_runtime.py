@@ -14,7 +14,9 @@ from yuwang.tooling.runtime import SandboxRequest, SandboxRuntime, SandboxUnavai
 
 def test_sandbox_accepts_only_fixed_structured_operation() -> None:
     client = TestClient(app)
-    payload = base64.b64encode(b"hello\x00sandbox-value").decode()
+    payload = base64.b64encode(
+        b"hello\x00sandbox-value\x00\x01\x02" + "wide-value".encode("utf-16le")
+    ).decode()
 
     response = client.post(
         "/v1/run",
@@ -27,7 +29,7 @@ def test_sandbox_accepts_only_fixed_structured_operation() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["strings"] == ["hello", "sandbox-value"]
+    assert response.json()["strings"] == ["hello", "sandbox-value", "wide-value"]
     rejected = client.post("/v1/run", json={"operation": "shell", "command": "whoami"})
     assert rejected.status_code == 422
 

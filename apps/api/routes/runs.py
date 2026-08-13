@@ -32,6 +32,7 @@ from yuwang.domain.models import (
     Run,
     RunStatus,
 )
+from yuwang.reports.facts import public_arguments
 from yuwang.reports.trace import RunTraceService
 
 
@@ -428,7 +429,11 @@ def create_run_router(context: ApiContext) -> APIRouter:
             ),
             "model_calls": [value.model_dump(mode="json") for value in model_calls],
             "tool_calls": [
-                value.model_dump(mode="json") for value in repository.list_tool_calls(run_id)
+                {
+                    **value.model_dump(mode="json"),
+                    "arguments": public_arguments(value.arguments),
+                }
+                for value in repository.list_tool_calls(run_id)
             ],
             "evidence": [
                 value.model_dump(mode="json") for value in repository.list_evidence(run_id)

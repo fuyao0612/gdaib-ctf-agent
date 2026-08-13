@@ -51,6 +51,7 @@ from yuwang.tooling import ToolSpec, create_reference_registry, select_tool_spec
 from yuwang.tooling.ctf import register_ctf_tools
 from yuwang.tooling.mcp import McpService
 from yuwang.tooling.mcp.client import McpClient
+from yuwang.tooling.runtime import SandboxRuntime
 from yuwang.tooling.sdk import ToolRegistry
 
 
@@ -68,7 +69,13 @@ class ApiContext:
         self.profile_service.ensure_default(self.repository.get_agent_defaults().budget)
         self.policy = PolicyEngine(SecurityConfig())
         self.registry: ToolRegistry = create_reference_registry(config.artifact_root, self.repository)
-        register_ctf_tools(self.registry, self.repository, config.artifact_root)
+        self.sandbox_runtime = SandboxRuntime(config.sandbox_url)
+        register_ctf_tools(
+            self.registry,
+            self.repository,
+            config.artifact_root,
+            sandbox_runtime=self.sandbox_runtime,
+        )
         self.mcp_client = McpClient(
             allowed_commands={self._normalized_mcp_command(value) for value in config.mcp_stdio_allowed_commands},
             allow_insecure_local=config.allow_insecure_local_mcp,

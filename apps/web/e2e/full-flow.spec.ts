@@ -29,7 +29,7 @@ async function configure(page: Page) {
   await expect(settings).toBeVisible();
   await expect(page.locator(".settings-content")).toBeVisible();
 
-  await page.getByRole("button", { name: /模型连接/ }).first().click();
+  await page.getByRole("button", { name: /模型与中转/ }).first().click();
   await page.getByRole("button", { name: "新增配置" }).click();
 
   const providerSection = page.locator(".settings-content > section").first();
@@ -53,7 +53,7 @@ async function configure(page: Page) {
 async function createThread(page: Page, title: string) {
   await page.getByRole("button", { name: /新建任务/ }).click();
   await page.getByLabel("任务名称").fill(title);
-  await page.getByRole("button", { name: "创建", exact: true }).click();
+  await page.getByRole("button", { name: "创建并开始", exact: true }).click();
   await expect(page.getByTestId("thread-heading")).toContainText(title);
 }
 
@@ -122,20 +122,22 @@ async function openTaskControls(page: Page) {
   await expect(page.getByTestId("run-control-panel")).toBeVisible();
 }
 
-test("first setup exposes a task-only workspace", async ({ page }) => {
+test("first setup exposes a focused security workspace", async ({ page }) => {
   await configure(page);
-  await expect(page.getByRole("heading", { name: "开始一个新任务" })).toBeVisible();
-  await expect(page.locator("body")).toHaveCSS("background-color", "rgb(245, 246, 248)");
+  await expect(page.getByRole("heading", { name: "从一个明确的安全场景开始" })).toBeVisible();
+  await expect(page.locator("body")).toHaveCSS("background-color", "rgb(246, 245, 242)");
   await expectNoHorizontalOverflow(page);
 
   await createThread(page, "无需工具的任务");
   await expect(page.getByLabel("默认回复方式")).toHaveCount(0);
-  await expect(page.getByText("任务设置")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "运行审计" })).toHaveCount(0);
+  await expect(page.getByText("任务详情与控制")).toBeVisible();
+  await expect(page.getByRole("button", { name: "运行审计" })).toBeVisible();
   await sendTask(page, "请简短介绍你的能力", 1);
   await page.reload();
-  await expect(page.locator(".message.user")).toContainText("请简短介绍你的能力");
-  await expect(page.locator(".message.agent")).toHaveCount(1);
+  await expect(
+    page.locator(".message.user").filter({ hasText: "请简短介绍你的能力" }),
+  ).toHaveCount(1);
+  await expect(page.locator(".message.agent")).toHaveCount(2);
   await expect(page.locator(".run-progress")).toHaveCount(1);
 });
 
@@ -220,18 +222,27 @@ test("long task history scrolls inside the workspace at every target viewport", 
 
 test("one hundred task histories scroll independently from the fixed sidebar controls", async ({ page }) => {
   await configure(page);
-  for (let index = 1; index <= 100; index += 1)
-    await createThread(page, `滚动验收任务 ${index}`);
+  const session = await page.request.post("/api/v1/admin/session");
+  expect(session.ok()).toBeTruthy();
+  const csrfToken = (await session.json()).csrf_token as string;
+  for (let index = 1; index <= 100; index += 1) {
+    const response = await page.request.post("/api/v1/threads", {
+      data: { title: `滚动验收任务 ${index}`, mode: "normal" },
+      headers: { "X-CSRF-Token": csrfToken },
+    });
+    expect(response.ok()).toBeTruthy();
+  }
+  await page.reload();
 
   await page.setViewportSize({ width: 1440, height: 900 });
   const list = page.getByRole("navigation", { name: "任务历史" });
+  await expect(list.getByRole("button", { name: /^滚动验收任务 100 更新于/ })).toBeVisible();
   const sizes = await list.evaluate((element) => ({
     scrollHeight: element.scrollHeight,
     clientHeight: element.clientHeight,
   }));
   expect(sizes.scrollHeight).toBeGreaterThan(sizes.clientHeight);
   await list.evaluate((element) => { element.scrollTop = 0; });
-  await expect(list.getByRole("button", { name: /^滚动验收任务 100 更新于/ })).toBeVisible();
   await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(list.getByRole("button", { name: /^滚动验收任务 1 更新于/ })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
