@@ -104,6 +104,26 @@ describe("ThreadSidebar", () => {
     expect(screen.getByRole("button", { current: "page" })).toHaveAccessibleName(/漏洞分析/);
   });
 
+  it("任务菜单消费 Esc，不会继续关闭底层工作台界面", () => {
+    const underlayEscape = vi.fn();
+    window.addEventListener("keydown", underlayEscape);
+    render(
+      <ThreadSidebar
+        threads={threads}
+        onSelect={vi.fn()}
+        onRename={vi.fn()}
+        onToggleArchive={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "管理任务 漏洞分析" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "重命名" }), { key: "Escape" });
+    window.removeEventListener("keydown", underlayEscape);
+
+    expect(screen.queryByRole("group", { name: "漏洞分析 操作" })).not.toBeInTheDocument();
+    expect(underlayEscape).not.toHaveBeenCalled();
+  });
+
   it("渲染一百条历史任务时保留稳定行，不把标题或操作压缩到同一行", () => {
     const history = Array.from({ length: 100 }, (_, index) => ({
       ...threads[0],

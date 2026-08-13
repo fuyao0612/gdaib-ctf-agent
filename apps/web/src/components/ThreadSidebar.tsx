@@ -56,6 +56,10 @@ export default function ThreadSidebar({
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // 菜单是当前最上层交互。捕获并消费 Esc，避免同一次按键继续关闭
+      // 底层的新建任务、手机侧栏或其他工作台界面。
+      event.preventDefault();
+      event.stopPropagation();
       setOpenMenuId(null);
       setMenuPosition(null);
       menuTriggerRef.current?.focus();
@@ -65,13 +69,13 @@ export default function ThreadSidebar({
       setMenuPosition(null);
     };
     document.addEventListener("pointerdown", closeMenu);
-    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", closeOnEscape, true);
     window.addEventListener("resize", closeOnViewportChange);
     document.addEventListener("scroll", closeOnViewportChange, true);
     requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus());
     return () => {
       document.removeEventListener("pointerdown", closeMenu);
-      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("keydown", closeOnEscape, true);
       window.removeEventListener("resize", closeOnViewportChange);
       document.removeEventListener("scroll", closeOnViewportChange, true);
     };
