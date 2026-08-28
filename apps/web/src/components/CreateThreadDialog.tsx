@@ -1,50 +1,220 @@
-/** 创建任务弹窗；表单内容较高时自身滚动，按钮始终可访问。 */
+/** 新建任务工作区：用完整、连续的启动流程替代遮挡当前任务的居中弹窗。 */
+import {
+  ArrowLeft,
+  Binary,
+  Bug,
+  Cpu,
+  FilePenLine,
+  Flag,
+  Play,
+  Settings,
+  ShieldCheck,
+  Siren,
+  SlidersHorizontal,
+  Target,
+  type LucideIcon,
+} from "lucide-react";
+import type { ProviderConfig, SecurityScenario } from "../types";
+
 interface Props {
   title: string;
+  prompt: string;
+  scenario: SecurityScenario;
+  providerConfigId: string;
+  authorizedTarget: string;
+  providers: ProviderConfig[];
   busy: boolean;
   onTitleChange: (value: string) => void;
+  onPromptChange: (value: string) => void;
+  onScenarioChange: (value: SecurityScenario) => void;
+  onProviderChange: (value: string) => void;
+  onAuthorizedTargetChange: (value: string) => void;
+  onOpenSettings: (category: "providers" | "marketplace") => void;
   onCancel: () => void;
   onSubmit: () => void;
 }
 
+const scenarios: Array<{
+  id: SecurityScenario;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+}> = [
+  { id: "general", label: "通用研判", description: "从材料中识别风险并给出处置建议", icon: ShieldCheck },
+  { id: "ctf", label: "CTF 题目", description: "解码、取证、分析与 Flag 验证", icon: Flag },
+  { id: "incident_response", label: "应急响应", description: "日志时间线、IOC 提取与事件复盘", icon: Siren },
+  { id: "vulnerability_analysis", label: "漏洞分析", description: "复现证据、影响判断与修复验证", icon: Bug },
+  { id: "reverse_static", label: "静态逆向", description: "不执行样本，检查结构、导入和字符串", icon: Binary },
+];
+
 export default function CreateThreadDialog(props: Props) {
+  const selectedProvider = props.providers.find(
+    (provider) => provider.id === props.providerConfigId,
+  );
+  const selectedScenario = scenarios.find((scenario) => scenario.id === props.scenario);
+  const canSubmit = Boolean(
+    props.title.trim() &&
+      props.prompt.trim() &&
+      props.providerConfigId &&
+      !props.busy,
+  );
+
   return (
-    <div
-      className="modal-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-label="创建任务"
-    >
-      <form
-        className="modal"
-        onSubmit={(event) => {
-          event.preventDefault();
-          props.onSubmit();
-        }}
-      >
-        <h2>创建任务</h2>
-        <label>
-          任务名称
-          <input
-            aria-label="任务名称"
-            value={props.title}
-            onChange={(event) => props.onTitleChange(event.target.value)}
-          />
-        </label>
-        <p>直接发送消息即可；系统会在需要时自动执行受控任务。</p>
+    <section className="task-launcher" aria-labelledby="task-launcher-title">
+      <div className="task-launcher-main">
+        <header className="task-launcher-intro">
+          <span className="eyebrow">新建安全任务</span>
+          <h2 id="task-launcher-title">把目标说清楚，其余交给 Agent</h2>
+          <p>先选择安全场景，再描述要分析的材料和期望结果。任务创建后会立即开始。</p>
+        </header>
+
+        <form
+          id="task-launcher-form"
+          className="task-launcher-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (canSubmit) props.onSubmit();
+          }}
+        >
+          <fieldset className="launcher-section">
+            <legend><Target size={17} aria-hidden="true" />选择安全场景</legend>
+            <div className="scenario-options">
+              {scenarios.map((scenario) => {
+                const ScenarioIcon = scenario.icon;
+                return (
+                <button
+                  key={scenario.id}
+                  type="button"
+                  className={props.scenario === scenario.id ? "selected" : ""}
+                  aria-label={`${scenario.label} ${scenario.description}`}
+                  aria-pressed={props.scenario === scenario.id}
+                  onClick={() => props.onScenarioChange(scenario.id)}
+                >
+                  <ScenarioIcon size={16} aria-hidden="true" />
+                  <strong>{scenario.label}</strong>
+                </button>
+              )})}
+            </div>
+            {selectedScenario && (
+              <p className="selected-scenario-copy">{selectedScenario.description}</p>
+            )}
+          </fieldset>
+
+          <fieldset className="launcher-section">
+            <legend><FilePenLine size={17} aria-hidden="true" />描述任务</legend>
+            <label className="launcher-title-field">
+              <span>任务名称（可稍后修改）</span>
+              <input
+                aria-label="任务名称"
+                value={props.title}
+                onChange={(event) => props.onTitleChange(event.target.value)}
+                placeholder="例如：分析这份 Web 访问日志"
+              />
+            </label>
+            <label className="launcher-prompt-field">
+              <span>你希望 Agent 完成什么？</span>
+              <textarea
+                aria-label="任务说明"
+                value={props.prompt}
+                onChange={(event) => props.onPromptChange(event.target.value)}
+                placeholder="说明已获授权的分析目标、已有材料，以及你希望 Agent 交付什么结果。"
+              />
+            </label>
+            <p className="launcher-hint">附件可在任务创建后继续添加。写清授权范围、已有材料和期望交付，Agent 会先规划再调用受控工具。</p>
+          </fieldset>
+
+        </form>
+      </div>
+
+      <aside className="task-launcher-rail" aria-label="运行前检查">
         <div>
-          <button type="button" onClick={props.onCancel}>
-            取消
-          </button>
-          <button
-            className="primary"
-            type="submit"
-            disabled={props.busy || !props.title.trim()}
-          >
-            创建
-          </button>
+          <span className="rail-heading-icon"><SlidersHorizontal size={18} aria-hidden="true" /></span>
+          <h3>运行前检查</h3>
+          <p>把关键配置放在开始按钮旁边，避免进入任务后才发现模型或权限不对。</p>
         </div>
-      </form>
-    </div>
+
+        <label className="launcher-config-field">
+          <span><Cpu size={15} aria-hidden="true" />本次使用的模型</span>
+          {props.providers.length > 0 ? (
+            <select
+              aria-label="本次使用的模型"
+              value={props.providerConfigId}
+              onChange={(event) => props.onProviderChange(event.target.value)}
+            >
+              {props.providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name} · {provider.actual_model ?? provider.model}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <button
+              type="button"
+              className="launcher-warning"
+              aria-label="尚无可用模型，去设置中心配置"
+              onClick={() => props.onOpenSettings("providers")}
+            >
+              尚无可用模型，去设置中心配置
+            </button>
+          )}
+          {selectedProvider && (
+            <small>
+              {selectedProvider.connection_status === "ok" ? "连接已验证" : "尚未完成连接测试"}
+              {selectedProvider.is_default ? " · 默认 Provider" : ""}
+            </small>
+          )}
+        </label>
+
+        <label className="launcher-config-field">
+          <span><Target size={15} aria-hidden="true" />本次授权目标（可选）</span>
+          <input
+            aria-label="本次授权目标"
+            value={props.authorizedTarget}
+            onChange={(event) => props.onAuthorizedTargetChange(event.target.value)}
+            placeholder="域名、IP 或靶场地址"
+          />
+          <small>仅填写你拥有测试权限的目标；多个目标用逗号分隔。</small>
+        </label>
+
+        <section className="launcher-guardrails" aria-label="默认安全边界">
+          <strong><ShieldCheck size={16} aria-hidden="true" />默认安全边界</strong>
+          <ul>
+            <li>公网目标默认拒绝</li>
+            <li>高风险动作需要确认</li>
+            <li>工具调用与证据全程留痕</li>
+          </ul>
+        </section>
+
+        <button
+          type="button"
+          className="launcher-settings-link"
+          onClick={() => props.onOpenSettings("providers")}
+        >
+          <Settings size={16} aria-hidden="true" />
+          管理模型连接
+        </button>
+        <button
+          type="button"
+          className="launcher-settings-link"
+          onClick={() => props.onOpenSettings("marketplace")}
+        >
+          <Settings size={16} aria-hidden="true" />
+          打开 Skills 与 MCP 能力广场
+        </button>
+
+      </aside>
+
+      <div className="launcher-actions">
+        <button type="button" onClick={props.onCancel}><ArrowLeft size={16} aria-hidden="true" />返回当前任务</button>
+        <button
+          className="primary"
+          type="submit"
+          form="task-launcher-form"
+          disabled={!canSubmit}
+        >
+          <Play size={16} aria-hidden="true" />{props.busy ? "正在启动…" : "创建并开始"}
+        </button>
+      </div>
+    </section>
   );
 }

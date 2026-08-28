@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from yuwang.tooling.registry import ToolRegistry
+from yuwang.tooling.runtime import SandboxRuntime
 
 from .archive import ArchiveExtractTool
 from .artifacts import ArtifactAccess, ArtifactRepository
@@ -15,7 +16,11 @@ from .flag import FlagCandidateVerifyTool
 
 
 def register_ctf_tools(
-    registry: ToolRegistry, repository: ArtifactRepository, artifact_root: Path
+    registry: ToolRegistry,
+    repository: ArtifactRepository,
+    artifact_root: Path,
+    *,
+    sandbox_runtime: SandboxRuntime | None = None,
 ) -> None:
     """显式注册，不扫描文件系统或导入未知代码。"""
 
@@ -23,7 +28,7 @@ def register_ctf_tools(
     for tool in (
         EncodingDecodeTool(artifacts),
         FileInspectTool(artifacts),
-        StringsExtractTool(artifacts),
+        StringsExtractTool(artifacts, sandbox_runtime),
         ArchiveExtractTool(artifacts),
         FlagCandidateVerifyTool(artifacts),
         ClassicalCipherAnalyzeTool(artifacts),

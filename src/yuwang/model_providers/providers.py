@@ -385,6 +385,7 @@ class OpenAICompatibleProvider:
                 timeout=self.timeout_seconds,
                 verify=True,
                 follow_redirects=False,
+                trust_env=False,
                 transport=self._transport,
             ) as client:
                 response = await client.get(
@@ -562,6 +563,7 @@ class OpenAICompatibleProvider:
                 timeout=timeout,
                 verify=True,
                 follow_redirects=False,
+                trust_env=False,
                 transport=self._transport,
             ) as client:
                 response = await client.post(
@@ -590,6 +592,7 @@ class OpenAICompatibleProvider:
                 timeout=timeout,
                 verify=True,
                 follow_redirects=False,
+                trust_env=False,
                 transport=self._transport,
             ) as client:
                 async with client.stream(
@@ -687,6 +690,7 @@ class OpenAICompatibleProvider:
                 timeout=timeout,
                 verify=True,
                 follow_redirects=False,
+                trust_env=False,
                 transport=self._transport,
             ) as client:
                 response = await client.post(
@@ -833,6 +837,7 @@ class OpenAICompatibleProvider:
                 timeout=timeout,
                 verify=True,
                 follow_redirects=False,
+                trust_env=False,
                 transport=self._transport,
             ) as client:
                 response = await client.post(

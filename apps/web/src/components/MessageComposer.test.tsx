@@ -1,4 +1,5 @@
 ﻿import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderConfig, Run, RunStatus } from "../types";
 import MessageComposer from "./MessageComposer";
@@ -114,6 +115,36 @@ describe("统一消息输入框", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onMessageChange).toHaveBeenCalledWith("先核对附件");
     expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("中文输入法组合输入确认时不会把 Enter 当作发送", () => {
+    const { onSend } = renderComposer("running");
+    const input = screen.getByLabelText("消息");
+
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(onSend).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: "Enter", isComposing: false });
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("附件入口可通过键盘聚焦和激活", async () => {
+    const user = userEvent.setup();
+    renderComposer("waiting_input");
+    const attachmentButton = screen.getByRole("button", { name: "附件" });
+    const fileInput = screen.getByLabelText("上传附件");
+    const inputClick = vi.spyOn(fileInput, "click");
+
+    for (
+      let index = 0;
+      index < 8 && document.activeElement !== attachmentButton;
+      index += 1
+    ) {
+      await user.tab();
+    }
+    expect(attachmentButton).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(inputClick).toHaveBeenCalledTimes(1);
   });
 
   it("等待补充时仍保留同一输入框、附件和停止入口", () => {

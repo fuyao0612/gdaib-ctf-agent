@@ -1,4 +1,5 @@
 /** 用公开就绪状态展示首次配置进度，不在浏览器复制一套配置判断。 */
+import { Check, CircleEllipsis } from "lucide-react";
 import type { SetupStatus } from "../types";
 
 interface Props {
@@ -19,8 +20,14 @@ export default function SetupProgress({ authenticated, status }: Props) {
       <strong>配置进度</strong>
       <ol>
         {steps.map((step, index) => (
-          <li className={step.ready ? "ready" : "pending"} key={step.label}>
-            <span aria-hidden="true">{step.ready ? "✓" : index + 1}</span>
+          <li
+            aria-label={`${step.label}：${step.ready ? "已完成" : `待完成，第 ${index + 1} 步`}`}
+            className={step.ready ? "ready" : "pending"}
+            key={step.label}
+          >
+            <span aria-hidden="true">
+              {step.ready ? <Check size={14} /> : <CircleEllipsis size={14} />}
+            </span>
             {step.label}
           </li>
         ))}

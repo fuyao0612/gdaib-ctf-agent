@@ -84,7 +84,12 @@ function Import-YuwangEnvironment([hashtable]$Values) {
 
 function Assert-DevelopmentDependencies {
     Write-Step '检查 Python、Node.js、npm 和本地依赖'
-    $python = Get-RequiredCommand 'python' '请安装 Python 3.11 或更高版本，并重新打开 PowerShell。'
+    $venvPython = Join-Path $root '.venv\Scripts\python.exe'
+    $python = if (Test-Path -LiteralPath $venvPython) {
+        Get-Command $venvPython
+    } else {
+        Get-RequiredCommand 'python' '请安装 Python 3.11 或更高版本，并重新打开 PowerShell。'
+    }
     $node = Get-RequiredCommand 'node' '请安装 Node.js 20 或更高版本，并重新打开 PowerShell。'
     $npm = Get-RequiredCommand 'npm.cmd' 'npm 随 Node.js 安装；请重新安装 Node.js。'
 

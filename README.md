@@ -370,6 +370,7 @@ python examples/local_api.py
 - [测试](docs/testing.md)：质量门禁与浏览器验收。
 - [执行轨迹与报告](docs/trajectory.md)：行动观察时间线、指标口径、下载与只读回放。
 - [本地评测](docs/evaluation.md)：评测用例、显式执行、结果查询与回放。
+- [本地安全知识库](docs/knowledge-base.md)：RAG 导入、检索、出站许可与 Run 快照审计。
 - [通用安全 Agent 设计](docs/general-security-agent-design.md)：任务结果、证据、场景适配、评测与历史兼容契约。
 - [故障排查](docs/troubleshooting.md)：启动、鉴权、模型和恢复问题。
 - [扩展开发](docs/extensions.md)：Provider、组件与工具的扩展边界。

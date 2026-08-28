@@ -1,5 +1,6 @@
 /** 运行状态、对话时间线与审计抽屉等只读视图。 */
 import { useLayoutEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { api } from "../api";
 import type {
   Event,
@@ -19,6 +20,7 @@ import {
 import TaskPlanControl from "./TaskPlanControl";
 import RunControlPanel from "./RunControlPanel";
 import { TrajectoryReplay } from "./TrajectoryReplay";
+import IconButton from "./IconButton";
 
 export function StatusBadge({ status }: { status: string }) {
   const labels: Record<string, string> = {
@@ -257,6 +259,7 @@ interface InspectorProps {
 }
 
 export function InspectorPanel(props: InspectorProps) {
+  if (!props.open) return null;
   const toolEvents = props.events.filter((event) =>
     event.type.startsWith("tool_"),
   );
@@ -266,19 +269,19 @@ export function InspectorPanel(props: InspectorProps) {
   return (
     <aside
       id="run-inspector"
-      className={`inspector ${props.open ? "open" : ""}`}
+      className="inspector open"
+      aria-label="运行审计"
     >
       <div className="inspector-head">
         <span>运行审计</span>
         <div>
-          <small>LIVE</small>
-          <button
+          <small>实时</small>
+          <IconButton
             className="inspector-close"
-            aria-label="关闭运行审计"
+            icon={X}
+            label="关闭运行审计"
             onClick={props.onClose}
-          >
-            关闭
-          </button>
+          />
         </div>
       </div>
       <div className="metrics">
@@ -346,6 +349,18 @@ export function InspectorPanel(props: InspectorProps) {
             <dt>人工介入</dt>
             <dd>{props.audit.history?.manual_interventions ?? 0} 次</dd>
           </dl>
+        </section>
+      )}
+      {props.audit?.knowledge && props.audit.knowledge.length > 0 && (
+        <section className="knowledge-audit" data-testid="knowledge-audit">
+          <div className="section-label">RAG 知识引用</div>
+          {props.audit.knowledge.map((hit) => (
+            <article key={hit.chunk_id}>
+              <strong>{hit.title} · 片段 {hit.chunk_ordinal}</strong>
+              <small>相关度 {hit.score.toFixed(2)} · SHA-256 {hit.content_sha256.slice(0, 12)}…</small>
+              <p>{hit.content}</p>
+            </article>
+          ))}
         </section>
       )}
       <div className="section-label">完整公开事件</div>

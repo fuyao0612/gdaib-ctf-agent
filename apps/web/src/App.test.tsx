@@ -35,6 +35,7 @@ function thread(id: string, title: string) {
     id,
     title,
     mode: "normal",
+    scenario: "general",
     interaction_mode: "chat",
     provider_config_id: null,
     provider_fallback_notice: null,
@@ -85,14 +86,150 @@ describe("App", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it("新建对话只要求名称，不展示模式选择", async () => {
+  it("390px 首次渲染默认收起侧栏且保留桌面端展开偏好", async () => {
+    window.localStorage.setItem("yuwang.sidebarExpanded", "true");
+    const setItem = vi.spyOn(window.localStorage, "setItem");
+    vi.stubGlobal("innerWidth", 390);
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query === "(max-width: 700px)",
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(() => true),
+      })),
+    );
+
+    const { container } = render(<App />);
+    await screen.findByText("从一个明确的安全场景开始");
+
+    expect(container.querySelector(".shell")).toHaveClass("sidebar-collapsed");
+    expect(window.localStorage.getItem("yuwang.sidebarExpanded")).toBe("true");
+    expect(setItem).not.toHaveBeenCalledWith("yuwang.sidebarExpanded", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开侧栏" }));
+    expect(screen.getByRole("button", { name: "关闭导航" })).toBeInTheDocument();
+    expect(container.querySelector("main")).toHaveAttribute("inert");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("button", { name: "关闭导航" })).not.toBeInTheDocument();
+    expect(container.querySelector("main")).not.toHaveAttribute("inert");
+    expect(window.localStorage.getItem("yuwang.sidebarExpanded")).toBe("true");
+  });
+
+  it("桌面侧栏可用图标按钮收起和恢复，并持久化用户偏好", async () => {
+    const { container } = render(<App />);
+    await screen.findByText("从一个明确的安全场景开始");
+
+    const collapse = screen.getByRole("button", { name: "收起侧栏" });
+    expect(collapse).toHaveAttribute("aria-controls", "app-sidebar");
+    expect(collapse).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(collapse);
+
+    expect(container.querySelector(".shell")).toHaveClass("sidebar-collapsed");
+    const expand = screen.getByRole("button", { name: "展开侧栏" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() =>
+      expect(window.localStorage.getItem("yuwang.sidebarExpanded")).toBe("false"),
+    );
+
+    fireEvent.click(expand);
+    expect(container.querySelector(".shell")).toHaveClass("sidebar-expanded");
+    await waitFor(() =>
+      expect(window.localStorage.getItem("yuwang.sidebarExpanded")).toBe("true"),
+    );
+  });
+
+  it("新建任务在连续启动页中确认场景、说明和模型", async () => {
     render(<App />);
-    await screen.findByText("开始一个新任务");
-    fireEvent.click(screen.getByText("创建第一个任务"));
+    await screen.findByText("从一个明确的安全场景开始");
+    fireEvent.click(screen.getByText("创建通用任务"));
     expect(screen.getByLabelText("任务名称")).toBeInTheDocument();
+    expect(screen.getByLabelText("任务说明")).toBeInTheDocument();
+    expect(screen.getByText("运行前检查")).toBeInTheDocument();
     expect(screen.queryByLabelText("默认回复方式")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "创建" }));
-    expect(await screen.findByText("测试任务")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "创建并开始" })[0]).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /CTF 题目/ }));
+    expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toContain("Flag");
+  });
+
+  it("从启动页创建任务后使用选定模型立即发送任务说明", async () => {
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    const provider = {
+      id: "provider-1",
+      name: "测试模型服务",
+      preset: "custom",
+      base_url: "https://example.test/v1",
+      model: "security-model",
+      enabled: true,
+      is_default: true,
+      fallback_order: null,
+      timeout_seconds: 60,
+      max_retries: 1,
+      structured_mode: "auto",
+      tool_call_mode: "structured",
+      input_price_per_million: 0,
+      output_price_per_million: 0,
+      resolved_structured_mode: "json_schema",
+      fallback_on: [],
+      has_api_key: true,
+      created_at: now,
+      updated_at: now,
+      connection_status: "ok",
+      last_tested_at: now,
+      last_test_error: null,
+      actual_model: "security-model",
+    };
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      requests.push({ url, method, body: String(init?.body ?? "") });
+      if (url.endsWith("/setup/status"))
+        return Response.json({ configured: true, checks: {}, version: "0.5.0" });
+      if (url.endsWith("/admin/session"))
+        return Response.json({ authenticated: true, csrf_token: "csrf-test" });
+      if (url.endsWith("/providers")) return Response.json([provider]);
+      if (url.endsWith("/skills") || url.endsWith("/tools") || url.endsWith("/agent-profiles"))
+        return Response.json([]);
+      if (url.endsWith("/settings/chat")) return Response.json(preferences);
+      if (url.endsWith("/threads") && method === "GET") return Response.json([]);
+      if (url.endsWith("/threads") && method === "POST")
+        return Response.json(thread("t1", "测试任务"));
+      if (url.endsWith("/threads/t1") && method === "PATCH")
+        return Response.json({ ...thread("t1", "测试任务"), provider_config_id: provider.id });
+      if (url.endsWith("/threads/t1") && method === "GET")
+        return Response.json(detail("t1", "测试任务", { provider_config_id: provider.id }));
+      if (url.endsWith("/threads/t1/memories")) return Response.json([]);
+      if (url.endsWith("/threads/t1/message") && method === "POST") {
+        const userMessage = { id: "m1", role: "user", content: "启动说明", artifact_ids: [], created_at: now };
+        const run = { id: "r1", thread_id: "t1", status: "queued", provider: provider.name, model: provider.model };
+        return new Response(
+          `event: execution_started\ndata: ${JSON.stringify({ user_message: userMessage, run })}\n\n`,
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      }
+      return Response.json({});
+    });
+
+    render(<App />);
+    await screen.findByText("从一个明确的安全场景开始");
+    fireEvent.click(screen.getByText("创建通用任务"));
+    fireEvent.change(screen.getByLabelText("任务说明"), { target: { value: "启动说明" } });
+    const startButton = screen.getByRole("button", { name: "创建并开始" });
+    await waitFor(() => expect(startButton).toBeEnabled());
+    fireEvent.click(startButton);
+
+    await waitFor(() =>
+      expect(requests.some((request) => request.url.endsWith("/threads/t1/message"))).toBe(true),
+    );
+    const request = requests.find((item) => item.url.endsWith("/threads/t1/message"));
+    expect(JSON.parse(request?.body ?? "{}")).toMatchObject({
+      content: "启动说明",
+      provider_config_id: provider.id,
+    });
   });
 
   it("先建立本机会话，再请求受保护的工作台数据", async () => {
@@ -113,7 +250,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    await screen.findByText("开始一个新任务");
+    await screen.findByText("从一个明确的安全场景开始");
     await waitFor(() =>
       expect(requests.some((request) => request.url.endsWith("/tools"))).toBe(true),
     );
@@ -130,11 +267,28 @@ describe("App", () => {
 
   it("支持使用 Esc 关闭设置弹层", async () => {
     render(<App />);
-    await screen.findByText("开始一个新任务");
+    await screen.findByText("从一个明确的安全场景开始");
     fireEvent.click(screen.getByRole("button", { name: /设置中心/ }));
     expect(screen.getByRole("dialog", { name: "设置中心" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "设置中心" })).not.toBeInTheDocument();
+  });
+
+  it("从新建任务打开设置后，Esc 只关闭设置并保留任务草稿", async () => {
+    render(<App />);
+    await screen.findByText("从一个明确的安全场景开始");
+    fireEvent.click(screen.getByText("创建通用任务"));
+    fireEvent.change(screen.getByLabelText("任务说明"), {
+      target: { value: "保留这段尚未提交的安全分析要求" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "管理模型连接" }));
+    expect(await screen.findByRole("dialog", { name: "设置中心" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "设置中心" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /把目标说清楚/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("任务说明")).toHaveValue("保留这段尚未提交的安全分析要求");
   });
 
   it("普通消息走统一入口并显示自然语言回复，不创建任务卡", async () => {

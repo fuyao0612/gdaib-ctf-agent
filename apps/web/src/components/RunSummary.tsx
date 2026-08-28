@@ -1,5 +1,6 @@
 /** 默认对话区的五阶段进度与统一结果卡；技术细节继续留在运行审计。 */
 import { useEffect, useMemo, useState } from "react";
+import { Check, CircleEllipsis, TriangleAlert } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api } from "../api";
 import type { Event, ExecutionStep, FlagCandidate, Message, Report, Run, RunAudit } from "../types";
@@ -191,8 +192,14 @@ export function RunProgress({ run, events, audit, report = null }: Omit<Props, "
         <summary>查看执行阶段与资源</summary>
         <ol>
           {phases.map((phase, index) => (
-            <li className={phase.state} key={phase.label}>
-              <span>{phase.state === "completed" ? "✓" : index + 1}</span>
+            <li
+              aria-label={`${phase.label}：${phase.state === "completed" ? "已完成" : phase.state === "active" ? "执行中" : phase.state === "waiting" ? "等待中" : phase.state === "interrupted" ? "已中断" : "待执行"}`}
+              className={phase.state}
+              key={phase.label}
+            >
+              <span aria-hidden="true">
+                {phase.state === "completed" ? <Check size={14} /> : index + 1}
+              </span>
               {phase.label}
             </li>
           ))}
@@ -229,6 +236,11 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
   const review = retrospective(report);
   const handoff = report?.data.handoff_summary;
   const taskResults = report?.data.task_results ?? (report?.data.task_result ? [report.data.task_result] : []);
+  const ResultStatusIcon = run.status === "completed"
+    ? Check
+    : run.status.startsWith("waiting_") || run.status === "paused"
+      ? CircleEllipsis
+      : TriangleAlert;
   const reason =
     (run.status === "failed" ? failureSummary : null) ??
     nonEmpty(run.error) ??
@@ -238,7 +250,7 @@ export function ResultCard({ run, events, audit, report, messages }: Props) {
   return (
     <section className={`result-card result-${run.status}`} data-testid={`result-${run.status}`}>
       <header>
-        <div><span aria-hidden="true">{run.status === "completed" ? "✓" : run.status.startsWith("waiting_") || run.status === "paused" ? "…" : "!"}</span><h3>{copy.title}</h3></div>
+        <div><ResultStatusIcon aria-hidden="true" size={18} /><h3>{copy.title}</h3></div>
         <small>{verifiedLabel(run, candidates)}</small>
       </header>
       <p className="result-next">{copy.next}</p>

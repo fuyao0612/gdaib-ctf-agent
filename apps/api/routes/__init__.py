@@ -3,6 +3,7 @@
 from .agent_profiles import create_agent_profile_router
 from .evaluations import create_evaluation_router
 from .health import create_health_router
+from .knowledge import create_knowledge_router
 from .mcp_servers import create_mcp_server_router
 from .messages import create_message_router
 from .providers import create_provider_router
@@ -16,6 +17,7 @@ __all__ = [
     "create_agent_profile_router",
     "create_evaluation_router",
     "create_health_router",
+    "create_knowledge_router",
     "create_message_router",
     "create_mcp_server_router",
     "create_provider_router",

@@ -14,7 +14,16 @@ from apps.api.main import Settings, create_app
 from apps.api.schemas import MessageCreate, RunCreate
 from tests.fakes import FakeEchoTool
 from yuwang.agent import AgentStateModel
-from yuwang.domain.models import AgentAction, AgentPlan, Observation, Run, RunStatus, TaskSpec
+from yuwang.domain.models import (
+    AgentAction,
+    AgentPlan,
+    CallStatus,
+    Observation,
+    Run,
+    RunStatus,
+    TaskSpec,
+    ToolCall,
+)
 from yuwang.tooling.mcp import McpServerInput
 
 
@@ -852,6 +861,65 @@ def test_admin_cookie_session_requires_csrf_for_mutations(tmp_path):
         )
         assert logout.status_code == 204
         assert client.get("/api/v1/admin/settings/providers").status_code == 401
+
+
+def test_run_audit_redacts_tool_argument_credentials(tmp_path):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        open_local_session(client)
+        thread = client.post("/api/v1/threads", json={"title": "审计脱敏"}).json()
+        run = app.state.repository.save_run(Run(thread_id=UUID(thread["id"])))
+        app.state.repository.save_tool_call(
+            ToolCall(
+                run_id=run.id,
+                tool_name="mcp.example.inspect",
+                tool_id="mcp.example.inspect",
+                tool_version="1.0.0",
+                arguments={
+                    "authorization": "Bearer audit-secret",
+                    "token": "mcp-token-secret",
+                    "nested": {"password": "nested-password-secret"},
+                    "ctf_header": {
+                        "name": "Authorization",
+                        "value": "Bearer header-secret",
+                    },
+                    "query": "safe-value",
+                },
+                input_summary="调用受控 MCP 工具",
+                duration_ms=12,
+                status=CallStatus.SUCCEEDED,
+            )
+        )
+
+        response = client.get(f"/api/v1/runs/{run.id}/audit")
+
+        assert response.status_code == 200
+        payload = response.json()
+        arguments = payload["tool_calls"][0]["arguments"]
+        assert arguments == {
+            "authorization": "[REDACTED]",
+            "token": "[REDACTED]",
+            "nested": {"password": "[REDACTED]"},
+            "ctf_header": {"name": "Authorization", "value": "[REDACTED]"},
+            "query": "safe-value",
+        }
+        serialized = response.text
+        for secret in (
+            "audit-secret",
+            "mcp-token-secret",
+            "nested-password-secret",
+            "header-secret",
+        ):
+            assert secret not in serialized
+
+
+def test_workbench_rejects_untrusted_host_before_issuing_session(tmp_path):
+    app = configured_app(tmp_path)
+    with TestClient(app, base_url="http://evil.example") as client:
+        response = client.post("/api/v1/admin/session")
+
+    assert response.status_code == 400
+    assert "Invalid host header" in response.text
 
 
 def test_health_readiness_and_setup_status_are_distinct(tmp_path, provider_server):

@@ -11,6 +11,21 @@ from .models import McpServerConfig
 
 _SHELL_NAMES = {"sh", "bash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "pwsh"}
 _SHELL_METACHARACTERS = {"|", "&", ";", ">", "<", "`", "\n", "\r"}
+_INTERPRETER_NAMES = {
+    "bun",
+    "bun.exe",
+    "deno",
+    "deno.exe",
+    "node",
+    "node.exe",
+    "python",
+    "python.exe",
+    "python3",
+    "python3.exe",
+    "ruby",
+    "ruby.exe",
+}
+_INLINE_CODE_FLAGS = {"-c", "-e", "--eval", "--evaluate", "--print"}
 _LOCAL_NAMES = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -34,6 +49,10 @@ def validate_stdio_config(config: McpServerConfig, allowed_commands: set[str]) -
     for argument in config.args:
         if not argument or any(character in argument for character in _SHELL_METACHARACTERS):
             raise ValueError("stdio MCP args 不能包含 Shell 元字符或空参数")
+    if command_name in _INTERPRETER_NAMES and any(
+        argument.casefold() in _INLINE_CODE_FLAGS for argument in config.args
+    ):
+        raise ValueError("stdio MCP 禁止通过解释器参数执行内联代码")
 
 
 def validate_http_config(config: McpServerConfig, *, allow_insecure_local: bool) -> None:

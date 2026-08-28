@@ -115,4 +115,33 @@ describe("Provider 删除确认", () => {
     );
     expect(screen.queryByRole("dialog", { name: "删除模型配置" })).not.toBeInTheDocument();
   });
+
+  it("普通设置中可发现、搜索并直接切换中转模型", async () => {
+    vi.spyOn(api, "providerPresets").mockResolvedValue({});
+    vi.spyOn(api, "discoverProviderModels").mockResolvedValue({
+      models: ["model-a", "model-b", "vision-model"],
+      manual_model_supported: true,
+    });
+    const update = vi.spyOn(api, "updateProvider").mockResolvedValue({
+      ...provider,
+      model: "model-b",
+    });
+    const { onChanged, onRefresh } = renderSettings();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看可用模型" }));
+    expect(await screen.findByText("model-b")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("搜索 会话模型 模型"), {
+      target: { value: "model-b" },
+    });
+    expect(screen.queryByText("model-a")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /model-b/ }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith(
+      "csrf-test",
+      provider.id,
+      expect.objectContaining({ model: "model-b", api_key: null }),
+    ));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(onChanged).toHaveBeenCalledOnce();
+  });
 });

@@ -194,7 +194,16 @@ class AgentRunCoordinator:
             if call.status == CallStatus.STARTED
         ]
         for call in uncertain:
-            tool = engine.registry.get(call.tool_name)
+            reference = call.tool_id or call.tool_name
+            try:
+                tool = engine.registry.get(reference)
+            except KeyError:
+                await self.mark_recovery_failed(
+                    run,
+                    task,
+                    f"恢复运行所需工具 {reference} 未注册、已停用或当前不可用",
+                )
+                return
             if not tool.spec.idempotent:
                 await self.mark_recovery_failed(
                     run,

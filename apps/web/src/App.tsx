@@ -1,7 +1,23 @@
 /** 单页工作台协调器：只管理共享状态和网络动作，页面区域由小组件渲染。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  Binary,
+  Boxes,
+  Bug,
+  ClipboardCheck,
+  FilePlus2,
+  Flag,
+  FolderOpen,
+  Menu,
+  PanelLeftClose,
+  Settings,
+  ShieldCheck,
+  Siren,
+  X,
+} from "lucide-react";
 import { api } from "./api";
-import SettingsCenter from "./SettingsCenter";
+import SettingsCenter, { type SettingsCategory } from "./SettingsCenter";
 import EvaluationResults from "./components/EvaluationResults";
 import CreateThreadDialog from "./components/CreateThreadDialog";
 import MessageComposer from "./components/MessageComposer";
@@ -13,6 +29,7 @@ import {
   StatusBadge,
 } from "./components/RunViews";
 import ThreadSidebar from "./components/ThreadSidebar";
+import IconButton from "./components/IconButton";
 import { useTaskActions } from "./hooks/useTaskActions";
 import { useWorkbenchData } from "./hooks/useWorkbenchData";
 import { useRunControlActions } from "./hooks/useRunControlActions";
@@ -23,9 +40,30 @@ import type {
   SkillDefinition,
   Thread,
   ToolSpec,
+  SecurityScenario,
 } from "./types";
 import "./styles.css";
 import "./thread-management.css";
+
+const taskStarterPrompts: Record<SecurityScenario, string> = {
+  general: "请分析我接下来提供的安全材料，先说明判断依据，再给出可复现的验证步骤和修复建议。",
+  ctf: "请分析这道 CTF 题目。先识别题型和已有线索，再给出逐步解题计划；对 Flag 做格式与证据验证。",
+  incident_response: "请分析这批应急响应材料，整理事件时间线、提取 IOC、判断影响范围，并给出处置与复盘建议。",
+  vulnerability_analysis: "请在已授权范围内分析该漏洞，给出可复现证据、影响判断、CWE 映射，以及可验证的修复方案。",
+  reverse_static: "请仅做静态分析，不执行样本。检查文件结构、导入、字符串和可疑行为，并给出证据与后续隔离建议。",
+};
+
+function initialSidebarExpanded(): boolean {
+  if (isCompactViewport()) return false;
+  return window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false";
+}
+
+function isCompactViewport(): boolean {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(max-width: 700px)").matches
+  );
+}
 
 export default function App() {
   const workspace = useWorkbenchData();
@@ -63,13 +101,19 @@ export default function App() {
   const [tools, setTools] = useState<ToolSpec[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("新任务");
+  const [newScenario, setNewScenario] = useState<SecurityScenario>("general");
+  const [newPrompt, setNewPrompt] = useState(taskStarterPrompts.general);
+  const [newProviderId, setNewProviderId] = useState("");
+  const [newAuthorizedTarget, setNewAuthorizedTarget] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("quick");
   const [evaluationOpen, setEvaluationOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const inspectorUserRunRef = useRef<string | null>(null);
-  const [sidebarExpanded, setSidebarExpanded] = useState(
-    () => window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false",
-  );
+  const sidebarRef = useRef<HTMLElement>(null);
+  const compactSidebarReturnFocusRef = useRef<HTMLElement | null>(null);
+  const [sidebarExpanded, setSidebarExpanded] = useState(initialSidebarExpanded);
+  const [compactLayout, setCompactLayout] = useState(isCompactViewport);
   const [initialSetup, setInitialSetup] = useState(false);
   const [bootstrapReady, setBootstrapReady] = useState(false);
   // 上传是异步的。切换会话时先更新此 ref，旧会话的迟到响应不能混入新会话的
@@ -161,6 +205,17 @@ export default function App() {
     void refreshProviders().catch(() => setProviders([]));
   }, [bootstrapReady, refreshProviders]);
 
+  useEffect(() => {
+    if (providers.length === 0) {
+      setNewProviderId("");
+      return;
+    }
+    if (providers.some((provider) => provider.id === newProviderId)) return;
+    setNewProviderId(
+      providers.find((provider) => provider.is_default)?.id ?? providers[0].id,
+    );
+  }, [newProviderId, providers]);
+
   const refreshSkills = useCallback(async () => {
     const result = await api.listSkills();
     setSkills(Array.isArray(result) ? result.filter((skill) => skill.enabled) : []);
@@ -202,24 +257,86 @@ export default function App() {
   useEffect(() => {
     const closeOverlay = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      // Esc 也能关闭设置或新建对话弹层；只有审计抽屉本来打开时才把它
-      // 记为用户选择，避免无关弹层影响新 Run 的审计默认展开状态。
-      if (inspectorOpen && activeRunId) inspectorUserRunRef.current = activeRunId;
-      setInspectorOpen(false);
-      setCreateOpen(false);
-      setSettingsOpen(false);
-      setEvaluationOpen(false);
+      // 只关闭最上层界面，避免从新建任务打开设置后按一次 Esc，连底层草稿
+      // 一起丢失。
+      if (settingsOpen) {
+        setSettingsOpen(false);
+        return;
+      }
+      if (evaluationOpen) {
+        setEvaluationOpen(false);
+        return;
+      }
+      if (inspectorOpen) {
+        if (activeRunId) inspectorUserRunRef.current = activeRunId;
+        setInspectorOpen(false);
+        return;
+      }
+      if (compactLayout && sidebarExpanded) {
+        setSidebarExpanded(false);
+        return;
+      }
+      if (createOpen) setCreateOpen(false);
     };
     window.addEventListener("keydown", closeOverlay);
     return () => window.removeEventListener("keydown", closeOverlay);
-  }, [activeRunId, inspectorOpen]);
+  }, [activeRunId, compactLayout, createOpen, evaluationOpen, inspectorOpen, settingsOpen, sidebarExpanded]);
 
   useEffect(() => {
-    window.localStorage?.setItem(
-      "yuwang.sidebarExpanded",
-      String(sidebarExpanded),
-    );
-  }, [sidebarExpanded]);
+    if (!compactLayout || !sidebarExpanded) return undefined;
+    compactSidebarReturnFocusRef.current = document.activeElement as HTMLElement | null;
+    const sidebar = sidebarRef.current;
+    const focusable = () => Array.from(
+      sidebar?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    ).filter((item) => !item.hasAttribute("hidden"));
+    requestAnimationFrame(() => focusable()[0]?.focus());
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    sidebar?.addEventListener("keydown", trapFocus);
+    return () => {
+      sidebar?.removeEventListener("keydown", trapFocus);
+      compactSidebarReturnFocusRef.current?.focus();
+      compactSidebarReturnFocusRef.current = null;
+    };
+  }, [compactLayout, sidebarExpanded]);
+
+  useEffect(() => {
+    if (!compactLayout)
+      window.localStorage?.setItem(
+        "yuwang.sidebarExpanded",
+        String(sidebarExpanded),
+      );
+  }, [compactLayout, sidebarExpanded]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return undefined;
+    const media = window.matchMedia("(max-width: 700px)");
+    const syncLayout = (matches: boolean) => {
+      setCompactLayout(matches);
+      setSidebarExpanded(
+        matches
+          ? false
+          : window.localStorage?.getItem("yuwang.sidebarExpanded") !== "false",
+      );
+    };
+    const onChange = (event: MediaQueryListEvent) => syncLayout(event.matches);
+    media.addEventListener?.("change", onChange);
+    return () => media.removeEventListener?.("change", onChange);
+  }, []);
 
   async function createThread() {
     // 新 Thread 不能继承旧会话尚未完成的请求、草稿或上传响应。
@@ -229,14 +346,65 @@ export default function App() {
     setPendingArtifacts([]);
     setBusy(true);
     setError("");
+    let createdThreadId: string | null = null;
     try {
-      const value = await api.createThread(newTitle);
+      const value = await api.createThread(newTitle, [], newScenario);
+      createdThreadId = value.id;
+      if (newProviderId) {
+        await api.updateThread(value.id, { provider_config_id: newProviderId });
+      }
       await loadThreads();
       currentThreadIdRef.current = value.id;
       await selectThread(value.id);
+      const authorizedTargets = newAuthorizedTarget
+        .split(/[\n,]/)
+        .map((target) => target.trim())
+        .filter(Boolean);
+      await api.message(
+        value.id,
+        {
+          request_id: crypto.randomUUID(),
+          content: newPrompt.trim(),
+          artifact_ids: [],
+          provider_config_id: newProviderId || null,
+          authorized_targets: authorizedTargets,
+        },
+        new AbortController().signal,
+        (event) => {
+          if (event.type === "execution_started") {
+            setEvents([]);
+            setReport(null);
+            setControl(null);
+            setActiveRun(event.data.run);
+            setCreateOpen(false);
+            connect(event.data.run);
+          }
+          if (event.type === "execution_stopped") {
+            if (event.data.run) setActiveRun(event.data.run);
+            setCreateOpen(false);
+          }
+          if (
+            event.type === "guidance_queued" ||
+            event.type === "input_received" ||
+            event.type === "clarification_received"
+          ) {
+            setActiveRun(event.data.run);
+            setCreateOpen(false);
+            connect(event.data.run);
+          }
+        },
+      );
+      setDetail(await api.detail(value.id));
       setCreateOpen(false);
+      setNewAuthorizedTarget("");
     } catch (cause) {
-      setError(String(cause));
+      if (createdThreadId) {
+        setCreateOpen(false);
+        await selectThread(createdThreadId).catch(() => undefined);
+        setError(`任务已创建，但启动失败：${String(cause)}`);
+      } else {
+        setError(String(cause));
+      }
     } finally {
       setBusy(false);
     }
@@ -459,36 +627,73 @@ export default function App() {
     [events],
   );
 
+  function openStarter(title: string, scenario: SecurityScenario) {
+    setNewTitle(title);
+    setNewScenario(scenario);
+    setNewPrompt(taskStarterPrompts[scenario]);
+    setNewProviderId(
+      providers.find((provider) => provider.is_default)?.id ?? providers[0]?.id ?? "",
+    );
+    setNewAuthorizedTarget("");
+    setInspectorOpen(false);
+    if (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 700px)").matches)
+      setSidebarExpanded(false);
+    setCreateOpen(true);
+  }
+
+  function openSettings(category: SettingsCategory = "quick") {
+    setSettingsCategory(category);
+    setSettingsOpen(true);
+  }
+
   return (
     <div
       className={`shell ${sidebarExpanded ? "sidebar-expanded" : "sidebar-collapsed"}`}
     >
-      <aside className="sidebar">
+      <aside ref={sidebarRef} id="app-sidebar" className="sidebar" aria-label="主导航">
         <div className="brand">
           <span className="brand-mark">御</span>
           <div>
             <h1>御网智元</h1>
-            <p>安全 Agent 工作台</p>
+            <p>安全智能体工作台</p>
           </div>
-          <button
+          <IconButton
             className="sidebar-close"
-            aria-label="收起侧栏"
+            icon={PanelLeftClose}
+            label="收起侧栏"
+            aria-controls="app-sidebar"
+            aria-expanded={sidebarExpanded}
             onClick={() => setSidebarExpanded(false)}
-          >
-            ‹
-          </button>
+          />
         </div>
-        <button className="primary full" onClick={() => setCreateOpen(true)}>
-          ＋ 新建任务
+
+        <button className="primary sidebar-action" onClick={() => openStarter("新任务", "general")}>
+          <FilePlus2 size={18} aria-hidden="true" />
+          <span>新建任务</span>
         </button>
-        <button
-          className="settings-button full"
-          onClick={() => setSettingsOpen(true)}
-        >
-          ⚙ 设置中心
-        </button>
-        <div className="section-label">任务历史</div>
-        <button className="settings-button full" onClick={() => setEvaluationOpen(true)}>评测</button>
+
+        <nav className="sidebar-global-nav" aria-label="工作台入口">
+          <button type="button" onClick={() => openSettings("marketplace")}>
+            <Boxes size={18} aria-hidden="true" />
+            <span>能力中心</span>
+          </button>
+          <button type="button" onClick={() => setEvaluationOpen(true)}>
+            <ClipboardCheck size={18} aria-hidden="true" />
+            <span>评测中心</span>
+          </button>
+        </nav>
+
+        <section className="project-summary" aria-label="当前项目">
+          <div className="section-label">当前项目</div>
+          <div className="project-card">
+            <span className="project-icon"><FolderOpen size={18} aria-hidden="true" /></span>
+            <span>
+              <strong>安全分析工作区</strong>
+              <small>{threads.filter((thread) => !thread.archived).length} 个任务</small>
+            </span>
+          </div>
+        </section>
+
         <ThreadSidebar
           threads={threads}
           selectedId={detail?.id}
@@ -497,31 +702,53 @@ export default function App() {
           onToggleArchive={(thread) => void toggleArchive(thread)}
           onDelete={(thread) => void removeThread(thread)}
         />
-        <div className="security-note">
-          <span>●</span>
-          <div>
-            <strong>安全边界已启用</strong>
-            <p>公网默认拒绝 · 凭据自动脱敏</p>
+
+        <div className="sidebar-footer">
+          <button type="button" className="sidebar-settings" onClick={() => openSettings("quick")}>
+            <Settings size={18} aria-hidden="true" />
+            <span>设置中心</span>
+          </button>
+          <div className="security-note">
+            <ShieldCheck size={18} aria-hidden="true" />
+            <div>
+              <strong>安全边界已启用</strong>
+              <p>公网默认拒绝 · 凭据自动脱敏</p>
+            </div>
           </div>
         </div>
       </aside>
+      {compactLayout && sidebarExpanded && (
+        <button
+          type="button"
+          className="sidebar-scrim"
+          aria-label="关闭导航"
+          onClick={() => setSidebarExpanded(false)}
+        />
+      )}
 
-      <main className="workspace">
+      <main
+        className="workspace"
+        inert={compactLayout && sidebarExpanded}
+        aria-hidden={compactLayout && sidebarExpanded ? "true" : undefined}
+      >
         <header className="topbar">
           <div className="topbar-heading">
             {!sidebarExpanded && (
-              <button
+              <IconButton
                 className="navigation-toggle"
-                aria-label="展开侧栏"
+                icon={Menu}
+                label="展开侧栏"
+                aria-controls="app-sidebar"
+                aria-expanded={sidebarExpanded}
                 onClick={() => setSidebarExpanded(true)}
-              >
-                ☰
-              </button>
+              />
             )}
             <div className="topbar-title" data-testid="thread-heading">
-              <span className="eyebrow">TASK</span>
-              <h2>{detail?.title ?? "选择或创建一个任务"}</h2>
-              {detail && (
+              <span className="eyebrow">任务</span>
+              <h2>{createOpen ? "新建安全任务" : detail?.title ?? "选择或创建一个任务"}</h2>
+              {createOpen ? (
+                <small>确认场景、目标与运行配置后立即开始</small>
+              ) : detail && (
                 <small>
                   {activeRun?.status === "completed" ? "任务已完成" : activeRun?.status === "failed" ? "任务失败" : activeRun?.status === "stopped" ? "任务已停止" : activeRun?.status === "waiting_input" ? "等待输入" : activeRun ? "执行中" : "提交任务后由 Agent 自主执行"}
                 </small>
@@ -529,12 +756,12 @@ export default function App() {
             </div>
           </div>
           <div className="topbar-actions">
-            {detail && (
+            {!createOpen && detail && (
               <div className="top-meta" data-testid="thread-status">
                 {activeRun && <StatusBadge status={activeRun.status} />}
               </div>
             )}
-            {activeRun && (
+            {!createOpen && activeRun && (
               <button
               className="inspector-toggle"
               aria-expanded={inspectorOpen}
@@ -544,21 +771,48 @@ export default function App() {
                 setInspectorOpen((value) => !value);
               }}
             >
+              <Activity size={17} aria-hidden="true" />
               运行审计
               </button>
             )}
           </div>
         </header>
-        {!detail ? (
-          <section className="empty">
-            <div className="radar">⌁</div>
-            <h2>开始一个新任务</h2>
-            <p>
-              创建任务后，由 Agent 决定计划、工具和验证步骤。
-            </p>
-            <button className="primary" onClick={() => setCreateOpen(true)}>
-              创建第一个任务
-            </button>
+        {createOpen ? (
+          <CreateThreadDialog
+            title={newTitle}
+            prompt={newPrompt}
+            scenario={newScenario}
+            providerConfigId={newProviderId}
+            authorizedTarget={newAuthorizedTarget}
+            providers={providers}
+            busy={busy}
+            onTitleChange={setNewTitle}
+            onPromptChange={setNewPrompt}
+            onScenarioChange={(scenario) => {
+              setNewScenario(scenario);
+              setNewPrompt(taskStarterPrompts[scenario]);
+            }}
+            onProviderChange={setNewProviderId}
+            onAuthorizedTargetChange={setNewAuthorizedTarget}
+            onOpenSettings={(category) => openSettings(category)}
+            onCancel={() => setCreateOpen(false)}
+            onSubmit={() => void createThread()}
+          />
+        ) : !detail ? (
+          <section className="empty empty-onboarding">
+            <span className="eyebrow">安全工作台</span>
+            <h2>从一个明确的安全场景开始</h2>
+            <p>选择场景后，再上传材料、确认模型和授权目标。Agent 会先给出计划，再调用受控工具。</p>
+            <div className="starter-grid">
+              <button type="button" onClick={() => openStarter("CTF 题目分析", "ctf")}><Flag size={20} aria-hidden="true" /><span><strong>CTF 题目</strong><small>附件识别、解码、取证与 Flag 验证</small></span></button>
+              <button type="button" onClick={() => openStarter("应急响应日志分析", "incident_response")}><Siren size={20} aria-hidden="true" /><span><strong>应急响应</strong><small>日志归一化、时间线与 IOC 提取</small></span></button>
+              <button type="button" onClick={() => openStarter("Web 漏洞研判", "vulnerability_analysis")}><Bug size={20} aria-hidden="true" /><span><strong>漏洞分析</strong><small>证据、CWE 映射与修复验证</small></span></button>
+              <button type="button" onClick={() => openStarter("可疑样本静态分析", "reverse_static")}><Binary size={20} aria-hidden="true" /><span><strong>静态逆向</strong><small>不执行样本，分析结构、导入和字符串</small></span></button>
+            </div>
+            <div className="starter-actions">
+              <button className="primary" onClick={() => openStarter("新任务", "general")}>创建通用任务</button>
+              <button onClick={() => openSettings("providers")}><Settings size={17} aria-hidden="true" />先配置模型与能力</button>
+            </div>
           </section>
         ) : (
           <>
@@ -624,7 +878,7 @@ export default function App() {
         )}
       </main>
 
-      {activeRun && (
+      {!createOpen && activeRun && (
         <InspectorPanel
         open={inspectorOpen}
         metrics={metrics}
@@ -642,18 +896,10 @@ export default function App() {
         />
       )}
 
-      {createOpen && (
-        <CreateThreadDialog
-          title={newTitle}
-          busy={busy}
-          onTitleChange={setNewTitle}
-          onCancel={() => setCreateOpen(false)}
-          onSubmit={() => void createThread()}
-        />
-      )}
       {settingsOpen && (
         <SettingsCenter
           initialSetup={initialSetup}
+          initialCategory={settingsCategory}
           onClose={() => setSettingsOpen(false)}
           onChanged={async () => {
             await refreshProviders();
@@ -667,7 +913,7 @@ export default function App() {
       )}
       {evaluationOpen && (
         <div className="settings-backdrop" role="dialog" aria-modal="true" aria-label="评测中心">
-          <section className="evaluation-panel"><header><div><span className="eyebrow">EVALUATION</span><h2>评测中心</h2></div><button type="button" onClick={() => setEvaluationOpen(false)}>关闭</button></header><div className="settings-scroll"><EvaluationResults onError={setError} /></div></section>
+          <section className="evaluation-panel"><header><div><span className="eyebrow">质量验证</span><h2>评测中心</h2></div><IconButton icon={X} label="关闭评测中心" onClick={() => setEvaluationOpen(false)} /></header><div className="settings-scroll"><EvaluationResults onError={setError} /></div></section>
         </div>
       )}
     </div>

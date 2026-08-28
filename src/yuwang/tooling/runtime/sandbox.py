@@ -28,7 +28,11 @@ class SandboxRuntime:
 
     async def health(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=3, follow_redirects=False) as client:
+            async with httpx.AsyncClient(
+                timeout=3,
+                follow_redirects=False,
+                trust_env=False,
+            ) as client:
                 response = await client.get(f"{self.base_url}/health")
             return response.status_code == 200
         except httpx.HTTPError:
@@ -39,6 +43,7 @@ class SandboxRuntime:
             async with httpx.AsyncClient(
                 timeout=self.timeout_seconds,
                 follow_redirects=False,
+                trust_env=False,
             ) as client:
                 response = await client.post(
                     f"{self.base_url}/v1/run", json=request.model_dump(mode="json")

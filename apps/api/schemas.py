@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from yuwang.domain.models import (
     AgentPlan,
+    SecurityScenario,
     ThreadMode,
     ThreadToolSelectionMode,
     VerificationRule,
@@ -23,6 +24,7 @@ from yuwang.verification_rules import validate_verification_rule
 class ThreadCreate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     mode: ThreadMode = ThreadMode.NORMAL
+    scenario: SecurityScenario = "general"
     agent_profile_id: UUID | None = None
     plan_mode: Literal["auto", "approval"] = "auto"
     provider_config_id: UUID | None = None
@@ -34,6 +36,7 @@ class ThreadCreate(BaseModel):
 class ThreadUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=160)
     archived: bool | None = None
+    scenario: SecurityScenario | None = None
     provider_config_id: UUID | None = None
     acknowledge_provider_fallback: bool = False
     skill_ids: list[UUID] | None = Field(default=None, max_length=20)

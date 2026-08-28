@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import math
 import mimetypes
 import re
+from collections import Counter
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from yuwang.tooling.contracts import ToolCallRequest, ToolSpec
+from yuwang.tooling.runtime import SandboxRequest, SandboxRuntime
 
+from .artifacts import ArtifactAccess
 from .base import CtfArtifactTool, ctf_spec
 
 PRINTABLE = re.compile(rb"[\x20-\x7e]{4,}")
@@ -92,6 +96,10 @@ class StringsExtractTool(CtfArtifactTool[StringsExtractInput, StringsExtractOutp
     input_model = StringsExtractInput
     output_model = StringsExtractOutput
 
+    def __init__(self, artifacts: ArtifactAccess, sandbox_runtime: SandboxRuntime | None = None) -> None:
+        super().__init__(artifacts)
+        self.sandbox_runtime = sandbox_runtime
+
     @property
     def spec(self) -> ToolSpec:
         return ctf_spec(
@@ -111,8 +119,29 @@ class StringsExtractTool(CtfArtifactTool[StringsExtractInput, StringsExtractOutp
     async def execute_with_request(
         self, value: StringsExtractInput, request: ToolCallRequest | None
     ) -> StringsExtractOutput:
-        artifact, content = self.artifacts.read(value.artifact_id, request, max_bytes=8 * 1024 * 1024)
-        strings = _extract_strings(content, value.min_length, value.max_results)
+        artifact, content = self.artifacts.read(
+            value.artifact_id,
+            request,
+            max_bytes=5 * 1024 * 1024,
+        )
+        if self.sandbox_runtime is None:
+            # 独立 SDK/单元测试仍可显式不注入运行时；正式 API 始终注入 Docker 沙箱。
+            strings = _extract_strings(content, value.min_length, value.max_results)
+        else:
+            result = await self.sandbox_runtime.execute(
+                SandboxRequest(
+                    operation="extract_strings",
+                    payload_base64=base64.b64encode(content).decode("ascii"),
+                    min_length=value.min_length,
+                    max_results=value.max_results,
+                )
+            )
+            raw_strings = result.get("strings")
+            if not isinstance(raw_strings, list) or not all(
+                isinstance(item, str) for item in raw_strings
+            ):
+                raise ValueError("Docker 工具沙箱返回的字符串结果无效")
+            strings = raw_strings[: value.max_results]
         payload = ("\n".join(strings) + ("\n" if strings else "")).encode("utf-8")
         created = self.artifacts.create(
             artifact,
@@ -147,25 +176,43 @@ def _entropy(content: bytes) -> float:
     if not content:
         return 0.0
     size = len(content)
-    frequencies = [content.count(byte) for byte in range(256)]
+    # 单次遍历统计，避免对攻击者控制的附件执行 256 次全量扫描并阻塞 API 事件循环。
+    frequencies = Counter(content).values()
     return -sum((count / size) * math.log2(count / size) for count in frequencies if count)
 
 
 def _extract_strings(content: bytes, minimum: int, maximum: int) -> list[str]:
-    patterns = (
-        re.compile(rb"[\x20-\x7e]{" + str(minimum).encode() + rb",}"),
-        re.compile(rb"(?:[\x20-\x7e]\x00){" + str(minimum).encode() + rb",}"),
-        re.compile(rb"(?:\x00[\x20-\x7e]){" + str(minimum).encode() + rb",}"),
-    )
     values: list[str] = []
     seen: set[str] = set()
-    for index, pattern in enumerate(patterns):
-        encoding = ("ascii", "utf-16le", "utf-16be")[index]
-        for match in pattern.finditer(content):
-            value = match.group().decode(encoding, errors="replace")
-            if value not in seen:
-                seen.add(value)
-                values.append(value)
-                if len(values) >= maximum:
-                    return values
+    ascii_pattern = re.compile(rb"[\x20-\x7e]{" + str(minimum).encode() + rb",}")
+    for match in ascii_pattern.finditer(content):
+        value = match.group().decode("ascii", errors="replace")
+        if value not in seen:
+            seen.add(value)
+            values.append(value)
+            if len(values) >= maximum:
+                return values
+    wide_patterns = (
+        (re.compile(rb"(?:[\x20-\x7e]\x00){" + str(minimum).encode() + rb",}"), "utf-16le", 0),
+        (re.compile(rb"(?:\x00[\x20-\x7e]){" + str(minimum).encode() + rb",}"), "utf-16be", 1),
+    )
+    candidates: list[tuple[int, int, int, str]] = []
+    for pattern, encoding, order in wide_patterns:
+        candidates.extend(
+            (match.start(), match.end(), order, match.group().decode(encoding, errors="replace"))
+            for match in pattern.finditer(content)
+        )
+    for start, end, _order, value in sorted(candidates, key=lambda item: (item[2], item[0])):
+        if any(
+            other_start <= start
+            and other_end >= end
+            and other_end - other_start > end - start
+            for other_start, other_end, _, _ in candidates
+        ):
+            continue
+        if value not in seen:
+            seen.add(value)
+            values.append(value)
+            if len(values) >= maximum:
+                return values
     return values

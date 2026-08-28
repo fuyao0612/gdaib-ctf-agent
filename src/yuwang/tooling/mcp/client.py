@@ -56,6 +56,7 @@ class McpClient:
             timeout=config.connect_timeout_seconds,
             verify=True,
             follow_redirects=False,
+            trust_env=False,
         ) as http_client:
             async with streamable_http_client(
                 config.url,

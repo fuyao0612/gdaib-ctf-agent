@@ -24,6 +24,16 @@ class Settings(BaseModel):
             "http://127.0.0.1:8080,http://localhost:8080",
         ).split(",")
     )
+    allowed_hosts: list[str] = Field(
+        default_factory=lambda: [
+            value.strip()
+            for value in os.getenv(
+                "YUWANG_ALLOWED_HOSTS",
+                "127.0.0.1,localhost,testserver",
+            ).split(",")
+            if value.strip()
+        ]
+    )
     max_request_bytes: int = 6 * 1024 * 1024
     master_key: str = os.getenv("YUWANG_MASTER_KEY", "")
     allow_insecure_local_provider: bool = (

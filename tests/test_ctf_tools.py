@@ -21,9 +21,15 @@ from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolCallRequest, ToolExecutor, ToolRegistry, create_reference_registry
 from yuwang.tooling.builtins import LocalhostHTTPProbeTool
 from yuwang.tooling.ctf import register_ctf_tools
+from yuwang.tooling.runtime import SandboxRequest, SandboxUnavailable
 
 
-def setup_tool_context(tmp_path: Path, content: bytes, filename: str = "challenge.bin"):
+def setup_tool_context(
+    tmp_path: Path,
+    content: bytes,
+    filename: str = "challenge.bin",
+    sandbox_runtime: object | None = None,
+):
     root = tmp_path / "artifacts"
     root.mkdir(parents=True)
     repository = SQLiteRepository(tmp_path / "ctf.db")
@@ -45,7 +51,7 @@ def setup_tool_context(tmp_path: Path, content: bytes, filename: str = "challeng
     )
     run = repository.save_run(Run(thread_id=thread.id))
     registry = ToolRegistry()
-    register_ctf_tools(registry, repository, root)
+    register_ctf_tools(registry, repository, root, sandbox_runtime=sandbox_runtime)  # type: ignore[arg-type]
     return repository, root, thread, artifact, run, ToolExecutor(registry)
 
 
@@ -254,6 +260,57 @@ async def test_file_inspect_and_strings_extract_create_real_artifact(tmp_path: P
     assert strings.artifact_ids == [str(derived_id)]
     derived = repository.get_artifact(derived_id)
     assert derived and derived.kind == "strings_result"
+
+
+@pytest.mark.asyncio
+async def test_strings_extract_uses_injected_sandbox_without_host_fallback(tmp_path: Path) -> None:
+    class RecordingSandbox:
+        request: SandboxRequest | None = None
+
+        async def execute(self, request: SandboxRequest) -> dict[str, object]:
+            self.request = request
+            return {"strings": ["flag{from_sandbox}"], "truncated": False}
+
+    sandbox = RecordingSandbox()
+    repository, _, thread, artifact, run, executor = setup_tool_context(
+        tmp_path,
+        b"host-result-must-not-be-used",
+        sandbox_runtime=sandbox,
+    )
+
+    result = await invoke(
+        executor,
+        run,
+        "strings_extract",
+        {"artifact_id": str(artifact.id), "min_length": 4, "max_results": 20},
+    )
+
+    assert result.success and result.output["preview"] == ["flag{from_sandbox}"]
+    assert sandbox.request and sandbox.request.operation == "extract_strings"
+    assert len(repository.list_artifacts(thread.id)) == 2
+
+    class UnavailableSandbox:
+        async def execute(self, request: SandboxRequest) -> dict[str, object]:
+            del request
+            raise SandboxUnavailable("Docker 工具沙箱不可用，未在宿主机执行")
+
+    failed_repository, _, failed_thread, failed_artifact, failed_run, failed_executor = (
+        setup_tool_context(
+            tmp_path / "unavailable",
+            b"this-local-string-must-never-be-returned",
+            sandbox_runtime=UnavailableSandbox(),
+        )
+    )
+    failed = await invoke(
+        failed_executor,
+        failed_run,
+        "strings_extract",
+        {"artifact_id": str(failed_artifact.id)},
+    )
+
+    assert not failed.success
+    assert failed.error and "未在宿主机执行" in failed.error.message
+    assert failed_repository.list_artifacts(failed_thread.id) == [failed_artifact]
 
 
 @pytest.mark.asyncio

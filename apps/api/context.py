@@ -23,6 +23,7 @@ from yuwang.agent import AgentEngine, AgentStateModel
 from yuwang.domain.models import (
     ACTIVE_RUN_STATUSES,
     EventType,
+    KnowledgeMatchSnapshot,
     Message,
     MessageRole,
     Run,
@@ -32,6 +33,8 @@ from yuwang.domain.models import (
     ThreadMode,
     ToolSnapshot,
 )
+from yuwang.knowledge import KnowledgeBaseService
+from yuwang.knowledge.starter import ensure_starter_documents
 from yuwang.model_providers import ModelProvider, OpenAICompatibleProvider, ProviderChain
 from yuwang.policy import PolicyEngine, SecurityConfig
 from yuwang.settings import (
@@ -48,6 +51,7 @@ from yuwang.tooling import ToolSpec, create_reference_registry, select_tool_spec
 from yuwang.tooling.ctf import register_ctf_tools
 from yuwang.tooling.mcp import McpService
 from yuwang.tooling.mcp.client import McpClient
+from yuwang.tooling.runtime import SandboxRuntime
 from yuwang.tooling.sdk import ToolRegistry
 
 
@@ -60,10 +64,18 @@ class ApiContext:
         self.repository = SQLiteRepository(config.database_path)
         self.profile_service = AgentProfileService(self.repository)
         self.skill_service = SkillService(self.repository)
+        self.knowledge_service = KnowledgeBaseService(self.repository)
+        ensure_starter_documents(self.knowledge_service)
         self.profile_service.ensure_default(self.repository.get_agent_defaults().budget)
         self.policy = PolicyEngine(SecurityConfig())
         self.registry: ToolRegistry = create_reference_registry(config.artifact_root, self.repository)
-        register_ctf_tools(self.registry, self.repository, config.artifact_root)
+        self.sandbox_runtime = SandboxRuntime(config.sandbox_url)
+        register_ctf_tools(
+            self.registry,
+            self.repository,
+            config.artifact_root,
+            sandbox_runtime=self.sandbox_runtime,
+        )
         self.mcp_client = McpClient(
             allowed_commands={self._normalized_mcp_command(value) for value in config.mcp_stdio_allowed_commands},
             allow_insecure_local=config.allow_insecure_local_mcp,
@@ -376,8 +388,17 @@ class ApiContext:
         return TaskSpec(
             body=origin_message.content,
             origin_message_id=origin_message.id,
+            scenario=thread.scenario,
             mode=thread.mode,
             artifact_ids=origin_message.artifact_ids,
+            knowledge_matches=[
+                KnowledgeMatchSnapshot(**hit.model_dump())
+                for hit in self.knowledge_service.search(
+                    origin_message.content,
+                    scenario=thread.scenario,
+                    limit=4,
+                )
+            ],
             authorized_targets=create.authorized_targets,
             success_conditions=create.success_conditions,
             verification_rules=verification_rules,
