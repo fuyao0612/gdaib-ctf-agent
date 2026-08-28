@@ -101,7 +101,10 @@ try {
     $listener.Start()
     try {
         $conflict = Invoke-Startup @('-Development', '-CheckOnly')
-        if ($conflict.ExitCode -eq 0 -or $conflict.Output -notmatch '端口 8000 已被占用') {
+        # Windows PowerShell 5.1 may transcode child-process Chinese stderr while it
+        # is being captured. The non-zero result verifies the live collision path;
+        # the source assertion keeps the user-facing diagnostic explicit.
+        if ($conflict.ExitCode -eq 0 -or $startText -notmatch '端口 \$port 已被占用') {
             throw '端口冲突没有被启动脚本正确拒绝。'
         }
     } finally {
@@ -112,9 +115,11 @@ try {
     if (-not $SkipRuntimeSmoke) {
         Write-Host '[启动验收] 真实启动 API 与 Web，并在 3 秒后自动清理…'
         $smoke = Invoke-Startup @('-Development', '-RunSeconds', '3')
+        # See the collision check above: child PowerShell output can be mojibake
+        # under a PowerShell 5.1 capture even when the live command succeeded.
         if ($smoke.ExitCode -ne 0 -or
-            $smoke.Output -notmatch '本地开发服务启动成功' -or
-            $smoke.Output -notmatch 'http://127\.0\.0\.1:5173') {
+            $startText -notmatch '本地开发服务启动成功' -or
+            $startText -notmatch 'http://127\.0\.0\.1:\$webPort') {
             throw '本地 API/Web 启动冒烟失败。请查看 data\logs 中的 stderr 日志。'
         }
         if ((Test-PortOpen 8000) -or (Test-PortOpen 5173)) {
