@@ -12,4 +12,4 @@ evaluation_cases/<case-id>/
 
 清单记录 case ID、版本、场景、目标、授权范围、输入资料、允许工具、预算、超时、尝试次数、结果模式、criteria、Judge、标签和难度。Agent 可见输入与 Judge 私有配置必须分开保存。
 
-当前运行器只提供本地适配器。每次尝试保存 Run ID、模型、Provider、状态、Criterion 原始结果、得分、时长、调用量、失败类别、轨迹和报告路径；默认一次尝试，可扩展为 pass@k 统计。
+当前运行器只提供本地适配器。每次尝试保存 Run ID、模型、Provider、状态、Criterion 原始结果、得分、时长、调用量、失败类别、轨迹和报告路径；支持按 case 的第一次尝试计算 pass@1、前三次任一次成功计算 pass@3，并明确排除 skipped。

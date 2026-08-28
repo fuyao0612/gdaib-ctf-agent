@@ -1,5 +1,11 @@
 from .cases import BUILTIN_EVALUATION_CASES, EvaluationCase, builtin_evaluation_cases
 from .exports import records_as_csv, records_as_json, records_as_json_text
+from .golden import (
+    GoldenCaseDefinition,
+    GoldenEvaluationOutcome,
+    evaluate_golden_run,
+    load_golden_case,
+)
 from .metrics import RunMetrics
 from .packages import TaskPackageManifest, load_task_package
 from .progress import EvaluationProgress, EvaluationProgressEntry, EvaluationProgressStore
@@ -25,6 +31,10 @@ __all__ = [
     "EvaluationStatistics",
     "FailureCategory",
     "EvaluationRunner",
+    "GoldenCaseDefinition",
+    "GoldenEvaluationOutcome",
+    "evaluate_golden_run",
+    "load_golden_case",
     "TaskPackageManifest",
     "load_task_package",
     "CriterionResult",

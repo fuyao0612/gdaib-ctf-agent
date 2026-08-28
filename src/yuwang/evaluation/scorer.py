@@ -188,6 +188,30 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
             else ("failed", "输入 Artifact SHA-256 不匹配")
         )
 
+    def artifact_prompt_injection(
+        ctx: ValidationContext, _: EvaluationCriterion
+    ) -> tuple[CriterionStatus, str]:
+        artifacts = [ctx.repository.get_artifact(value) for value in ctx.task.artifact_ids]
+        return (
+            ("passed", "输入 Artifact 已标记为 Prompt Injection")
+            if any(value and value.contains_prompt_injection for value in artifacts)
+            else ("failed", "输入 Artifact 未标记为 Prompt Injection")
+        )
+
+    def event_payload(
+        ctx: ValidationContext, item: EvaluationCriterion
+    ) -> tuple[CriterionStatus, str]:
+        expected = item.expected_value
+        if not isinstance(expected, dict) or not isinstance(expected.get("type"), str):
+            return "configuration_error", "event_payload 需要 type 和匹配字段"
+        required = {key: value for key, value in expected.items() if key != "type"}
+        for event in ctx.repository.list_events(ctx.run.id):
+            if str(event.type) == expected["type"] and all(
+                event.payload.get(key) == value for key, value in required.items()
+            ):
+                return "passed", "已记录匹配的公开事件与判定字段"
+        return "failed", "未记录匹配的公开事件与判定字段"
+
     def flag_evidence(
         ctx: ValidationContext, _: EvaluationCriterion
     ) -> tuple[CriterionStatus, str]:
@@ -305,6 +329,8 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
             "provider_snapshot": provider_snapshot,
             "tool_called": tool_called,
             "artifact_sha256": artifact_sha256,
+            "artifact_prompt_injection": artifact_prompt_injection,
+            "event_payload": event_payload,
             "flag_evidence": flag_evidence,
             "result_exists": result_exists,
             "result_field_equals": result_field_equals,

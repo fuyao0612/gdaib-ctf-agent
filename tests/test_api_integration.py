@@ -22,6 +22,7 @@ from yuwang.domain.models import (
     Run,
     RunStatus,
     TaskSpec,
+    Thread,
     ToolCall,
 )
 from yuwang.tooling.mcp import McpServerInput
@@ -1603,6 +1604,30 @@ def test_competition_lock_stop_openapi_and_upload_policy(tmp_path):
         assert client.get("/api/v1/openapi.json").json()["info"]["version"] == "0.5.0"
 
 
+def test_upload_accepts_yaml_csv_zip_and_rejects_mismatched_magic_without_artifact(tmp_path):
+    app = configured_app(tmp_path)
+    with TestClient(app) as client:
+        open_local_session(client)
+        thread = client.post("/api/v1/threads", json={"title": "附件格式"}).json()
+        for filename, content, mime in (
+            ("notes.yaml", b"items:\n  - one\n", "application/x-yaml"),
+            ("rows.csv", b"ip,domain\n192.0.2.1,example.test\n", "text/csv"),
+        ):
+            response = client.post(
+                f"/api/v1/threads/{thread['id']}/artifacts",
+                files={"upload": (filename, content, mime)},
+            )
+            assert response.status_code == 201, response.text
+        before = client.get(f"/api/v1/threads/{thread['id']}/artifacts").json()
+        rejected = client.post(
+            f"/api/v1/threads/{thread['id']}/artifacts",
+            files={"upload": ("bundle.zip", b"plain text", "application/zip")},
+        )
+        assert rejected.status_code == 400
+        after = client.get(f"/api/v1/threads/{thread['id']}/artifacts").json()
+        assert len(after) == len(before) == 2
+
+
 def test_service_lifespan_resumes_active_run_from_checkpoint(tmp_path, provider_server):
     app = configured_app(tmp_path)
     app.state.registry.register(FakeEchoTool())
@@ -1656,6 +1681,22 @@ def test_service_lifespan_resumes_active_run_from_checkpoint(tmp_path, provider_
         assert wait_for_terminal(restarted, str(run.id))["status"] == "completed"
         events = restarted.get(f"/api/v1/runs/{run.id}/events").json()
         assert any("恢复" in event["summary"] for event in events)
+
+
+def test_service_lifespan_finalizes_persisted_stop_request(tmp_path):
+    app = configured_app(tmp_path)
+    repository = app.state.repository
+    thread = repository.save_thread(Thread(title="stale stop"))
+    run = Run(thread_id=thread.id)
+    run.transition(RunStatus.RUNNING)
+    run.stop_requested = True
+    repository.save_run(run)
+
+    with TestClient(app):
+        recovered = repository.get_run(run.id)
+        assert recovered is not None
+        assert recovered.status == RunStatus.STOPPED
+        assert any("恢复阶段" in event.summary for event in repository.list_events(run.id))
 
 
 def test_service_lifespan_restores_enabled_mcp_tools_after_restart(tmp_path):

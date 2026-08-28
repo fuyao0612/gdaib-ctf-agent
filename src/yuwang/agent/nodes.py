@@ -128,6 +128,25 @@ class WorkflowNodes:
         engine = self.engine
         state = engine._state(raw)
         engine.events.emit(state.run_id, EventType.STATUS_UPDATE, "已载入不可变任务快照")
+        injected_artifacts = [
+            artifact
+            for artifact_id in state.task.artifact_ids
+            if (artifact := engine.repository.get_artifact(artifact_id))
+            and artifact.contains_prompt_injection
+        ]
+        if injected_artifacts:
+            engine.events.emit(
+                state.run_id,
+                EventType.POLICY_CHECKED,
+                "检测到不可信附件中的策略篡改请求，已拒绝其授权影响",
+                {"allowed": False, "reason": "untrusted_prompt_injection", "artifact_count": len(injected_artifacts)},
+            )
+            engine.events.emit(
+                state.run_id,
+                EventType.WARNING,
+                "可疑附件仅作为不可信数据处理，继续执行既有授权范围内的合法任务",
+                {"reason": "untrusted_prompt_injection"},
+            )
         return engine._result("ingest", state)
 
     async def create_task_brief(self, raw: GraphState) -> GraphState:

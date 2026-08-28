@@ -585,6 +585,16 @@ class ApiContext:
             for stale in self.repository.list_runs(thread.id):
                 if stale.status not in {RunStatus.QUEUED, RunStatus.RUNNING}:
                     continue
+                if stale.stop_requested:
+                    stale.transition(RunStatus.STOPPED, "服务恢复时发现已持久化的停止请求")
+                    self.repository.save_run(stale)
+                    self.repository.create_event(
+                        stale.id,
+                        EventType.RUN_STOPPED,
+                        "运行已在服务恢复阶段按停止请求收束",
+                        {"recovered_stop_request": True},
+                    )
+                    continue
                 task_spec = self.repository.get_run_task(stale.id)
                 snapshots = self.repository.get_provider_snapshot(stale.id)
                 if not task_spec or not snapshots:

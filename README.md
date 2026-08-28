@@ -360,6 +360,9 @@ python examples/local_api.py
 
 ## 文档导航
 
+- [初审差距矩阵](docs/competition-preliminary-review.md)：五个评分维度、证据、风险与保守评分区间。
+- [黄金案例与提交材料](docs/golden-cases/README.md)：A/B/C 三个本地无害演示和 `docs/submission/` 初审文档。
+
 - [快速入门](docs/quickstart.md)：第一次启动到完成对话。
 - [Agent 循环](docs/agent-loop.md)：五阶段与真实代码文件。
 - [架构](docs/architecture.md)：依赖方向、状态机和事件协议。

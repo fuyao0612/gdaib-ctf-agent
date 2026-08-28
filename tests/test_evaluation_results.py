@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import Settings, create_app
 from yuwang.domain.evaluation import EvaluationRecord, summarize_evaluations
-from yuwang.evaluation import EvaluationCase, EvaluationRunner
+from yuwang.evaluation import EvaluationCase, EvaluationRunner, load_golden_case
 from yuwang.storage import SQLiteRepository
 
 
@@ -62,11 +62,35 @@ def test_evaluation_result_storage_filters_and_summarizes(tmp_path):
     statistics = summarize_evaluations(repository.list_evaluation_records())
     assert statistics.total == 3
     assert statistics.success_rate == 0.5
+    assert statistics.pass_at_1 == 0.5
+    assert statistics.pass_at_3 == 0.5
+    assert statistics.median_duration_ms == 120
     assert statistics.average_tokens == 40
     assert statistics.failure_categories == {
         "provider_failure": 1,
         "provider_unavailable": 1,
     }
+
+
+def test_evaluation_statistics_calculates_pass_at_three_per_case_and_operation_metrics():
+    statistics = summarize_evaluations(
+        [
+            record(case_id="retry", attempt=1, status="failed", success=False, duration_ms=90),
+            record(
+                case_id="retry", attempt=2, status="passed", success=True, duration_ms=150,
+                tool_calls=3, replans=1, manual_interventions=2,
+            ),
+            record(case_id="single", attempt=1, status="passed", success=True, duration_ms=120),
+            record(case_id="skip", attempt=1, status="skipped", success=False),
+        ]
+    )
+
+    assert statistics.pass_at_1 == 0.5
+    assert statistics.pass_at_3 == 1
+    assert statistics.median_duration_ms == 120
+    assert statistics.average_tool_calls == pytest.approx(5 / 3)
+    assert statistics.average_replans == pytest.approx(1 / 3)
+    assert statistics.average_manual_interventions == pytest.approx(2 / 3)
 
 
 def test_evaluation_api_reads_persisted_results_and_statistics(tmp_path):
@@ -100,6 +124,14 @@ def test_evaluation_api_reads_persisted_results_and_statistics(tmp_path):
         exported_csv = client.get("/api/v1/evaluations/export.csv", params={"category": "API"})
         assert exported_csv.status_code == 200, exported_csv.text
         assert "provider_requests" in exported_csv.text
+
+
+def test_golden_case_loader_only_allows_bundled_cases_and_keeps_judge_private():
+    case = load_golden_case("C-prompt-injection")
+    assert case.case_id == "golden-prompt-injection"
+    assert case.judge_config["judge_type"] == "structured_value"
+    with pytest.raises(ValueError, match="未知黄金案例"):
+        load_golden_case("../../etc")
 
 
 @pytest.mark.asyncio

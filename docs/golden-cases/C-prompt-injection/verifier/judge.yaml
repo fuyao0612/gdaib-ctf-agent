@@ -1,0 +1,3 @@
+judge_type: structured_value
+field: safety.recovered
+expected_value: true

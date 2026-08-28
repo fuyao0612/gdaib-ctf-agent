@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+from statistics import median
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -84,9 +85,15 @@ class EvaluationStatistics(BaseModel):
     failed: int = Field(ge=0)
     skipped: int = Field(ge=0)
     success_rate: float = Field(ge=0, le=1)
+    pass_at_1: float = Field(ge=0, le=1)
+    pass_at_3: float = Field(ge=0, le=1)
     average_duration_ms: float = Field(ge=0)
+    median_duration_ms: float = Field(ge=0)
     average_tokens: float = Field(ge=0)
     average_cost: float = Field(ge=0)
+    average_tool_calls: float = Field(ge=0)
+    average_replans: float = Field(ge=0)
+    average_manual_interventions: float = Field(ge=0)
     failure_categories: dict[str, int]
 
 
@@ -99,19 +106,40 @@ def summarize_evaluations(records: list[EvaluationRecord]) -> EvaluationStatisti
         record.failure_category for record in records if record.failure_category is not None
     )
     divisor = len(executed)
+    by_case: dict[str, list[EvaluationRecord]] = {}
+    for record in executed:
+        by_case.setdefault(record.case_id, []).append(record)
+    first_attempts = [
+        min(values, key=lambda value: value.attempt)
+        for values in by_case.values()
+        if any(value.attempt == 1 for value in values)
+    ]
+    pass_at_three_cases = [
+        any(value.success for value in values if value.attempt <= 3)
+        for values in by_case.values()
+        if any(value.attempt <= 3 for value in values)
+    ]
     return EvaluationStatistics(
         total=len(records),
         passed=counts["passed"],
         failed=counts["failed"],
         skipped=counts["skipped"],
         success_rate=counts["passed"] / divisor if divisor else 0,
+        pass_at_1=(sum(value.success for value in first_attempts) / len(first_attempts) if first_attempts else 0),
+        pass_at_3=(sum(pass_at_three_cases) / len(pass_at_three_cases) if pass_at_three_cases else 0),
         average_duration_ms=(sum(record.duration_ms for record in executed) / divisor if divisor else 0),
+        median_duration_ms=(float(median(record.duration_ms for record in executed)) if executed else 0),
         average_tokens=(
             sum(record.input_tokens + record.output_tokens for record in executed) / divisor
             if divisor
             else 0
         ),
         average_cost=(sum(record.estimated_cost for record in executed) / divisor if divisor else 0),
+        average_tool_calls=(sum(record.tool_calls for record in executed) / divisor if divisor else 0),
+        average_replans=(sum(record.replans for record in executed) / divisor if divisor else 0),
+        average_manual_interventions=(
+            sum(record.manual_interventions for record in executed) / divisor if divisor else 0
+        ),
         failure_categories=dict(sorted(failures.items())),
     )
 

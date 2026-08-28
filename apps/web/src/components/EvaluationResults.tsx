@@ -95,9 +95,15 @@ export default function EvaluationResults({ onError }: Props) {
         <dl className="evaluation-statistics">
           <div><dt>执行</dt><dd>{statistics.total}</dd></div>
           <div><dt>成功率</dt><dd>{(statistics.success_rate * 100).toFixed(0)}%</dd></div>
+          <div><dt>Pass@1</dt><dd>{(statistics.pass_at_1 * 100).toFixed(0)}%</dd></div>
+          <div><dt>Pass@3</dt><dd>{(statistics.pass_at_3 * 100).toFixed(0)}%</dd></div>
           <div><dt>平均耗时</dt><dd>{milliseconds(statistics.average_duration_ms)}</dd></div>
+          <div><dt>中位耗时</dt><dd>{milliseconds(statistics.median_duration_ms)}</dd></div>
           <div><dt>平均 Token</dt><dd>{statistics.average_tokens.toFixed(0)}</dd></div>
           <div><dt>平均费用</dt><dd>{statistics.average_cost.toFixed(4)}</dd></div>
+          <div><dt>平均工具调用</dt><dd>{statistics.average_tool_calls.toFixed(1)}</dd></div>
+          <div><dt>平均重规划</dt><dd>{statistics.average_replans.toFixed(1)}</dd></div>
+          <div><dt>平均人工介入</dt><dd>{statistics.average_manual_interventions.toFixed(1)}</dd></div>
         </dl>
       )}
       <div className="evaluation-list">

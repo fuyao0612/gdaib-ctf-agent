@@ -41,9 +41,15 @@ describe("EvaluationResults", () => {
           failed: 0,
           skipped: 0,
           success_rate: 1,
+          pass_at_1: 1,
+          pass_at_3: 1,
           average_duration_ms: 1000,
+          median_duration_ms: 1000,
           average_tokens: 25,
           average_cost: 0.01,
+          average_tool_calls: 1,
+          average_replans: 0,
+          average_manual_interventions: 0,
           failure_categories: {},
         });
       }
@@ -54,7 +60,7 @@ describe("EvaluationResults", () => {
     render(<EvaluationResults onError={vi.fn()} />);
 
     expect(await screen.findByText("intent-explicit-task")).toBeInTheDocument();
-    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(screen.getAllByText("100%")).toHaveLength(3);
     const summary = screen.getByText("intent-explicit-task");
     const row = summary.closest("details");
     expect(row).not.toHaveAttribute("open");

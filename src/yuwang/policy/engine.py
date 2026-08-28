@@ -21,7 +21,10 @@ class SecurityConfig(BaseModel):
         default_factory=lambda: {"localhost", "127.0.0.1", "::1", "api"}
     )
     allowed_extensions: set[str] = Field(
-        default_factory=lambda: {".txt", ".json", ".md", ".log", ".bin"}
+        default_factory=lambda: {
+            ".txt", ".json", ".md", ".log", ".bin", ".yaml", ".yml", ".csv",
+            ".zip", ".tar", ".tgz", ".gz", ".pdf",
+        }
     )
 
 

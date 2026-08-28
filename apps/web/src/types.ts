@@ -694,8 +694,14 @@ export interface EvaluationStatistics {
   failed: number;
   skipped: number;
   success_rate: number;
+  pass_at_1: number;
+  pass_at_3: number;
   average_duration_ms: number;
+  median_duration_ms: number;
   average_tokens: number;
   average_cost: number;
+  average_tool_calls: number;
+  average_replans: number;
+  average_manual_interventions: number;
   failure_categories: Record<string, number>;
 }

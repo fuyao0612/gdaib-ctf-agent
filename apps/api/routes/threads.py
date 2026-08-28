@@ -7,6 +7,7 @@ import hashlib
 import io
 import mimetypes
 import re
+import tarfile
 import zipfile
 from pathlib import Path
 from typing import Annotated, Any
@@ -28,10 +29,63 @@ from yuwang.domain.models import (
 )
 
 _PROMPT_INJECTION_MARKERS = re.compile(
-    r"(?i)(ignore\s+(all|previous)|system\s+message|developer\s+message|reveal\s+api\s*key|disable\s+policy)"
+    r"(?i)(ignore\s+(all|previous)|system\s+message|developer\s+message|reveal\s+api\s*key|disable\s+policy|"
+    r"忽略(?:全部|所有|既有|之前)?(?:规则|策略)|输出\s*(?:api\s*key|密钥)|"
+    r"(?:扩大|扩展)目标(?:范围)?|关闭(?:安全)?策略)"
 )
 _PREVIEW_LIMIT = 12_000
 _ZIP_MAX_RATIO = 100
+_TEXT_EXTENSIONS = {".txt", ".md", ".log", ".json", ".yaml", ".yml", ".csv"}
+_ARCHIVE_EXTENSIONS = {".zip", ".tar", ".tgz", ".gz"}
+
+
+def _detect_upload_mime(filename: str, supplied: str | None, content: bytes) -> str:
+    """以 magic bytes 为准归一化 MIME，并拒绝扩展名与实际格式明显冲突。"""
+
+    suffix = Path(filename).suffix.lower()
+    if content.startswith(b"PK\x03\x04"):
+        detected = "application/zip"
+    elif content.startswith(b"%PDF-"):
+        detected = "application/pdf"
+    elif content.startswith(b"\x1f\x8b"):
+        detected = "application/gzip"
+    elif len(content) >= 262 and content[257:262] == b"ustar":
+        detected = "application/x-tar"
+    elif suffix == ".json":
+        detected = "application/json"
+    elif suffix in {".yaml", ".yml"}:
+        detected = "application/x-yaml"
+    elif suffix == ".csv":
+        detected = "text/csv"
+    elif suffix in _ARCHIVE_EXTENSIONS:
+        # 归档必须由 magic bytes 证明；仅凭扩展名不能把普通文本当作可解包输入。
+        detected = "application/octet-stream"
+    elif suffix in _TEXT_EXTENSIONS:
+        detected = "text/plain"
+    else:
+        detected = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    expected: dict[str, set[str]] = {
+        ".zip": {"application/zip", "application/x-zip-compressed"},
+        ".tar": {"application/x-tar"},
+        ".tgz": {"application/gzip", "application/x-gzip"},
+        ".gz": {"application/gzip", "application/x-gzip"},
+        ".pdf": {"application/pdf"},
+        ".json": {"application/json"},
+        ".yaml": {"application/x-yaml", "text/yaml"},
+        ".yml": {"application/x-yaml", "text/yaml"},
+        ".csv": {"text/csv", "application/csv"},
+    }
+    if suffix in _ARCHIVE_EXTENSIONS | {".pdf", ".json", ".yaml", ".yml", ".csv"} and detected not in expected[suffix]:
+        raise ValueError("文件扩展名与实际文件格式不一致")
+    # application/octet-stream is a common browser fallback and is not evidence of a conflict.
+    if supplied and supplied not in {"application/octet-stream", "binary/octet-stream"}:
+        supplied_base = supplied.split(";", 1)[0].strip().lower()
+        if supplied_base != detected and not (
+            supplied_base == "text/plain" and detected in {"application/x-yaml", "text/csv"}
+        ):
+            raise ValueError("声明的 MIME 类型与文件内容不一致")
+    return detected
 
 
 def _artifact_metadata(content: bytes, mime_type: str) -> tuple[dict[str, Any], str | None, bool]:
@@ -45,6 +99,8 @@ def _artifact_metadata(content: bytes, mime_type: str) -> tuple[dict[str, Any], 
     }
     if mime_type in {"application/zip", "application/x-zip-compressed"}:
         return _zip_metadata(content, metadata)
+    if mime_type in {"application/x-tar", "application/gzip", "application/x-gzip"}:
+        return _tar_metadata(content, metadata)
     if is_text:
         text = content.decode("utf-8", errors="replace")
         preview = text[:_PREVIEW_LIMIT]
@@ -99,6 +155,28 @@ def _zip_metadata(content: bytes, metadata: dict[str, Any]) -> tuple[dict[str, A
             return metadata, None, False
     except zipfile.BadZipFile:
         metadata["parse_error"] = "BadZipFile"
+        return metadata, None, False
+
+
+def _tar_metadata(content: bytes, metadata: dict[str, Any]) -> tuple[dict[str, Any], str | None, bool]:
+    try:
+        with tarfile.open(fileobj=io.BytesIO(content), mode="r:*") as archive:
+            entries = archive.getmembers()
+            metadata.update({
+                "structured_kind": "tar",
+                "entry_count": len(entries),
+                "entries": [item.name for item in entries[:100]],
+                "uncompressed_size": sum(item.size for item in entries if item.isfile()),
+                "unsafe_paths": [
+                    item.name for item in entries
+                    if Path(item.name.replace("\\", "/")).is_absolute()
+                    or ".." in Path(item.name.replace("\\", "/")).parts
+                ][:20],
+                "non_regular_entries": sum(1 for item in entries if not item.isfile() and not item.isdir()),
+            })
+            return metadata, None, False
+    except (tarfile.TarError, EOFError):
+        metadata["parse_error"] = "TarError"
         return metadata, None, False
 
 
@@ -242,15 +320,17 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             raise HTTPException(400, str(exc)) from exc
         artifact_id = uuid4()
         storage_ref = f"{thread_id}/{artifact_id}.blob"
-        destination = context.config.artifact_root / storage_ref
+        try:
+            mime_type = _detect_upload_mime(filename, upload.content_type, content)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        metadata, preview, contains_injection = _artifact_metadata(content, mime_type)
+        destination = (context.config.artifact_root / storage_ref).resolve()
+        artifact_root = context.config.artifact_root.resolve()
+        if artifact_root not in destination.parents:
+            raise HTTPException(400, "附件存储路径不安全")
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
-        mime_type = (
-            upload.content_type
-            or mimetypes.guess_type(filename)[0]
-            or "application/octet-stream"
-        )
-        metadata, preview, contains_injection = _artifact_metadata(content, mime_type)
         artifact = Artifact(
             id=artifact_id,
             thread_id=thread_id,

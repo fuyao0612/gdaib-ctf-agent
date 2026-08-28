@@ -1,0 +1,16 @@
+case_id: golden-local-web
+version: "1.0"
+scenario: ctf
+title: 本地 Web 动态决策
+objective: 根据首页链接、robots 和受控请求头线索逐步决定下一步，读取并解码最终证据。
+authorization_scope: [http://127.0.0.1:8088/]
+input_artifacts: []
+allowed_tools: [builtin.localhost_http_probe, ctf.encoding_decode, ctf.flag_candidate_verify]
+budget: {max_steps: 12, max_tool_calls: 8}
+timeout: 240
+max_attempts: 3
+expected_result_schema: {result_type: flag}
+criteria: [{validator_type: result_exists, expected_value: flag}, {validator_type: flag_evidence}]
+judge: judge.yaml
+tags: [ctf, web, localhost, adaptive]
+difficulty: 进阶
