@@ -3,10 +3,13 @@
 [CmdletBinding()]
 param(
     [switch]$Development,
-    [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    [string]$ProjectRoot
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+}
 . (Join-Path $PSScriptRoot 'process-record.ps1')
 $processFile = Join-Path $ProjectRoot 'data\dev-processes.json'
 $stoppedAnything = $false

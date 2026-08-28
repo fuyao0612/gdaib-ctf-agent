@@ -8,10 +8,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import secrets
 import time
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -23,6 +26,7 @@ from yuwang.agent import AgentEngine, AgentStateModel
 from yuwang.domain.models import (
     ACTIVE_RUN_STATUSES,
     EventType,
+    GoldenCaseBinding,
     KnowledgeMatchSnapshot,
     Message,
     MessageRole,
@@ -33,6 +37,7 @@ from yuwang.domain.models import (
     ThreadMode,
     ToolSnapshot,
 )
+from yuwang.evaluation.golden import load_golden_case
 from yuwang.knowledge import KnowledgeBaseService
 from yuwang.knowledge.starter import ensure_starter_documents
 from yuwang.model_providers import ModelProvider, OpenAICompatibleProvider, ProviderChain
@@ -68,7 +73,9 @@ class ApiContext:
         ensure_starter_documents(self.knowledge_service)
         self.profile_service.ensure_default(self.repository.get_agent_defaults().budget)
         self.policy = PolicyEngine(SecurityConfig())
-        self.registry: ToolRegistry = create_reference_registry(config.artifact_root, self.repository)
+        self.registry: ToolRegistry = create_reference_registry(
+            config.artifact_root, self.repository
+        )
         self.sandbox_runtime = SandboxRuntime(config.sandbox_url)
         register_ctf_tools(
             self.registry,
@@ -77,7 +84,9 @@ class ApiContext:
             sandbox_runtime=self.sandbox_runtime,
         )
         self.mcp_client = McpClient(
-            allowed_commands={self._normalized_mcp_command(value) for value in config.mcp_stdio_allowed_commands},
+            allowed_commands={
+                self._normalized_mcp_command(value) for value in config.mcp_stdio_allowed_commands
+            },
             allow_insecure_local=config.allow_insecure_local_mcp,
         )
         self.tasks: dict[UUID, asyncio.Task[None]] = {}
@@ -247,9 +256,7 @@ class ApiContext:
                 raise ValueError("Thread 只能选择 Agent Profile 已允许的工具")
         return selected
 
-    def selected_tool_specs(
-        self, thread: Thread, profile: AgentProfileVersion
-    ) -> list[ToolSpec]:
+    def selected_tool_specs(self, thread: Thread, profile: AgentProfileVersion) -> list[ToolSpec]:
         return select_tool_specs(
             self.registry.specs(),
             profile_mode=profile.tool_selection_mode,
@@ -270,16 +277,12 @@ class ApiContext:
             raise HTTPException(404, "运行不存在")
         return run
 
-    def validate_user_message_artifacts(
-        self, thread_id: UUID, artifact_ids: list[UUID]
-    ) -> Thread:
+    def validate_user_message_artifacts(self, thread_id: UUID, artifact_ids: list[UUID]) -> Thread:
         """校验会话运行边界和附件归属，供统一消息的多个分支复用。"""
 
         thread = self.require_thread(thread_id)
         active = [
-            run
-            for run in self.repository.list_runs(thread_id)
-            if run.status in ACTIVE_RUN_STATUSES
+            run for run in self.repository.list_runs(thread_id) if run.status in ACTIVE_RUN_STATUSES
         ]
         if thread.mode == ThreadMode.COMPETITION and active:
             raise HTTPException(409, "competition 模式运行中禁止补充提示")
@@ -354,9 +357,7 @@ class ApiContext:
             raise HTTPException(409, "任务来源消息无效")
         # 旧兼容入口可传入更严格的临时规则；日常统一消息使用已版本化的
         # Profile 默认规则。两者都在 HTTP 模型层拒绝了万能正则。
-        verification_rules = (
-            create.verification_rules or profile.validation_policy.evidence_rules
-        )
+        verification_rules = create.verification_rules or profile.validation_policy.evidence_rules
         tool_snapshots = [
             ToolSnapshot(
                 tool_id=spec.id,
@@ -385,6 +386,7 @@ class ApiContext:
             )
             for spec in self.selected_tool_specs(thread, profile)
         ]
+        golden_binding = self._build_golden_case_binding(create, origin_message, tool_snapshots)
         return TaskSpec(
             body=origin_message.content,
             origin_message_id=origin_message.id,
@@ -405,6 +407,60 @@ class ApiContext:
             budget=profile.budget,
             skills=self.skill_service.snapshots_for(thread.skill_ids),
             tool_snapshots=tool_snapshots,
+            golden_case_binding=golden_binding,
+        )
+
+    @staticmethod
+    def _digest(value: object) -> str:
+        return hashlib.sha256(
+            json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+    def _build_golden_case_binding(
+        self,
+        create: RunCreate,
+        origin_message: Message,
+        tool_snapshots: list[ToolSnapshot],
+    ) -> GoldenCaseBinding | None:
+        """建立只用于评测身份核验的快照，绝不加载或暴露私有 Judge 条件。"""
+
+        if create.golden_case_directory is None:
+            return None
+        case = load_golden_case(create.golden_case_directory)
+        artifacts = [self.repository.get_artifact(value) for value in origin_message.artifact_ids]
+        if any(value is None for value in artifacts):
+            raise ValueError("黄金案例输入 Artifact 不存在")
+        actual_names = [value.filename for value in artifacts if value]
+        manifest_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "golden-cases"
+            / case.directory
+            / "manifest.yaml"
+        )
+        # 输入文件名来自公开 manifest；Hash 来自本次正式上传而非客户端声明。
+        import yaml  # type: ignore[import-untyped]
+
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        expected_names = manifest.get("input_artifacts", []) if isinstance(manifest, dict) else []
+        if actual_names != expected_names:
+            raise ValueError("黄金案例输入 Artifact 与公开 manifest 不一致")
+        if set(create.authorized_targets) != set(case.authorization_scope):
+            raise ValueError("黄金案例授权范围与公开 manifest 不一致")
+        if {item.tool_id for item in tool_snapshots} != set(case.allowed_tools):
+            raise ValueError("黄金案例冻结工具与公开 manifest 不一致")
+        return GoldenCaseBinding(
+            case_id=case.case_id,
+            case_version=case.version,
+            objective_sha256=hashlib.sha256(manifest["objective"].encode("utf-8")).hexdigest(),
+            request_sha256=hashlib.sha256(origin_message.content.encode("utf-8")).hexdigest(),
+            input_artifact_sha256=tuple(value.sha256 for value in artifacts if value),
+            authorization_scope_sha256=self._digest(sorted(create.authorized_targets)),
+            tool_snapshot_sha256=self._digest(
+                [item.model_dump(mode="json") for item in tool_snapshots]
+            ),
         )
 
     async def start_run(
@@ -424,7 +480,9 @@ class ApiContext:
         self.repository.save_thread(thread)
         profile = self.resolve_thread_profile(thread)
         try:
-            selected_id = body.provider_config_id or thread.provider_config_id or profile.default_provider_id
+            selected_id = (
+                body.provider_config_id or thread.provider_config_id or profile.default_provider_id
+            )
             # 备用链只能来自 Agent Profile 的明确配置；对话选择不会隐式加入
             # 其他已启用 Provider，避免意外把任务发送给未选择的模型服务。
             fallback_ids = profile.fallback_provider_ids
@@ -538,9 +596,7 @@ class ApiContext:
                 # 就绪端点只公开布尔状态，避免把密钥格式或内部异常泄露给调用方。
                 master_key_ok = False
         providers = self.repository.list_provider_configs()
-        provider_ok = any(
-            item.enabled and item.connection_status == "ok" for item in providers
-        )
+        provider_ok = any(item.enabled and item.connection_status == "ok" for item in providers)
         agent_ok = False
         try:
             default_profile = self.profile_service.resolve(None)

@@ -16,7 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from yuwang.agent.repository import AgentRepository
 from yuwang.domain.models import (
     Artifact,
-    EventType,
     EvidenceRecord,
     EvidenceReference,
     ExecutionStep,
@@ -212,11 +211,9 @@ class TaskResultService:
     ) -> list[TaskResult]:
         records = self.repository.list_evidence(run.id)
         drafts = self._drafts(structured_output, final_answer, task, records)
-        drafts = self._normalize_security_recovery(run, task, drafts)
         evidence_ids = [str(item.id) for item in records]
         results = [
-            self.builder.build(run, task, draft, fallback_evidence=evidence_ids)
-            for draft in drafts
+            self.builder.build(run, task, draft, fallback_evidence=evidence_ids) for draft in drafts
         ]
         if results:
             existing = {item.id for item in run.results}
@@ -224,49 +221,6 @@ class TaskResultService:
             run.validation_status = validation_status or self._run_status(run.results)
             self.repository.save_run(run)
         return results
-
-    def _normalize_security_recovery(
-        self, run: Run, task: TaskSpec, drafts: list[TaskResultDraft]
-    ) -> list[TaskResultDraft]:
-        """把服务端已观察到的注入拒绝事实写入最小结构化安全结论。
-
-        这是结果归档的确定性补全，不采信模型声称的验证状态：只有输入 Artifact
-        已标记注入、且 ingest 阶段记录了拒绝事件时才成立；工具调用 ID 作为真实
-        证据候选绑定到结果，供私有 Judge 复核。
-        """
-
-        if not drafts:
-            return drafts
-        artifacts = [self.repository.get_artifact(value) for value in task.artifact_ids]
-        marked = any(value and value.contains_prompt_injection for value in artifacts)
-        rejected = any(
-            event.type == EventType.POLICY_CHECKED
-            and event.payload.get("reason") == "untrusted_prompt_injection"
-            and event.payload.get("allowed") is False
-            for event in self.repository.list_events(run.id)
-        )
-        if not (marked and rejected):
-            return drafts
-        tool_ids = [str(value.id) for value in self.repository.list_tool_calls(run.id)]
-        normalized: list[TaskResultDraft] = []
-        for draft in drafts:
-            if draft.result_type != "assessment":
-                normalized.append(draft)
-                continue
-            structured = dict(draft.structured_data)
-            safety = structured.get("safety")
-            safety_data = dict(safety) if isinstance(safety, dict) else {}
-            safety_data["recovered"] = True
-            structured["safety"] = safety_data
-            normalized.append(
-                draft.model_copy(
-                    update={
-                        "structured_data": structured,
-                        "evidence_candidates": [*draft.evidence_candidates, *tool_ids],
-                    }
-                )
-            )
-        return normalized
 
     @staticmethod
     def _drafts(

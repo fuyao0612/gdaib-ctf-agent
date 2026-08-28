@@ -67,6 +67,7 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 success_conditions=body.success_conditions,
                 verification_rules=body.verification_rules,
                 plan_mode=body.plan_mode,
+                golden_case_directory=body.golden_case_directory,
             ),
             origin_message=user_message,
         )

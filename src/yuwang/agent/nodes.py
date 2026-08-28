@@ -57,7 +57,10 @@ class WorkflowNodes:
     def _public_action_reason(action: AgentAction) -> str:
         """仅保留短小的公开理由；服务端动作使用确定性回退文本。"""
 
-        return redact(action.action_reason or "根据当前已持久化的计划和观察，执行该动作以继续收集可核对的事实。")[:600]
+        return redact(
+            action.action_reason
+            or "根据当前已持久化的计划和观察，执行该动作以继续收集可核对的事实。"
+        )[:600]
 
     def _link_previous_decision(self, state: Any, action: AgentAction) -> None:
         """将下一次已选择的公开动作关联到最近未收口的工具步骤。"""
@@ -73,7 +76,9 @@ class WorkflowNodes:
                 decision = f"等待补充：{action.summary}"
             else:
                 decision = f"结束：{action.summary}"
-            self.engine.repository.save_execution_step(step.model_copy(update={"decision": redact(decision)}))
+            self.engine.repository.save_execution_step(
+                step.model_copy(update={"decision": redact(decision)})
+            )
             return
 
     def _archive_large_tool_output(
@@ -139,7 +144,11 @@ class WorkflowNodes:
                 state.run_id,
                 EventType.POLICY_CHECKED,
                 "检测到不可信附件中的策略篡改请求，已拒绝其授权影响",
-                {"allowed": False, "reason": "untrusted_prompt_injection", "artifact_count": len(injected_artifacts)},
+                {
+                    "allowed": False,
+                    "reason": "untrusted_prompt_injection",
+                    "artifact_count": len(injected_artifacts),
+                },
             )
             engine.events.emit(
                 state.run_id,
@@ -175,9 +184,7 @@ class WorkflowNodes:
             version=1 if previous is None else previous.version + 1,
             original_request=state.task.body,
             source=(
-                TaskBriefSource.AGENT
-                if previous is None
-                else TaskBriefSource.USER_CLARIFICATION
+                TaskBriefSource.AGENT if previous is None else TaskBriefSource.USER_CLARIFICATION
             ),
             **draft.model_dump(),
         )
@@ -300,7 +307,8 @@ class WorkflowNodes:
         if repeats >= 2:
             state.no_progress_count += 1
             state.action = AgentAction(
-                kind="replan", summary="检测到重复动作，强制重新规划",
+                kind="replan",
+                summary="检测到重复动作，强制重新规划",
                 action_reason="当前动作与已执行动作重复，改为重新规划以避免重复调用。",
             )
             engine.events.emit(
@@ -342,7 +350,8 @@ class WorkflowNodes:
                 )
             )
             state.action = AgentAction(
-                kind="replan", summary="工具快照拒绝后重新规划",
+                kind="replan",
+                summary="工具快照拒绝后重新规划",
                 action_reason="该工具不在当前 Run 的持久化允许快照中，需要重新规划。",
             )
             return engine._result("policy_check", state)
@@ -366,7 +375,8 @@ class WorkflowNodes:
                 )
             )
             state.action = AgentAction(
-                kind="replan", summary="工具不可用后重新规划",
+                kind="replan",
+                summary="工具不可用后重新规划",
                 action_reason="当前 Run 已记录的工具不可用，需要重新规划可执行路径。",
             )
             return engine._result("policy_check", state)
@@ -388,7 +398,8 @@ class WorkflowNodes:
                 )
             )
             state.action = AgentAction(
-                kind="replan", summary="策略拒绝后重新规划",
+                kind="replan",
+                summary="策略拒绝后重新规划",
                 action_reason="当前动作未通过策略检查，需要重新规划合规的后续步骤。",
             )
         elif decision.requires_approval:
@@ -472,6 +483,7 @@ class WorkflowNodes:
             f"开始调用 {state.action.tool_name}",
             {"call_id": str(call_id), "tool": state.action.tool_name},
         )
+
         async def report_progress(progress: ToolProgress) -> None:
             engine.events.emit(
                 state.run_id,
@@ -578,7 +590,9 @@ class WorkflowNodes:
                     candidate=candidate_text.strip(),
                     source_call_id=call_id,
                     source_step=current_step.sequence if current_step else None,
-                    location=("/candidate" if is_format_tool else f"/candidates/{candidate_index}/value"),
+                    location=(
+                        "/candidate" if is_format_tool else f"/candidates/{candidate_index}/value"
+                    ),
                     verified=False,
                     verification_summary=(
                         "候选 Flag 已通过格式校验，尚未进行确定性或平台验证"
@@ -587,8 +601,14 @@ class WorkflowNodes:
                     ),
                     rule_kind="flag_format" if is_format_tool else None,
                     discovery_source=("tool_call" if is_format_tool else "encoding_decode"),
-                    format_status=("format_matched" if is_format_tool and validation == "format_matched" else "not_checked"),
-                    verification_scope=("format" if is_format_tool and validation == "format_matched" else "none"),
+                    format_status=(
+                        "format_matched"
+                        if is_format_tool and validation == "format_matched"
+                        else "not_checked"
+                    ),
+                    verification_scope=(
+                        "format" if is_format_tool and validation == "format_matched" else "none"
+                    ),
                     deterministic_validation_status="not_run",
                     platform_validation_status="not_run",
                 )
@@ -597,8 +617,13 @@ class WorkflowNodes:
         current_step = engine.repository.get_execution_step_by_call(state.run_id, call_id)
         if current_step:
             observation_status = (
-                "success" if result.success else "timeout" if result.timed_out else "stopped"
-                if result.cancelled else "error"
+                "success"
+                if result.success
+                else "timeout"
+                if result.timed_out
+                else "stopped"
+                if result.cancelled
+                else "error"
             )
             engine.repository.save_execution_step(
                 current_step.model_copy(
@@ -650,9 +675,7 @@ class WorkflowNodes:
         # 只有已应用指引明确要求重规划时，才把其序号写入事件载荷。这个持久化
         # 关联让客户端能准确显示“因本指引重规划”，无需从时间戳推断因果。
         guidance_sequences = (
-            list(state.guidance_replan_sequences)
-            if state.guidance_replan_required
-            else []
+            list(state.guidance_replan_sequences) if state.guidance_replan_required else []
         )
         state.guidance_replan_required = False
         state.guidance_replan_sequences.clear()
@@ -798,29 +821,31 @@ class WorkflowNodes:
         if candidate is None:
             return "none"
         if any(
-            item.call_id == candidate.source_call_id and item.success
-            for item in state.observations
+            item.call_id == candidate.source_call_id and item.success for item in state.observations
         ):
             return "external"
         return "model"
 
     @staticmethod
-    def _latest_flag_candidate(
-        state: Any, task: Any | None = None
-    ) -> EvidenceCandidate | None:
+    def _latest_flag_candidate(state: Any, task: Any | None = None) -> EvidenceCandidate | None:
         """收尾缺少候选引用时，仅复用专用工具已验证格式的真实输出。"""
 
         for observation in reversed(state.observations):
             output = observation.output
             candidates = output.get("candidates")
-            if observation.success and observation.tool_name == "ctf.encoding_decode" and isinstance(candidates, list):
+            if (
+                observation.success
+                and observation.tool_name == "ctf.encoding_decode"
+                and isinstance(candidates, list)
+            ):
                 for index, item in enumerate(candidates):
                     value = item.get("value") if isinstance(item, dict) else item
                     if isinstance(value, str) and is_flag_candidate(
                         value, getattr(task, "verification_rules", ())
                     ):
                         return EvidenceCandidate(
-                            value=value.strip(), source_call_id=observation.call_id,
+                            value=value.strip(),
+                            source_call_id=observation.call_id,
                             location=f"/candidates/{index}/value",
                         )
             if (
@@ -828,9 +853,7 @@ class WorkflowNodes:
                 and observation.tool_name == "ctf.flag_candidate_verify"
                 and output.get("validation_status") == "format_matched"
                 and isinstance(output.get("candidate"), str)
-                and is_flag_candidate(
-                    output["candidate"], getattr(task, "verification_rules", ())
-                )
+                and is_flag_candidate(output["candidate"], getattr(task, "verification_rules", ()))
             ):
                 return EvidenceCandidate(
                     value=output["candidate"],
@@ -842,6 +865,19 @@ class WorkflowNodes:
     async def verify(self, raw: GraphState) -> GraphState:
         engine = self.engine
         state = engine._state(raw)
+        if self._requires_final_flag_verification(state) and not self._has_final_flag_verification(
+            state
+        ):
+            # 这是 Agent 收尾门槛，不替代 Agent 选择或执行工具：模型仍需在下一轮
+            # 根据已观察到的候选自行发起真实 FlagCandidateVerifyTool 调用。
+            self._record_validation(
+                state,
+                validation_status="failed",
+                evidence_level="external",
+                summary="黄金 CTF 案例尚未执行最终候选格式验证，不能完成",
+                completion_ready=False,
+            )
+            return engine._result("verify", state)
         if engine.profile.completion_mode == "advisory":
             if not state.action or not state.action.answer:
                 raise AgentDeclaredFailure("建议回答模式缺少模型答案")
@@ -895,9 +931,7 @@ class WorkflowNodes:
                 state,
                 validation_status="unverified",
                 evidence_level=(
-                    self._candidate_evidence_level(state, candidate)
-                    if candidate
-                    else "model"
+                    self._candidate_evidence_level(state, candidate) if candidate else "model"
                 ),
                 summary="未配置确定性外部验证条件，结果未外部验证",
                 completion_ready=True,
@@ -920,9 +954,7 @@ class WorkflowNodes:
             state,
             validation_status="validated" if result.verified else "failed",
             evidence_level=(
-                "external"
-                if result.verified
-                else self._candidate_evidence_level(state, candidate)
+                "external" if result.verified else self._candidate_evidence_level(state, candidate)
             ),
             summary=result.summary,
             completion_ready=result.verified,
@@ -932,6 +964,25 @@ class WorkflowNodes:
             },
         )
         return engine._result("verify", state)
+
+    @staticmethod
+    def _requires_final_flag_verification(state: Any) -> bool:
+        binding = getattr(state.task, "golden_case_binding", None)
+        return bool(binding and binding.case_id == "golden-ctf-attachment")
+
+    @staticmethod
+    def _has_final_flag_verification(state: Any) -> bool:
+        for observation in state.observations:
+            output = observation.output
+            if (
+                observation.success
+                and observation.tool_name == "ctf.flag_candidate_verify"
+                and output.get("validation_status") == "format_matched"
+                and isinstance(output.get("candidate"), str)
+                and is_flag_candidate(output["candidate"], state.task.verification_rules)
+            ):
+                return True
+        return False
 
     async def complete(self, raw: GraphState) -> GraphState:
         engine = self.engine

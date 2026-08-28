@@ -35,6 +35,18 @@ _PROMPT_INJECTION_MARKERS = re.compile(
 )
 _PREVIEW_LIMIT = 12_000
 _ZIP_MAX_RATIO = 100
+_ARCHIVE_MAX_ENTRIES = 1_000
+_ARCHIVE_MAX_EXPANDED_BYTES = 20 * 1024 * 1024
+_CSV_MAX_ROWS = 20_000
+_CSV_MAX_COLUMNS = 256
+_CSV_MAX_FIELD_CHARS = 16_384
+_STRUCTURED_PARSE_MAX_BYTES = 1 * 1024 * 1024
+
+
+class UploadMetadataLimitError(ValueError):
+    """上传元数据解析达到资源边界时必须拒绝保存，而不是降级为展示错误。"""
+
+
 _TEXT_EXTENSIONS = {".txt", ".md", ".log", ".json", ".yaml", ".yml", ".csv"}
 _ARCHIVE_EXTENSIONS = {".zip", ".tar", ".tgz", ".gz"}
 
@@ -76,7 +88,10 @@ def _detect_upload_mime(filename: str, supplied: str | None, content: bytes) -> 
         ".yml": {"application/x-yaml", "text/yaml"},
         ".csv": {"text/csv", "application/csv"},
     }
-    if suffix in _ARCHIVE_EXTENSIONS | {".pdf", ".json", ".yaml", ".yml", ".csv"} and detected not in expected[suffix]:
+    if (
+        suffix in _ARCHIVE_EXTENSIONS | {".pdf", ".json", ".yaml", ".yml", ".csv"}
+        and detected not in expected[suffix]
+    ):
         raise ValueError("文件扩展名与实际文件格式不一致")
     # application/octet-stream is a common browser fallback and is not evidence of a conflict.
     if supplied and supplied not in {"application/octet-stream", "binary/octet-stream"}:
@@ -95,7 +110,10 @@ def _artifact_metadata(content: bytes, mime_type: str) -> tuple[dict[str, Any], 
     preview: str | None = None
     contains_injection = False
     is_text = mime_type.startswith("text/") or mime_type in {
-        "application/json", "application/xml", "application/x-yaml", "text/yaml"
+        "application/json",
+        "application/xml",
+        "application/x-yaml",
+        "text/yaml",
     }
     if mime_type in {"application/zip", "application/x-zip-compressed"}:
         return _zip_metadata(content, metadata)
@@ -104,11 +122,13 @@ def _artifact_metadata(content: bytes, mime_type: str) -> tuple[dict[str, Any], 
     if is_text:
         text = content.decode("utf-8", errors="replace")
         preview = text[:_PREVIEW_LIMIT]
-        metadata.update({
-            "encoding": "utf-8-replacement",
-            "line_count": text.count("\n") + 1,
-            "truncated": len(text) > _PREVIEW_LIMIT,
-        })
+        metadata.update(
+            {
+                "encoding": "utf-8-replacement",
+                "line_count": text.count("\n") + 1,
+                "truncated": len(text) > _PREVIEW_LIMIT,
+            }
+        )
         _structured_metadata(text, mime_type, metadata)
         contains_injection = bool(_PROMPT_INJECTION_MARKERS.search(text))
     else:
@@ -117,67 +137,132 @@ def _artifact_metadata(content: bytes, mime_type: str) -> tuple[dict[str, Any], 
 
 
 def _structured_metadata(text: str, mime_type: str, metadata: dict[str, Any]) -> None:
-    """只解析可展示的结构信息，解析失败也不影响原始 Artifact 保存。"""
+    """限额解析结构摘要，拒绝复杂度超过上传边界的 CSV。"""
 
+    if len(text.encode("utf-8")) > _STRUCTURED_PARSE_MAX_BYTES and mime_type != "text/csv":
+        metadata["parse_skipped"] = "structured_payload_over_limit"
+        return
     try:
         if mime_type == "application/json":
             value = __import__("json").loads(text)
             metadata["structured_kind"] = "json"
-            metadata["top_level"] = sorted(value)[:50] if isinstance(value, dict) else type(value).__name__
+            metadata["top_level"] = (
+                sorted(value)[:50] if isinstance(value, dict) else type(value).__name__
+            )
         elif mime_type in {"application/x-yaml", "text/yaml"}:
             value = yaml.safe_load(text)
             metadata["structured_kind"] = "yaml"
-            metadata["top_level"] = sorted(value)[:50] if isinstance(value, dict) else type(value).__name__
+            metadata["top_level"] = (
+                sorted(value)[:50] if isinstance(value, dict) else type(value).__name__
+            )
         elif mime_type in {"text/csv", "application/csv"}:
-            rows = list(csv.reader(io.StringIO(text)))
-            metadata.update({
-                "structured_kind": "csv", "columns": rows[0][:100] if rows else [],
-                "row_count": max(0, len(rows) - 1),
-            })
+            rows = csv.reader(io.StringIO(text))
+            header = next(rows, [])
+            if len(header) > _CSV_MAX_COLUMNS:
+                raise UploadMetadataLimitError("CSV 列数超过解析限制")
+            row_count = 0
+            for row in rows:
+                row_count += 1
+                if row_count > _CSV_MAX_ROWS:
+                    raise UploadMetadataLimitError("CSV 行数超过解析限制")
+                if len(row) > _CSV_MAX_COLUMNS:
+                    raise UploadMetadataLimitError("CSV 列数超过解析限制")
+                if any(len(field) > _CSV_MAX_FIELD_CHARS for field in row):
+                    raise UploadMetadataLimitError("CSV 字段长度超过解析限制")
+            metadata.update(
+                {
+                    "structured_kind": "csv",
+                    "columns": header[:100],
+                    "row_count": row_count,
+                    "parse_limits": {
+                        "max_rows": _CSV_MAX_ROWS,
+                        "max_columns": _CSV_MAX_COLUMNS,
+                        "max_field_chars": _CSV_MAX_FIELD_CHARS,
+                    },
+                }
+            )
+    except UploadMetadataLimitError:
+        raise
     except (ValueError, csv.Error, yaml.YAMLError) as exc:
         metadata["parse_error"] = type(exc).__name__
 
 
-def _zip_metadata(content: bytes, metadata: dict[str, Any]) -> tuple[dict[str, Any], str | None, bool]:
+def _zip_metadata(
+    content: bytes, metadata: dict[str, Any]
+) -> tuple[dict[str, Any], str | None, bool]:
     try:
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             entries = archive.infolist()
+            if len(entries) > _ARCHIVE_MAX_ENTRIES:
+                raise ValueError("ZIP 条目数超过解析限制")
             total_compressed = sum(item.compress_size for item in entries)
             total_uncompressed = sum(item.file_size for item in entries)
-            unsafe_paths = [item.filename for item in entries if Path(item.filename).is_absolute() or ".." in Path(item.filename).parts]
+            if total_uncompressed > _ARCHIVE_MAX_EXPANDED_BYTES:
+                raise ValueError("ZIP 展开总量超过解析限制")
+            unsafe_paths = [
+                item.filename
+                for item in entries
+                if Path(item.filename).is_absolute() or ".." in Path(item.filename).parts
+            ]
             ratio = total_uncompressed / max(1, total_compressed)
-            metadata.update({
-                "structured_kind": "zip", "entry_count": len(entries),
-                "entries": [item.filename for item in entries[:100]], "uncompressed_size": total_uncompressed,
-                "compression_ratio": round(ratio, 2), "unsafe_paths": unsafe_paths[:20],
-                "suspicious_compression_ratio": ratio > _ZIP_MAX_RATIO,
-            })
+            if ratio > _ZIP_MAX_RATIO:
+                raise ValueError("ZIP 压缩比超过解析限制")
+            metadata.update(
+                {
+                    "structured_kind": "zip",
+                    "entry_count": len(entries),
+                    "entries": [item.filename for item in entries[:100]],
+                    "uncompressed_size": total_uncompressed,
+                    "compression_ratio": round(ratio, 2),
+                    "unsafe_paths": unsafe_paths[:20],
+                    "suspicious_compression_ratio": ratio > _ZIP_MAX_RATIO,
+                }
+            )
             return metadata, None, False
-    except zipfile.BadZipFile:
-        metadata["parse_error"] = "BadZipFile"
-        return metadata, None, False
+    except zipfile.BadZipFile as exc:
+        raise ValueError("ZIP 文件损坏或不完整") from exc
 
 
-def _tar_metadata(content: bytes, metadata: dict[str, Any]) -> tuple[dict[str, Any], str | None, bool]:
+def _tar_metadata(
+    content: bytes, metadata: dict[str, Any]
+) -> tuple[dict[str, Any], str | None, bool]:
     try:
         with tarfile.open(fileobj=io.BytesIO(content), mode="r:*") as archive:
             entries = archive.getmembers()
-            metadata.update({
-                "structured_kind": "tar",
-                "entry_count": len(entries),
-                "entries": [item.name for item in entries[:100]],
-                "uncompressed_size": sum(item.size for item in entries if item.isfile()),
-                "unsafe_paths": [
-                    item.name for item in entries
-                    if Path(item.name.replace("\\", "/")).is_absolute()
-                    or ".." in Path(item.name.replace("\\", "/")).parts
-                ][:20],
-                "non_regular_entries": sum(1 for item in entries if not item.isfile() and not item.isdir()),
-            })
+            if len(entries) > _ARCHIVE_MAX_ENTRIES:
+                raise ValueError("TAR 条目数超过解析限制")
+            expanded = sum(item.size for item in entries if item.isfile())
+            if expanded > _ARCHIVE_MAX_EXPANDED_BYTES:
+                raise ValueError("TAR 展开总量超过解析限制")
+            ratio = expanded / max(1, len(content))
+            if ratio > _ZIP_MAX_RATIO:
+                raise ValueError("TAR 压缩比超过解析限制")
+            metadata.update(
+                {
+                    "structured_kind": "tar",
+                    "entry_count": len(entries),
+                    "entries": [item.name for item in entries[:100]],
+                    "uncompressed_size": expanded,
+                    "compression_ratio": round(ratio, 2),
+                    "parse_limits": {
+                        "max_entries": _ARCHIVE_MAX_ENTRIES,
+                        "max_expanded_bytes": _ARCHIVE_MAX_EXPANDED_BYTES,
+                        "max_compression_ratio": _ZIP_MAX_RATIO,
+                    },
+                    "unsafe_paths": [
+                        item.name
+                        for item in entries
+                        if Path(item.name.replace("\\", "/")).is_absolute()
+                        or ".." in Path(item.name.replace("\\", "/")).parts
+                    ][:20],
+                    "non_regular_entries": sum(
+                        1 for item in entries if not item.isfile() and not item.isdir()
+                    ),
+                }
+            )
             return metadata, None, False
-    except (tarfile.TarError, EOFError):
-        metadata["parse_error"] = "TarError"
-        return metadata, None, False
+    except (tarfile.TarError, EOFError) as exc:
+        raise ValueError("TAR 文件损坏或不完整") from exc
 
 
 def create_thread_router(context: ApiContext) -> APIRouter:
@@ -229,9 +314,7 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             "messages": [
                 item.model_dump(mode="json") for item in repository.list_messages(thread.id)
             ],
-            "runs": [
-                item.model_dump(mode="json") for item in repository.list_runs(thread.id)
-            ],
+            "runs": [item.model_dump(mode="json") for item in repository.list_runs(thread.id)],
             "artifacts": [
                 item.model_dump(mode="json") for item in repository.list_artifacts(thread.id)
             ],
@@ -278,7 +361,9 @@ def create_thread_router(context: ApiContext) -> APIRouter:
                 tool_ids = context.validate_thread_tool_selection(
                     profile,
                     mode,
-                    (body.tool_ids or []) if "tool_ids" in body.model_fields_set else thread.tool_ids,
+                    (body.tool_ids or [])
+                    if "tool_ids" in body.model_fields_set
+                    else thread.tool_ids,
                 )
             except (KeyError, ValueError) as exc:
                 raise HTTPException(409, str(exc)) from exc
@@ -290,10 +375,7 @@ def create_thread_router(context: ApiContext) -> APIRouter:
     @router.delete("/threads/{thread_id}", status_code=204)
     async def delete_thread(thread_id: UUID) -> None:
         context.require_thread(thread_id)
-        active = any(
-            run.status in ACTIVE_RUN_STATUSES
-            for run in repository.list_runs(thread_id)
-        )
+        active = any(run.status in ACTIVE_RUN_STATUSES for run in repository.list_runs(thread_id))
         if active:
             raise HTTPException(409, "请先停止正在运行的任务")
         repository.delete_thread(thread_id)
@@ -324,7 +406,10 @@ def create_thread_router(context: ApiContext) -> APIRouter:
             mime_type = _detect_upload_mime(filename, upload.content_type, content)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        metadata, preview, contains_injection = _artifact_metadata(content, mime_type)
+        try:
+            metadata, preview, contains_injection = _artifact_metadata(content, mime_type)
+        except (ValueError, csv.Error) as exc:
+            raise HTTPException(400, str(exc)) from exc
         destination = (context.config.artifact_root / storage_ref).resolve()
         artifact_root = context.config.artifact_root.resolve()
         if artifact_root not in destination.parents:

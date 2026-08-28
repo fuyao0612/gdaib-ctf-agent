@@ -414,6 +414,9 @@ class TaskSpec(DomainModel):
     tool_snapshots: list[ToolSnapshot] = Field(default_factory=list, max_length=100)
     # 序列化检查点会补齐默认字段，不能用字段是否存在区分历史 Run 与空白名单。
     tool_snapshot_frozen: bool = False
+    # 黄金案例仅在隔离演示入口显式声明。该绑定不包含 Judge 配置，且上下文构造器
+    # 不会把它发送给 Agent；它用于让评测拒绝“看起来相似”的 Run。
+    golden_case_binding: GoldenCaseBinding | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -424,6 +427,20 @@ class TaskSpec(DomainModel):
         if "tool_snapshots" in data and "tool_snapshot_frozen" not in data:
             data["tool_snapshot_frozen"] = True
         return data
+
+
+class GoldenCaseBinding(BaseModel):
+    """黄金案例 Run 的不可变身份与输入/授权快照。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    case_id: str = Field(min_length=1, max_length=160)
+    case_version: str = Field(min_length=1, max_length=80)
+    objective_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    request_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    input_artifact_sha256: tuple[str, ...] = Field(default_factory=tuple, max_length=20)
+    authorization_scope_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    tool_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class CallStatus(StrEnum):
@@ -476,7 +493,9 @@ class ExecutionStep(DomainModel):
     tool_id: str | None = Field(default=None, max_length=240)
     tool_name: str | None = Field(default=None, max_length=160)
     arguments: dict[str, Any] = Field(default_factory=dict)
-    observation_status: Literal["running", "success", "error", "timeout", "blocked", "stopped"] = "running"
+    observation_status: Literal["running", "success", "error", "timeout", "blocked", "stopped"] = (
+        "running"
+    )
     observation_summary: str | None = Field(default=None, max_length=1000)
     observation_facts: list[str] = Field(default_factory=list, max_length=20)
     observation_details: dict[str, Any] = Field(default_factory=dict)
@@ -609,27 +628,42 @@ class AgentPlan(BaseModel):
                 )
                 for index, step in enumerate(self.steps, 1)
             ]
-        if len(self.step_details) != len(self.steps) or [
-            item.goal for item in self.step_details
-        ] != self.steps:
+        if (
+            len(self.step_details) != len(self.steps)
+            or [item.goal for item in self.step_details] != self.steps
+        ):
             # 兼容旧 UI 只提交并行数组的计划编辑；服务端重新对齐结构化字段。
             self.step_details = [
                 PlanStep(
                     step_id=f"step-{index}",
                     goal=step,
-                    reason=(self.step_details[index - 1].reason
-                            if index <= len(self.step_details)
-                            else "按更新后的任务目标推进并收集公开证据。"),
+                    reason=(
+                        self.step_details[index - 1].reason
+                        if index <= len(self.step_details)
+                        else "按更新后的任务目标推进并收集公开证据。"
+                    ),
                     expected_result=self.expected_results[index - 1],
                     verification_method=self.verification_methods[index - 1],
-                    capabilities=(self.step_details[index - 1].capabilities
-                                  if index <= len(self.step_details) else []),
-                    dependencies=(self.step_details[index - 1].dependencies
-                                  if index <= len(self.step_details) else []),
-                    risk=(self.step_details[index - 1].risk
-                          if index <= len(self.step_details) else "low"),
-                    status=(self.step_details[index - 1].status
-                            if index <= len(self.step_details) else "planned"),
+                    capabilities=(
+                        self.step_details[index - 1].capabilities
+                        if index <= len(self.step_details)
+                        else []
+                    ),
+                    dependencies=(
+                        self.step_details[index - 1].dependencies
+                        if index <= len(self.step_details)
+                        else []
+                    ),
+                    risk=(
+                        self.step_details[index - 1].risk
+                        if index <= len(self.step_details)
+                        else "low"
+                    ),
+                    status=(
+                        self.step_details[index - 1].status
+                        if index <= len(self.step_details)
+                        else "planned"
+                    ),
                 )
                 for index, step in enumerate(self.steps, 1)
             ]

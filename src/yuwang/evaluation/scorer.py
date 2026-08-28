@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -175,6 +176,61 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
             ("passed", "目标工具已调用") if expected <= actual else ("failed", "未调用全部目标工具")
         )
 
+    def tool_candidate_hash(
+        ctx: ValidationContext, item: EvaluationCriterion
+    ) -> tuple[CriterionStatus, str]:
+        expected = item.expected_value
+        if not isinstance(expected, dict):
+            return "configuration_error", "tool_candidate_hash 需要工具和候选 SHA-256"
+        tool_id = expected.get("tool_id")
+        candidate_sha256 = expected.get("candidate_sha256")
+        if (
+            not isinstance(tool_id, str)
+            or not isinstance(candidate_sha256, str)
+            or len(candidate_sha256) != 64
+        ):
+            return "configuration_error", "tool_candidate_hash 配置无效"
+        calls = {
+            call.id: call
+            for call in ctx.repository.list_tool_calls(ctx.run.id)
+            if (call.tool_id or call.tool_name) == tool_id and str(call.status) == "succeeded"
+        }
+        matched = any(
+            evidence.source_call_id in calls
+            and hashlib.sha256(evidence.candidate.encode("utf-8")).hexdigest()
+            == candidate_sha256.lower()
+            for evidence in ctx.repository.list_evidence(ctx.run.id)
+        )
+        return (
+            ("passed", "指定工具已产生匹配候选证据")
+            if matched
+            else ("failed", "指定工具未产生匹配候选证据")
+        )
+
+    def result_evidence_tool(
+        ctx: ValidationContext, item: EvaluationCriterion
+    ) -> tuple[CriterionStatus, str]:
+        expected = item.expected_value
+        if not isinstance(expected, dict) or not isinstance(expected.get("tool_ids"), list):
+            return "configuration_error", "result_evidence_tool 需要 tool_ids"
+        result_type = expected.get("result_type")
+        if result_type is not None and not isinstance(result_type, str):
+            return "configuration_error", "result_evidence_tool 的 result_type 无效"
+        allowed = {str(value) for value in expected["tool_ids"]}
+        calls = {str(call.id): call for call in ctx.repository.list_tool_calls(ctx.run.id)}
+        for result in ctx.run.results:
+            if result_type and result.result_type != result_type:
+                continue
+            for reference in result.evidence:
+                call = calls.get(reference.source)
+                if (
+                    call
+                    and str(call.status) == "succeeded"
+                    and (call.tool_id or call.tool_name) in allowed
+                ):
+                    return "passed", "结果已绑定相关成功工具证据"
+        return "failed", "结果未绑定相关成功工具证据"
+
     def artifact_sha256(
         ctx: ValidationContext, item: EvaluationCriterion
     ) -> tuple[CriterionStatus, str]:
@@ -303,7 +359,11 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
         judge_type = str(item.private_config.get("judge_type", ""))
         result_type = item.private_config.get("result_type")
         candidate = next(
-            (value for value in ctx.run.results if result_type is None or value.result_type == result_type),
+            (
+                value
+                for value in ctx.run.results
+                if result_type is None or value.result_type == result_type
+            ),
             None,
         )
         if candidate is None:
@@ -328,6 +388,8 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
             "agent_profile_snapshot": agent_profile_snapshot,
             "provider_snapshot": provider_snapshot,
             "tool_called": tool_called,
+            "tool_candidate_hash": tool_candidate_hash,
+            "result_evidence_tool": result_evidence_tool,
             "artifact_sha256": artifact_sha256,
             "artifact_prompt_injection": artifact_prompt_injection,
             "event_payload": event_payload,
@@ -367,7 +429,11 @@ def _record_judge_evidence(
             rule_kind="local_judge",
             verification_scope="deterministic_rule",
             deterministic_validation_status=(
-                "passed" if result.status == "passed" else "failed" if result.status == "failed" else "not_run"
+                "passed"
+                if result.status == "passed"
+                else "failed"
+                if result.status == "failed"
+                else "not_run"
             ),
             discovery_source=result.validator_name,
         )

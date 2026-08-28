@@ -16,5 +16,3 @@ services:
 volumes:
   yuwang-data: !reset null
   yuwang-golden-demo-data:
-    external: true
-    name: yuwang-golden-demo_yuwang-golden-demo-data

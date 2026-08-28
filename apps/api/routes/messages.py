@@ -170,6 +170,7 @@ def create_message_router(context: ApiContext) -> APIRouter:
                 RunCreate(
                     provider_config_id=body.provider_config_id,
                     authorized_targets=body.authorized_targets,
+                    golden_case_directory=body.golden_case_directory,
                 ),
                 origin_message=user_message,
             )
@@ -190,8 +191,12 @@ def create_message_router(context: ApiContext) -> APIRouter:
                 "guidance_queued",
                 {
                     "run": result.run.model_dump(mode="json"),
-                    "guidance": result.guidance.model_dump(mode="json") if result.guidance else None,
-                    "user_message": result.message.model_dump(mode="json") if result.message else None,
+                    "guidance": result.guidance.model_dump(mode="json")
+                    if result.guidance
+                    else None,
+                    "user_message": result.message.model_dump(mode="json")
+                    if result.message
+                    else None,
                 },
             )
         if decision == "input":
@@ -202,7 +207,9 @@ def create_message_router(context: ApiContext) -> APIRouter:
                 "input_received",
                 {
                     "run": result.run.model_dump(mode="json"),
-                    "user_message": result.message.model_dump(mode="json") if result.message else None,
+                    "user_message": result.message.model_dump(mode="json")
+                    if result.message
+                    else None,
                 },
             )
         result = interactions.submit_clarification(

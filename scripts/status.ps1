@@ -2,10 +2,13 @@
 
 [CmdletBinding()]
 param(
-    [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    [string]$ProjectRoot
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+}
 . (Join-Path $PSScriptRoot 'operations-common.ps1')
 
 $values = Get-YuwangEnvValues $ProjectRoot

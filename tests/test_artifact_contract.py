@@ -1,10 +1,16 @@
+import tarfile
 from io import BytesIO
 from uuid import uuid4
 from zipfile import ZipFile
 
 import pytest
 
-from apps.api.routes.threads import _artifact_metadata, _detect_upload_mime
+from apps.api.routes.threads import (
+    _ARCHIVE_MAX_ENTRIES,
+    _CSV_MAX_ROWS,
+    _artifact_metadata,
+    _detect_upload_mime,
+)
 from yuwang.domain.models import Artifact
 
 
@@ -63,9 +69,18 @@ def test_zip_artifact_only_reads_manifest_and_flags_unsafe_paths():
 
 
 def test_upload_format_detection_supports_structured_and_archive_types():
-    assert _detect_upload_mime("notes.yaml", "application/x-yaml", b"items:\n  - one\n") == "application/x-yaml"
-    assert _detect_upload_mime("rows.csv", "text/csv", b"ip,domain\n192.0.2.1,example.test\n") == "text/csv"
-    assert _detect_upload_mime("bundle.zip", "application/octet-stream", b"PK\x03\x04payload") == "application/zip"
+    assert (
+        _detect_upload_mime("notes.yaml", "application/x-yaml", b"items:\n  - one\n")
+        == "application/x-yaml"
+    )
+    assert (
+        _detect_upload_mime("rows.csv", "text/csv", b"ip,domain\n192.0.2.1,example.test\n")
+        == "text/csv"
+    )
+    assert (
+        _detect_upload_mime("bundle.zip", "application/octet-stream", b"PK\x03\x04payload")
+        == "application/zip"
+    )
 
 
 def test_upload_format_detection_rejects_extension_and_mime_conflicts():
@@ -73,3 +88,25 @@ def test_upload_format_detection_rejects_extension_and_mime_conflicts():
         _detect_upload_mime("bundle.zip", "application/zip", b"plain text")
     with pytest.raises(ValueError):
         _detect_upload_mime("notes.yaml", "application/pdf", b"items: []")
+
+
+def test_upload_metadata_rejects_csv_and_archive_complexity_limits():
+    csv_payload = "value\n" + "x\n" * (_CSV_MAX_ROWS + 1)
+    with pytest.raises(ValueError, match="CSV 行数"):
+        _artifact_metadata(csv_payload.encode(), "text/csv")
+
+    zip_payload = BytesIO()
+    with ZipFile(zip_payload, "w") as archive:
+        for index in range(_ARCHIVE_MAX_ENTRIES + 1):
+            archive.writestr(f"entries/{index}.txt", "x")
+    with pytest.raises(ValueError, match="ZIP 条目数"):
+        _artifact_metadata(zip_payload.getvalue(), "application/zip")
+
+    tar_payload = BytesIO()
+    with tarfile.open(fileobj=tar_payload, mode="w") as archive:
+        for index in range(_ARCHIVE_MAX_ENTRIES + 1):
+            info = tarfile.TarInfo(f"entries/{index}.txt")
+            info.size = 0
+            archive.addfile(info)
+    with pytest.raises(ValueError, match="TAR 条目数"):
+        _artifact_metadata(tar_payload.getvalue(), "application/x-tar")

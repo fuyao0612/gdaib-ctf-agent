@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from yuwang.domain.models import EvidenceRecord, Run, TaskSpec, Thread
+from yuwang.domain.models import Artifact, EventType, EvidenceRecord, Run, TaskSpec, Thread
 from yuwang.results import TaskResultService
 from yuwang.storage import SQLiteRepository
 
@@ -90,3 +90,39 @@ def test_result_service_rejects_forged_or_cross_run_evidence_ids(tmp_path) -> No
     assert result.evidence == []
     assert result.validation_status == "unverified"
     assert result.validator_name == "none"
+
+
+def test_security_recovery_is_never_synthesized_from_policy_events(tmp_path) -> None:
+    repository = SQLiteRepository(tmp_path / "results.db")
+    run = _completed_run(repository)
+    artifact = repository.save_artifact(
+        Artifact(
+            thread_id=run.thread_id,
+            filename="hostile.txt",
+            kind="upload",
+            sha256="b" * 64,
+            size=1,
+            mime_type="text/plain",
+            storage_ref="thread/hostile.blob",
+            contains_prompt_injection=True,
+        )
+    )
+    repository.create_event(
+        run.id,
+        EventType.POLICY_CHECKED,
+        "拒绝不可信附件策略覆盖",
+        {"reason": "untrusted_prompt_injection", "allowed": False},
+    )
+
+    result = TaskResultService(repository).persist(
+        run,
+        TaskSpec(body="总结已授权附件", artifact_ids=[artifact.id]),
+        {
+            "result_type": "assessment",
+            "title": "摘要",
+            "summary": "合法摘要",
+            "structured_data": {},
+        },
+    )[0]
+
+    assert result.structured_data == {}
