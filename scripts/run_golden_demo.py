@@ -150,7 +150,9 @@ def run(case_id: str, base_url: str, input_root: Path, output: Path, timeout: in
         ],
     }
     output.mkdir(parents=True, exist_ok=True)
-    (output / f"{case_id}-summary.json").write_text(
+    # Every real attempt is a separate evidence item; never overwrite a prior
+    # failure or success when collecting pass@1/pass@3 statistics.
+    (output / f"{case_id}-{run_id}-summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return summary
