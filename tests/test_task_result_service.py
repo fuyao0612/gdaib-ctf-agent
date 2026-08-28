@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from yuwang.domain.models import Artifact, EventType, EvidenceRecord, Run, TaskSpec, Thread
+from yuwang.domain.models import (
+    Artifact,
+    CallStatus,
+    EventType,
+    EvidenceRecord,
+    Run,
+    TaskSpec,
+    Thread,
+    ToolCall,
+)
 from yuwang.results import TaskResultService
 from yuwang.storage import SQLiteRepository
 
@@ -126,3 +135,40 @@ def test_security_recovery_is_never_synthesized_from_policy_events(tmp_path) -> 
     )[0]
 
     assert result.structured_data == {}
+
+
+def test_authorized_inspection_evidence_binds_an_assessment_only_when_tool_succeeded(
+    tmp_path,
+) -> None:
+    repository = SQLiteRepository(tmp_path / "inspection.db")
+    run = _completed_run(repository)
+    tool_call = ToolCall(
+        run_id=run.id,
+        tool_name="文件安全检查",
+        tool_id="ctf.file_inspect",
+        input_summary="检查当前授权附件",
+        result_summary="文件安全检查执行成功",
+        duration_ms=1,
+        status=CallStatus.SUCCEEDED,
+    )
+    repository.save_tool_call(tool_call)
+    evidence = EvidenceRecord(
+        run_id=run.id,
+        candidate=f"ctf.file_inspect:{tool_call.id}",
+        source_call_id=tool_call.id,
+        location="/",
+        verified=False,
+        verification_summary="ctf.file_inspect 已成功检查当前授权附件；不代表摘要内容已验证",
+        rule_kind="authorized_attachment_inspection",
+        discovery_source="tool_call",
+    )
+    repository.save_evidence(evidence)
+
+    result = TaskResultService(repository).persist(
+        run,
+        TaskSpec(body="总结已授权附件", scenario="incident_response"),
+        {"result_type": "assessment", "title": "合法摘要", "summary": "仅总结授权附件"},
+    )[0]
+
+    assert result.evidence[0].source == str(tool_call.id)
+    assert result.evidence[0].tool_verified is False

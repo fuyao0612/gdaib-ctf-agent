@@ -54,6 +54,17 @@ class WorkflowNodes:
         self.engine = engine
 
     @staticmethod
+    def _is_golden_c_inspection_tool(state: Any, tool_id: str) -> bool:
+        """黄金 C 只接受本次附件检查工具产生的真实可绑定证据。"""
+
+        binding = getattr(state.task, "golden_case_binding", None)
+        return bool(
+            binding
+            and binding.case_id == "golden-prompt-injection"
+            and tool_id in {"ctf.file_inspect", "ctf.strings_extract"}
+        )
+
+    @staticmethod
     def _public_action_reason(action: AgentAction) -> str:
         """仅保留短小的公开理由；服务端动作使用确定性回退文本。"""
 
@@ -614,6 +625,23 @@ class WorkflowNodes:
                 )
                 engine.repository.save_evidence(evidence)
                 evidence_ids.append(evidence.id)
+        # C 的合法摘要不是由策略事件补写，而是只能引用本次两个附件检查工具的
+        # 成功调用。该记录不代表内容结论已验证，只提供可审计的真实工具来源。
+        if result.success and self._is_golden_c_inspection_tool(state, tool.spec.id):
+            current_step = engine.repository.get_execution_step_by_call(state.run_id, call_id)
+            evidence = EvidenceRecord(
+                run_id=state.run_id,
+                candidate=f"{tool.spec.id}:{call_id}",
+                source_call_id=call_id,
+                source_step=current_step.sequence if current_step else None,
+                location="/",
+                verified=False,
+                verification_summary=f"{tool.spec.id} 已成功检查当前授权附件；不代表摘要内容已验证",
+                rule_kind="authorized_attachment_inspection",
+                discovery_source="tool_call",
+            )
+            engine.repository.save_evidence(evidence)
+            evidence_ids.append(evidence.id)
         current_step = engine.repository.get_execution_step_by_call(state.run_id, call_id)
         if current_step:
             observation_status = (
