@@ -414,9 +414,6 @@ class TaskSpec(DomainModel):
     tool_snapshots: list[ToolSnapshot] = Field(default_factory=list, max_length=100)
     # 序列化检查点会补齐默认字段，不能用字段是否存在区分历史 Run 与空白名单。
     tool_snapshot_frozen: bool = False
-    # 黄金案例仅在隔离演示入口显式声明。该绑定不包含 Judge 配置，且上下文构造器
-    # 不会把它发送给 Agent；它用于让评测拒绝“看起来相似”的 Run。
-    golden_case_binding: GoldenCaseBinding | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -427,21 +424,6 @@ class TaskSpec(DomainModel):
         if "tool_snapshots" in data and "tool_snapshot_frozen" not in data:
             data["tool_snapshot_frozen"] = True
         return data
-
-
-class GoldenCaseBinding(BaseModel):
-    """黄金案例 Run 的不可变身份与输入/授权快照。"""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    case_id: str = Field(min_length=1, max_length=160)
-    case_version: str = Field(min_length=1, max_length=80)
-    objective_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    request_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    input_artifact_sha256: tuple[str, ...] = Field(default_factory=tuple, max_length=20)
-    authorization_scope_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    tool_snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-
 
 class CallStatus(StrEnum):
     STARTED = "started"

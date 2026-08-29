@@ -7,7 +7,6 @@ RUN pip install --no-cache-dir -r requirements.runtime.lock
 COPY src ./src
 COPY apps/__init__.py ./apps/__init__.py
 COPY apps/api ./apps/api
-COPY docs/golden-cases ./docs/golden-cases
 COPY scripts/migrate_legacy_data.py ./scripts/migrate_legacy_data.py
 RUN pip install --no-cache-dir --no-build-isolation --no-deps .
 RUN addgroup --system --gid 10001 yuwang && adduser --system --uid 10001 --ingroup yuwang yuwang && mkdir -p /data/artifacts && chown -R yuwang:yuwang /data

@@ -269,8 +269,8 @@ src/yuwang/
   tooling/sdk.py                  显式工具注册、校验和执行
 ```
 
-生产文件尽量保持单一职责并控制在约 400 行。`providers.py` 和 `nodes.py` 接近该
-范围，但分别保持一个协议适配器和一组工作流节点，继续拆分反而会增加跳转。
+生产文件按职责分层组织；较大的协议适配器和工作流节点模块通过测试、类型检查和代码地图
+保持可维护性。文件行数不是质量或拆分与否的承诺。
 
 ## 30 分钟学习路线
 
@@ -361,7 +361,7 @@ python examples/local_api.py
 ## 文档导航
 
 - [初审差距矩阵](docs/competition-preliminary-review.md)：五个评分维度、证据、风险与保守评分区间。
-- [黄金案例与提交材料](docs/golden-cases/README.md)：A/B/C 三个本地无害演示和 `docs/submission/` 初审文档。
+- [初审提交材料](docs/submission/00-提交清单.md)：项目摘要、技术说明、测试报告、部署与演示材料。
 
 - [快速入门](docs/quickstart.md)：第一次启动到完成对话。
 - [Agent 循环](docs/agent-loop.md)：五阶段与真实代码文件。
@@ -387,5 +387,3 @@ python examples/local_api.py
 
 如果你的修改需要任意 Shell、公网扫描、多智能体、插件市场或多租户，请先作为新
 阶段讨论，不要借普通功能提交扩大当前安全边界。
-
-##本次练习分支：training/高水辉,Git操作测试
