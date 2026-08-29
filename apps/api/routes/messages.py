@@ -170,7 +170,6 @@ def create_message_router(context: ApiContext) -> APIRouter:
                 RunCreate(
                     provider_config_id=body.provider_config_id,
                     authorized_targets=body.authorized_targets,
-                    golden_case_directory=body.golden_case_directory,
                 ),
                 origin_message=user_message,
             )

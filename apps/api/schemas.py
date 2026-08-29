@@ -58,11 +58,6 @@ class UnifiedMessageCreate(MessageCreate):
     # 目标授权不能从自然语言任务中推断。聊天入口需要显式携带它，
     # 才能让受控 Run 与保留的 /turns 接口具有相同的安全语义。
     authorized_targets: list[str] = Field(default_factory=list, max_length=20)
-    # 仅供隔离黄金演示编排器使用；服务端会根据内置 manifest 建立绑定，Judge 私有配置
-    # 不会进入该字段、Task Prompt 或公开事件。
-    golden_case_directory: Literal[
-        "A-ctf-attachment", "B-local-web", "C-prompt-injection"
-    ] | None = None
 
 
 class RunCreate(BaseModel):
@@ -71,9 +66,6 @@ class RunCreate(BaseModel):
     success_conditions: list[str] = Field(default_factory=lambda: ["reference_tool_succeeded"])
     verification_rules: list[VerificationRule] = Field(default_factory=list)
     plan_mode: Literal["auto", "approval"] | None = None
-    golden_case_directory: Literal[
-        "A-ctf-attachment", "B-local-web", "C-prompt-injection"
-    ] | None = None
 
     @field_validator("verification_rules")
     @classmethod

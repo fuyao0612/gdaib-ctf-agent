@@ -4,9 +4,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import Settings, create_app
 from yuwang.domain.evaluation import EvaluationRecord, summarize_evaluations
-from yuwang.domain.models import Run, TaskSpec, Thread
-from yuwang.evaluation import EvaluationCase, EvaluationRunner, load_golden_case
-from yuwang.evaluation.golden import evaluate_golden_run
+from yuwang.evaluation import EvaluationCase, EvaluationRunner
 from yuwang.storage import SQLiteRepository
 
 
@@ -130,27 +128,6 @@ def test_evaluation_api_reads_persisted_results_and_statistics(tmp_path):
         exported_csv = client.get("/api/v1/evaluations/export.csv", params={"category": "API"})
         assert exported_csv.status_code == 200, exported_csv.text
         assert "provider_requests" in exported_csv.text
-
-
-def test_golden_case_loader_only_allows_bundled_cases_and_keeps_judge_private():
-    case = load_golden_case("C-prompt-injection")
-    assert case.case_id == "golden-prompt-injection"
-    assert case.judge_config["judge_type"] == "structured_value"
-    with pytest.raises(ValueError, match="未知黄金案例"):
-        load_golden_case("../../etc")
-
-
-def test_golden_evaluation_rejects_an_unbound_similar_run(tmp_path):
-    repository = SQLiteRepository(tmp_path / "golden.db")
-    thread = repository.save_thread(Thread(title="相似运行"))
-    run = Run(thread_id=thread.id)
-    run.transition("running")
-    run.transition("completed")
-    repository.save_run(run)
-    repository.save_run_task(run.id, TaskSpec(body="看起来像黄金案例", scenario="ctf"))
-
-    with pytest.raises(ValueError, match="未建立黄金案例绑定"):
-        evaluate_golden_run(repository, run, load_golden_case("A-ctf-attachment"))
 
 
 @pytest.mark.asyncio

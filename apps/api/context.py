@@ -8,8 +8,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import secrets
 import time
 from collections.abc import AsyncIterator, Callable, Coroutine
@@ -26,7 +24,6 @@ from yuwang.agent import AgentEngine, AgentStateModel
 from yuwang.domain.models import (
     ACTIVE_RUN_STATUSES,
     EventType,
-    GoldenCaseBinding,
     KnowledgeMatchSnapshot,
     Message,
     MessageRole,
@@ -37,7 +34,6 @@ from yuwang.domain.models import (
     ThreadMode,
     ToolSnapshot,
 )
-from yuwang.evaluation.golden import load_golden_case
 from yuwang.knowledge import KnowledgeBaseService
 from yuwang.knowledge.starter import ensure_starter_documents
 from yuwang.model_providers import ModelProvider, OpenAICompatibleProvider, ProviderChain
@@ -95,8 +91,6 @@ class ApiContext:
 
     @staticmethod
     def _normalized_mcp_command(value: str) -> str:
-        from pathlib import Path
-
         return str(Path(value).resolve()).casefold()
 
     def cleanup_callback(self, run_id: UUID) -> Callable[[asyncio.Task[None]], None]:
@@ -386,7 +380,6 @@ class ApiContext:
             )
             for spec in self.selected_tool_specs(thread, profile)
         ]
-        golden_binding = self._build_golden_case_binding(create, origin_message, tool_snapshots)
         return TaskSpec(
             body=origin_message.content,
             origin_message_id=origin_message.id,
@@ -407,60 +400,6 @@ class ApiContext:
             budget=profile.budget,
             skills=self.skill_service.snapshots_for(thread.skill_ids),
             tool_snapshots=tool_snapshots,
-            golden_case_binding=golden_binding,
-        )
-
-    @staticmethod
-    def _digest(value: object) -> str:
-        return hashlib.sha256(
-            json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-                "utf-8"
-            )
-        ).hexdigest()
-
-    def _build_golden_case_binding(
-        self,
-        create: RunCreate,
-        origin_message: Message,
-        tool_snapshots: list[ToolSnapshot],
-    ) -> GoldenCaseBinding | None:
-        """建立只用于评测身份核验的快照，绝不加载或暴露私有 Judge 条件。"""
-
-        if create.golden_case_directory is None:
-            return None
-        case = load_golden_case(create.golden_case_directory)
-        artifacts = [self.repository.get_artifact(value) for value in origin_message.artifact_ids]
-        if any(value is None for value in artifacts):
-            raise ValueError("黄金案例输入 Artifact 不存在")
-        actual_names = [value.filename for value in artifacts if value]
-        manifest_path = (
-            Path(__file__).resolve().parents[2]
-            / "docs"
-            / "golden-cases"
-            / case.directory
-            / "manifest.yaml"
-        )
-        # 输入文件名来自公开 manifest；Hash 来自本次正式上传而非客户端声明。
-        import yaml  # type: ignore[import-untyped]
-
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-        expected_names = manifest.get("input_artifacts", []) if isinstance(manifest, dict) else []
-        if actual_names != expected_names:
-            raise ValueError("黄金案例输入 Artifact 与公开 manifest 不一致")
-        if set(create.authorized_targets) != set(case.authorization_scope):
-            raise ValueError("黄金案例授权范围与公开 manifest 不一致")
-        if {item.tool_id for item in tool_snapshots} != set(case.allowed_tools):
-            raise ValueError("黄金案例冻结工具与公开 manifest 不一致")
-        return GoldenCaseBinding(
-            case_id=case.case_id,
-            case_version=case.version,
-            objective_sha256=hashlib.sha256(manifest["objective"].encode("utf-8")).hexdigest(),
-            request_sha256=hashlib.sha256(origin_message.content.encode("utf-8")).hexdigest(),
-            input_artifact_sha256=tuple(value.sha256 for value in artifacts if value),
-            authorization_scope_sha256=self._digest(sorted(create.authorized_targets)),
-            tool_snapshot_sha256=self._digest(
-                [item.model_dump(mode="json") for item in tool_snapshots]
-            ),
         )
 
     async def start_run(

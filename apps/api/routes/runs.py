@@ -32,7 +32,6 @@ from yuwang.domain.models import (
     Run,
     RunStatus,
 )
-from yuwang.evaluation.golden import evaluate_golden_run, load_golden_case
 from yuwang.reports.facts import public_arguments
 from yuwang.reports.trace import RunTraceService
 
@@ -67,7 +66,6 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 success_conditions=body.success_conditions,
                 verification_rules=body.verification_rules,
                 plan_mode=body.plan_mode,
-                golden_case_directory=body.golden_case_directory,
             ),
             origin_message=user_message,
         )
@@ -453,19 +451,6 @@ def create_run_router(context: ApiContext) -> APIRouter:
                 for value in repository.list_checkpoints(run_id)
             ],
         }
-
-    @router.post("/runs/{run_id}/evaluate/golden/{case_directory}")
-    async def evaluate_golden_case(run_id: UUID, case_directory: str) -> dict[str, Any]:
-        """对已结束的内置黄金案例 Run 执行私有确定性 Judge。"""
-
-        run = context.require_run(run_id)
-        if run.status in ACTIVE_RUN_STATUSES:
-            raise HTTPException(409, "运行尚未结束，不能执行黄金案例评测")
-        try:
-            outcome = evaluate_golden_run(repository, run, load_golden_case(case_directory))
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-        return outcome.model_dump(mode="json")
 
     @router.get("/runs/{run_id}/events/stream")
     async def stream_events(
