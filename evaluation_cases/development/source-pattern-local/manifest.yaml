@@ -1,0 +1,21 @@
+case_id: source-pattern-local
+version: "1.0"
+scenario: vulnerability_analysis
+title: 开发期源码模式回归
+objective: 在无害源码中定位结构化危险模式，并以工具证据支撑分类结果。
+authorization_scope: ["evaluation_cases/development/source-pattern-local/inputs"]
+input_artifacts: [sample.py]
+allowed_tools: ["ctf.file_inspect", "ctf.source_dangerous_pattern_analyze", "ctf.artifact_content_search"]
+budget: {max_steps: 6, max_tool_calls: 4, max_duration_seconds: 45}
+timeout: 45
+max_attempts: 1
+expected_result_schema: {result_type: vulnerability, required_fields: [category, evidence]}
+criteria:
+  - {validator_type: local_judge, result_type: vulnerability}
+  - {validator_type: tool_sequence, expected_value: ["ctf.file_inspect", "ctf.source_dangerous_pattern_analyze"]}
+  - {validator_type: evidence_source_tool, expected_value: "ctf.source_dangerous_pattern_analyze"}
+  - {validator_type: authorization_scope}
+  - {validator_type: budget_respected}
+judge: judge.yaml
+tags: [development, source, offline]
+difficulty: 基础

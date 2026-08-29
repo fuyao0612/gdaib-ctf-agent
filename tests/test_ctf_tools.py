@@ -263,6 +263,78 @@ async def test_file_inspect_and_strings_extract_create_real_artifact(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_artifact_analysis_tools_are_structured_bounded_and_thread_scoped(tmp_path: Path) -> None:
+    source = (
+        b"alert from 192.0.2.44 to Example.TEST and https://example.test/ping\n"
+        b"sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+        b"cursor.execute(f\"SELECT * FROM users WHERE name='{user}'\")\n"
+        b"token=do-not-return-this-value\n"
+    )
+    repository, _, _, artifact, run, executor = setup_tool_context(tmp_path, source, "events.py")
+
+    indicators = await invoke(executor, run, "ioc_extract", {"artifact_id": str(artifact.id)})
+    search = await invoke(
+        executor,
+        run,
+        "artifact_content_search",
+        {"artifact_id": str(artifact.id), "query": "token="},
+    )
+    source_result = await invoke(
+        executor, run, "source_dangerous_pattern_analyze", {"artifact_id": str(artifact.id)}
+    )
+    bad_search = await invoke(
+        executor, run, "artifact_content_search", {"artifact_id": str(artifact.id), "query": "x\n"},
+    )
+
+    assert indicators.success
+    assert {item["value"] for item in indicators.output["indicators"]} >= {
+        "192.0.2.44",
+        "example.test",
+        "https://example.test/ping",
+    }
+    assert search.success and "do-not-return-this-value" not in search.output["matches"][0]["excerpt"]
+    assert source_result.success
+    assert source_result.output["findings"][0]["rule_id"] == "python-sql-format"
+    assert not bad_search.success and bad_search.error and bad_search.error.code == "invalid_input"
+
+
+@pytest.mark.asyncio
+async def test_binary_static_metadata_is_read_only_and_parses_elf_header(tmp_path: Path) -> None:
+    content = bytearray(64)
+    content[:4] = b"\x7fELF"
+    content[4] = 2
+    content[18:20] = (62).to_bytes(2, "little")
+    content[24:32] = (0x401000).to_bytes(8, "little")
+    content.extend(b"\x00safe-visible-string\x00")
+    repository, _, thread, artifact, run, executor = setup_tool_context(tmp_path, bytes(content), "sample.elf")
+
+    result = await invoke(
+        executor, run, "binary_static_metadata_analyze", {"artifact_id": str(artifact.id)}
+    )
+    foreign = repository.save_artifact(
+        Artifact(
+            thread_id=repository.save_thread(Thread(title="foreign")).id,
+            filename="foreign.bin",
+            kind="upload",
+            sha256="0" * 64,
+            size=0,
+            mime_type="application/octet-stream",
+            storage_ref=f"{thread.id}/upload.blob",
+        )
+    )
+    denied = await invoke(
+        executor, run, "binary_static_metadata_analyze", {"artifact_id": str(foreign.id)}
+    )
+
+    assert result.success
+    assert result.output["format"] == "elf"
+    assert result.output["architecture"] == "x86_64"
+    assert result.output["entry_point_offset"] == 0x401000
+    assert "safe-visible-string" in result.output["printable_strings"]
+    assert not denied.success and denied.error and "不属于当前 Thread" in denied.error.message
+
+
+@pytest.mark.asyncio
 async def test_strings_extract_uses_injected_sandbox_without_host_fallback(tmp_path: Path) -> None:
     class RecordingSandbox:
         request: SandboxRequest | None = None

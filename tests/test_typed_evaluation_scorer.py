@@ -1,6 +1,15 @@
 from uuid import uuid4
 
-from yuwang.domain.models import Artifact, EvidenceRecord, Run, TaskResult, TaskSpec, Thread
+from yuwang.domain.models import (
+    Artifact,
+    CallStatus,
+    EvidenceRecord,
+    Run,
+    TaskResult,
+    TaskSpec,
+    Thread,
+    ToolCall,
+)
 from yuwang.evaluation import EvaluationCriterion, EvaluationScorer
 from yuwang.storage import SQLiteRepository
 
@@ -174,3 +183,43 @@ def test_non_ctf_score_can_verify_artifact_hash_without_flag_fields(tmp_path):
         ),
     )
     assert result[0].status == "passed"
+
+
+def test_strict_evaluation_criteria_require_tool_order_evidence_scope_and_budget(tmp_path) -> None:
+    repository = SQLiteRepository(tmp_path / "score.db")
+    thread = repository.save_thread(Thread(title="严格评测"))
+    run = Run(thread_id=thread.id)
+    run.transition("running")
+    run.transition("completed")
+    first = ToolCall(
+        run_id=run.id, tool_name="文件检查", tool_id="ctf.file_inspect", arguments={},
+        input_summary="读取受控 Artifact", result_summary="成功", duration_ms=20,
+        status=CallStatus.SUCCEEDED, target_scope=["artifact:case-input"],
+    )
+    second = ToolCall(
+        run_id=run.id, tool_name="IOC 提取", tool_id="ctf.ioc_extract", arguments={},
+        input_summary="提取 IOC", result_summary="成功", duration_ms=20,
+        status=CallStatus.SUCCEEDED, target_scope=["artifact:case-input"],
+    )
+    repository.save_tool_call(first)
+    repository.save_tool_call(second)
+    repository.save_evidence(
+        EvidenceRecord(
+            run_id=run.id, candidate="192.0.2.44", source_call_id=second.id,
+            location="/indicators/0", verified=True, verification_summary="受控 IOC 一致",
+            rule_kind="local_judge", verification_scope="deterministic_rule",
+            deterministic_validation_status="passed",
+        )
+    )
+    repository.save_run(run)
+    task = TaskSpec(
+        body="从受控日志提取 IOC", authorized_targets=["artifact:case-input"],
+    )
+    criteria = (
+        EvaluationCriterion(criterion_id="tool-order", description="工具链", validator_type="tool_sequence", expected_value=["ctf.file_inspect", "ctf.ioc_extract"]),
+        EvaluationCriterion(criterion_id="evidence", description="证据来源", validator_type="evidence_source_tool", expected_value="ctf.ioc_extract"),
+        EvaluationCriterion(criterion_id="scope", description="授权范围", validator_type="authorization_scope"),
+        EvaluationCriterion(criterion_id="budget", description="预算", validator_type="budget_respected"),
+    )
+
+    assert [item.status for item in EvaluationScorer(repository).score(run, task, criteria)] == ["passed"] * 4

@@ -7,6 +7,12 @@ from pathlib import Path
 from yuwang.tooling.registry import ToolRegistry
 from yuwang.tooling.runtime import SandboxRuntime
 
+from .analysis import (
+    ArtifactSearchTool,
+    BinaryStaticAnalyzeTool,
+    IOCExtractTool,
+    SourcePatternAnalyzeTool,
+)
 from .archive import ArchiveExtractTool
 from .artifacts import ArtifactAccess, ArtifactRepository
 from .ciphers import ClassicalCipherAnalyzeTool
@@ -32,6 +38,10 @@ def register_ctf_tools(
         ArchiveExtractTool(artifacts),
         FlagCandidateVerifyTool(artifacts),
         ClassicalCipherAnalyzeTool(artifacts),
+        IOCExtractTool(artifacts),
+        ArtifactSearchTool(artifacts),
+        SourcePatternAnalyzeTool(artifacts),
+        BinaryStaticAnalyzeTool(artifacts),
     ):
         registry.register(tool)
 

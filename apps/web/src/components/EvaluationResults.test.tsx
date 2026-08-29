@@ -29,6 +29,8 @@ const record = {
   report_path: "/api/v1/runs/run-1/report",
 };
 
+const retryRecord = { ...record, id: "record-2", attempt: 2, status: "failed" as const, success: false, duration_ms: 2000 };
+
 describe("EvaluationResults", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -73,5 +75,19 @@ describe("EvaluationResults", () => {
         expect.anything(),
       ),
     );
+  });
+
+  it("比较同一任务的多次持久化运行", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => Response.json(
+      input.includes("/statistics")
+        ? { total: 2, passed: 1, failed: 1, skipped: 0, success_rate: 0.5, pass_at_1: 0.5, pass_at_3: 1, average_duration_ms: 1500, median_duration_ms: 1500, average_tokens: 25, average_cost: 0.01, average_tool_calls: 1, average_replans: 0, average_manual_interventions: 0, failure_categories: {} }
+        : [record, retryRecord],
+    )));
+    render(<EvaluationResults onError={vi.fn()} />);
+
+    const selector = await screen.findByLabelText("比较同一任务的运行");
+    fireEvent.change(selector, { target: { value: record.case_id } });
+    const table = await screen.findByRole("table", { name: `${record.case_id} 运行比较` });
+    expect(table).toHaveTextContent("2.0 秒");
   });
 });

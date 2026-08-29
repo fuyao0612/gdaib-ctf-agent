@@ -1,0 +1,3 @@
+judge_type: structured_value
+field: category
+expected_value: command_injection

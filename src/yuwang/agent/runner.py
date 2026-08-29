@@ -27,7 +27,7 @@ from yuwang.agent.state import (
     RunPaused,
     RunStopped,
 )
-from yuwang.domain.models import CallStatus, EventType, Run, RunStatus, TaskSpec
+from yuwang.domain.models import CallStatus, EventType, MemoryRecord, Run, RunStatus, TaskSpec
 from yuwang.policy import redact
 from yuwang.reports.trace import RunTraceService
 from yuwang.results import TaskResultService
@@ -326,6 +326,7 @@ class AgentRunCoordinator:
         )
         run = engine.repository.get_run(run.id) or run
         analysis = await self._failure_analysis(run, task, error, fallback)
+        self._persist_failure_memory(run, analysis)
         engine.events.emit(
             run.id,
             EventType.RUN_FAILED,
@@ -346,6 +347,25 @@ class AgentRunCoordinator:
             },
         )
         engine.repository.save_report(run.id, markdown, data)
+
+    def _persist_failure_memory(self, run: Run, analysis: FailureAnalysis) -> None:
+        """保存脱敏失败摘要，让后续同 Thread 规划可避免盲目重复无效路径。"""
+
+        policy = self.engine.profile.memory_policy
+        if not policy.enabled:
+            return
+        content = "失败路径：" + analysis.summary
+        if analysis.next_steps:
+            content += "；建议：" + analysis.next_steps[0]
+        self.engine.repository.save_memory(
+            MemoryRecord(
+                thread_id=run.thread_id,
+                source_run_id=run.id,
+                kind="run_summary",
+                content=redact(content)[:1_200],
+                metadata={"outcome": "failed", "source": "failure_analysis"},
+            )
+        )
 
     async def _failure_analysis(
         self,

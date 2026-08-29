@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 from jsonschema import ValidationError as JsonSchemaValidationError  # type: ignore[import-untyped]
 from jsonschema import validate as validate_json_schema
 
-from yuwang.agent.state import AgentDeclaredFailure, GraphState
+from yuwang.agent.state import AgentDeclaredFailure, AgentStateModel, GraphState
 from yuwang.control import (
     PlanRevision,
     PlanSource,
@@ -680,12 +680,14 @@ class WorkflowNodes:
         state.guidance_replan_required = False
         state.guidance_replan_sequences.clear()
         state.replan_count += 1
+        replan_context = self._replan_context(state, guidance_sequences)
         if engine.profile.planning_strategy == "direct":
             # 直接模式的“重新判断”只表示下一次 select_action 必须读取最新观察或
             # 用户指引。额外生成计划既不会增加安全边界，也会无谓多消耗一次模型调用。
             payload: dict[str, Any] = {
                 "replan_count": state.replan_count,
                 "planning_strategy": "direct",
+                **replan_context,
             }
             if guidance_sequences:
                 payload["guidance_sequences"] = guidance_sequences
@@ -715,6 +717,7 @@ class WorkflowNodes:
         replan_payload: dict[str, Any] = {
             "steps": state.plan.steps,
             "replan_count": state.replan_count,
+            **replan_context,
         }
         if state.observations:
             # 仅记录可公开的工具观察摘要，不复制原始工具输出或模型推理。
@@ -728,6 +731,32 @@ class WorkflowNodes:
             replan_payload,
         )
         return engine._result("replan", state)
+
+    @staticmethod
+    def _replan_context(
+        state: AgentStateModel, guidance_sequences: list[int]
+    ) -> dict[str, Any]:
+        """只输出可公开的重规划依据与剩余资源，不暴露模型内部推理。"""
+
+        if guidance_sequences:
+            reason = "user_guidance"
+        elif state.observations and not state.observations[-1].success:
+            reason = "tool_failure"
+        elif state.no_progress_count:
+            reason = "no_progress"
+        else:
+            reason = "plan_adjustment"
+        budget = state.task.budget
+        return {
+            "reason": reason,
+            "remaining_budget": {
+                "steps": max(0, budget.max_steps - state.step),
+                "model_calls": max(0, budget.max_model_calls - state.model_calls),
+                "tool_calls": max(0, budget.max_tool_calls - state.tool_calls),
+                "tokens": max(0, budget.max_tokens - state.tokens),
+                "duration_seconds": round(max(0.0, budget.max_duration_seconds - state.elapsed_seconds), 3),
+            },
+        }
 
     @staticmethod
     def _merge_replanned_plan(previous: AgentPlan | None, proposed: AgentPlan) -> AgentPlan:

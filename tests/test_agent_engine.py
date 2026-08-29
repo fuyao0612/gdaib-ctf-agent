@@ -493,6 +493,9 @@ async def test_provider_failure_is_safe_and_reported(tmp_path):
     assert repository.get_run(run.id).status == RunStatus.FAILED
     assert repository.list_events(run.id)[-1].type == EventType.RUN_FAILED
     assert repository.get_report(run.id)
+    memory = repository.list_memories(thread.id)
+    assert memory and memory[-1].metadata == {"outcome": "failed", "source": "failure_analysis"}
+    assert "失败路径" in memory[-1].content
 
 
 @pytest.mark.asyncio
@@ -811,6 +814,8 @@ async def test_direct_replan_does_not_add_a_planner_model_call(tmp_path):
     assert updated.replan_count == 1
     assert repository.list_model_calls(run.id) == []
     event = next(item for item in repository.list_events(run.id) if item.type == EventType.REPLANNED)
+    assert event.payload["reason"] == "plan_adjustment"
+    assert event.payload["remaining_budget"]["tool_calls"] >= 0
     assert event.payload["planning_strategy"] == "direct"
     assert engine.nodes.route_action(updated.model_dump(mode="python")) == "select_action"
 

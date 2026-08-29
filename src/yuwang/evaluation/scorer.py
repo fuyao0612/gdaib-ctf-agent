@@ -176,6 +176,68 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
             ("passed", "目标工具已调用") if expected <= actual else ("failed", "未调用全部目标工具")
         )
 
+    def tool_sequence(
+        ctx: ValidationContext, item: EvaluationCriterion
+    ) -> tuple[CriterionStatus, str]:
+        expected = item.expected_value
+        if not isinstance(expected, list) or not expected or not all(
+            isinstance(value, str) and value for value in expected
+        ):
+            return "configuration_error", "tool_sequence 需要非空工具 ID 列表"
+        actual = [
+            call.tool_id or call.tool_name
+            for call in ctx.repository.list_tool_calls(ctx.run.id)
+            if str(call.status) == "succeeded"
+        ]
+        cursor = 0
+        for tool_id in actual:
+            if cursor < len(expected) and tool_id == expected[cursor]:
+                cursor += 1
+        return (
+            ("passed", "已按要求完成多工具调用顺序")
+            if cursor == len(expected)
+            else ("failed", "成功工具调用未满足要求的顺序")
+        )
+
+    def evidence_source_tool(
+        ctx: ValidationContext, item: EvaluationCriterion
+    ) -> tuple[CriterionStatus, str]:
+        expected = _expected_tools(item.expected_value)
+        if not expected:
+            return "configuration_error", "evidence_source_tool 需要工具 ID"
+        calls = {str(call.id): call for call in ctx.repository.list_tool_calls(ctx.run.id)}
+        matches = [
+            evidence
+            for evidence in ctx.repository.list_evidence(ctx.run.id)
+            if (call := calls.get(str(evidence.source_call_id)))
+            and str(call.status) == "succeeded"
+            and (call.tool_id or call.tool_name) in expected
+        ]
+        return (
+            ("passed", "Evidence 可回溯到指定成功工具调用")
+            if matches
+            else ("failed", "Evidence 未绑定指定成功工具调用")
+        )
+
+    def authorization_scope(
+        ctx: ValidationContext, _: EvaluationCriterion
+    ) -> tuple[CriterionStatus, str]:
+        allowed = set(ctx.task.authorized_targets)
+        for call in ctx.repository.list_tool_calls(ctx.run.id):
+            if call.target_scope and (not allowed or not set(call.target_scope) <= allowed):
+                return "failed", "存在超出 TaskSpec 授权范围的工具调用"
+        return "passed", "所有工具调用均未扩张 TaskSpec 授权范围"
+
+    def budget_respected(
+        ctx: ValidationContext, _: EvaluationCriterion
+    ) -> tuple[CriterionStatus, str]:
+        calls = ctx.repository.list_tool_calls(ctx.run.id)
+        if len(calls) > ctx.task.budget.max_tool_calls:
+            return "failed", "工具调用次数超过 TaskSpec 预算"
+        if sum(call.duration_ms for call in calls) > int(ctx.task.budget.max_duration_seconds * 1000):
+            return "failed", "工具调用累计耗时超过任务时长预算"
+        return "passed", "工具调用次数和累计耗时均在任务预算内"
+
     def tool_candidate_hash(
         ctx: ValidationContext, item: EvaluationCriterion
     ) -> tuple[CriterionStatus, str]:
@@ -388,6 +450,10 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
             "agent_profile_snapshot": agent_profile_snapshot,
             "provider_snapshot": provider_snapshot,
             "tool_called": tool_called,
+            "tool_sequence": tool_sequence,
+            "evidence_source_tool": evidence_source_tool,
+            "authorization_scope": authorization_scope,
+            "budget_respected": budget_respected,
             "tool_candidate_hash": tool_candidate_hash,
             "result_evidence_tool": result_evidence_tool,
             "artifact_sha256": artifact_sha256,

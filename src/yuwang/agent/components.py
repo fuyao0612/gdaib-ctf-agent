@@ -159,6 +159,8 @@ class DefaultPlanner:
             AgentPlanDraft,
             "根据 Task Brief 生成动态计划；每个步骤必须给出 goal、reason、expected_result 和 verification_method，"
             "可补充所需 capabilities、dependencies 和 risk。只输出公开计划字段，步骤必须在授权范围内。"
+            "若上下文中的 previous_failed_paths 记录了历史失败路径，应避免原样重复该路径，"
+            "改为选择能补齐证据缺口或验证不同假设的授权步骤。"
             " Output contract: agent_plan_draft.",
         )
         return draft.to_agent_plan()
@@ -176,6 +178,8 @@ class DefaultActionSelector:
                 "当用户已给出工具所需的完整受限输入，且工具 Schema 支持该输入时，"
                 "优先 call_tool；只有缺少 Schema 必填数据时才 request_input。"
                 "必须提供 reason：用一至三句公开、简短的文字说明当前计划或最近观察为何支持此动作；"
+                "若 previous_failed_paths 已记录失败工具或参数，不得在没有新证据时重复同一路径；"
+                "应 replan、调整受限参数或选择其他已授权工具。"
                 "不得输出隐藏思维过程、敏感数据或工具指令。"
             ),
         )
@@ -227,6 +231,15 @@ class DefaultContextBuilder:
             or (item.kind in {"important_fact", "user_input"} and policy.include_memories)
         ]
         memory_payload = [item.model_dump(mode="json") for item in memories]
+        previous_failed_paths = [
+            {
+                "source_run_id": str(item.source_run_id) if item.source_run_id else None,
+                "summary": item.content[:800],
+                "recorded_at": item.created_at.isoformat(),
+            }
+            for item in memories
+            if item.kind == "run_summary" and item.metadata.get("outcome") == "failed"
+        ][:8]
         # 首次任务附件与运行中由统一输入框追加的附件都保持不可信上下文；后者
         # 不修改不可变 TaskSpec，而是随检查点恢复。
         attachment_ids = [
@@ -268,6 +281,8 @@ class DefaultContextBuilder:
             "untrusted_model_content": {
                 "task_context": task_context,
                 "memory": memory_payload,
+                # 历史失败是可供下一次规划规避重复探索的事实，不是授权或策略来源。
+                "previous_failed_paths": previous_failed_paths,
                 "current_plan": state.plan.model_dump(mode="json") if state.plan else None,
                 "task_brief": (
                     state.task_brief.model_dump(mode="json") if state.task_brief else None

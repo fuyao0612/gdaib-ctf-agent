@@ -67,6 +67,8 @@ flowchart LR
 - `src/yuwang/tooling/sdk.py` 只运行显式注册、带 Pydantic 输入输出和超时的工具。
 - `src/yuwang/storage/sqlite.py` 保存 ModelCall、ToolCall、观察、事件和检查点。
 
+重规划事件会记录公开触发类别（工具失败、无进展、用户指引或计划调整）、最近可公开观察摘要与剩余步骤、模型调用、工具调用、Token 和时长预算。该事件不保存模型隐藏推理；非幂等动作在结果不确定时仍不会自动重放。
+
 当前版本不接受任意 Shell，也不允许未授权公网扫描。
 
 ## 4. 验证结果
