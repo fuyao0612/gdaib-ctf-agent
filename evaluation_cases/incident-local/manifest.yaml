@@ -5,12 +5,17 @@ title: 本地日志 IOC 提取
 objective: 从日志提取 IP、域名和文件哈希。
 authorization_scope: ["evaluation_cases/incident-local/inputs"]
 input_artifacts: [events.log]
-allowed_tools: ["ctf.file_inspect"]
-budget: {max_steps: 8, max_tool_calls: 4}
+allowed_tools: ["ctf.file_inspect", "ctf.ioc_extract", "ctf.artifact_content_search"]
+budget: {max_steps: 8, max_tool_calls: 4, max_duration_seconds: 60}
 timeout: 60
 max_attempts: 1
-expected_result_schema: {result_type: indicator}
-criteria: [{validator_type: result_exists, expected_value: indicator}]
+expected_result_schema: {result_type: indicator, required_fields: [iocs, evidence]}
+criteria:
+  - {validator_type: local_judge, result_type: indicator}
+  - {validator_type: tool_called, expected_value: "ctf.ioc_extract"}
+  - {validator_type: evidence_source_tool, expected_value: "ctf.ioc_extract"}
+  - {validator_type: authorization_scope}
+  - {validator_type: budget_respected}
 judge: judge.yaml
 tags: [incident, local]
 difficulty: 基础

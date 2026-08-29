@@ -24,6 +24,7 @@ export default function EvaluationResults({ onError }: Props) {
   const [category, setCategory] = useState("");
   const [difficulty, setDifficulty] = useState("");
   const [loading, setLoading] = useState(false);
+  const [comparisonCase, setComparisonCase] = useState("");
 
   const categories = useMemo(
     () => [...new Set(records.map((item) => item.category))].sort(),
@@ -36,6 +37,17 @@ export default function EvaluationResults({ onError }: Props) {
   const query = useMemo(
     () => ({ status, category, difficulty }),
     [category, difficulty, status],
+  );
+  const comparableCases = useMemo(
+    () => [...new Set(records.map((item) => item.case_id))]
+      .filter((caseId) => records.filter((item) => item.case_id === caseId).length > 1)
+      .sort(),
+    [records],
+  );
+  const comparison = useMemo(
+    () => records.filter((item) => item.case_id === comparisonCase)
+      .sort((left, right) => left.attempt - right.attempt || left.started_at.localeCompare(right.started_at)),
+    [comparisonCase, records],
   );
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,6 +117,29 @@ export default function EvaluationResults({ onError }: Props) {
           <div><dt>平均重规划</dt><dd>{statistics.average_replans.toFixed(1)}</dd></div>
           <div><dt>平均人工介入</dt><dd>{statistics.average_manual_interventions.toFixed(1)}</dd></div>
         </dl>
+      )}
+      {comparableCases.length > 0 && (
+        <section className="evaluation-comparison" aria-label="同一任务运行比较">
+          <label>
+            比较同一任务的运行
+            <select value={comparisonCase} onChange={(event) => setComparisonCase(event.target.value)}>
+              <option value="">选择任务</option>
+              {comparableCases.map((caseId) => <option key={caseId} value={caseId}>{caseId}</option>)}
+            </select>
+          </label>
+          {comparison.length > 0 && (
+            <div className="evaluation-comparison-table" role="table" aria-label={`${comparisonCase} 运行比较`}>
+              <div role="row" className="comparison-header"><span>尝试</span><span>状态</span><span>耗时</span><span>工具</span><span>得分</span></div>
+              {comparison.map((item) => (
+                <div role="row" key={item.id}>
+                  <span>{item.attempt}</span><span className={`evaluation-status status-${item.status}`}>{labels[item.status]}</span>
+                  <span>{milliseconds(item.duration_ms)}</span><span>{item.tool_calls}</span>
+                  <span>{item.score == null ? "-" : `${item.score}/${item.max_score ?? "-"}`}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
       <div className="evaluation-list">
         {records.length ? records.map((item) => (

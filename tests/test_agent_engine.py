@@ -811,6 +811,8 @@ async def test_direct_replan_does_not_add_a_planner_model_call(tmp_path):
     assert updated.replan_count == 1
     assert repository.list_model_calls(run.id) == []
     event = next(item for item in repository.list_events(run.id) if item.type == EventType.REPLANNED)
+    assert event.payload["reason"] == "plan_adjustment"
+    assert event.payload["remaining_budget"]["tool_calls"] >= 0
     assert event.payload["planning_strategy"] == "direct"
     assert engine.nodes.route_action(updated.model_dump(mode="python")) == "select_action"
 

@@ -6,6 +6,8 @@
 
 内置基线包含声明式任务用例，覆盖基础问答、任务执行、上下文、恢复、Provider 生命周期、权限、CTF 和应急响应完整性验证。每个用例都声明版本、输入资料、环境、目标、授权范围、允许工具、资源预算、超时、重试上限和类型化 `EvaluationCriterion`。用例本身不包含密钥或预制成功答案；CTF 用例只要求确定性证据，非 CTF 用例包含受控 Artifact SHA-256 校验。
 
+`evaluation_cases/development/` 与 `evaluation_cases/acceptance/` 分别保存开发回归和验收输入，二者不共享题材输入。任务包的通过条件必须同时检查具体结构化结果的私有 Judge、Evidence 来源、必要工具或工具顺序、授权范围和预算；`result_exists`、非空文本或模型自述均不得作为任务包通过条件。验收包还覆盖无效候选、提示注入、工具失败、无进展重规划和证据收敛。Judge 私有配置不会进入 Agent 提示、TaskSpec 或普通事件。
+
 先只查看清单，不会产生模型调用：
 
 ```powershell
@@ -53,6 +55,8 @@ docker compose exec api python -m yuwang.evaluation run --smoke --attempts 1 --p
 意图分派或直接文本 Provider 路径。无工具任务可完成，但必须保持 `validation_status=unverified`；
 评分由独立 `EvaluationScorer` 完成，只读取持久化状态、事件、工具调用、快照和 EvidenceRecord；Agent 的最终总结不能直接成为成功判定。未支持的验证器标记为配置错误或未执行，绝不计为成功。Provider 故障的真实验收
 只记录真实发生的调用结果，不人为伪造备用切换。
+
+`tool_sequence` 用于验证成功工具调用的必要顺序，`evidence_source_tool` 要求结果或证据关联到指定成功调用，`authorization_scope` 阻止调用范围超出 TaskSpec，`budget_respected` 检查调用数与累计工具耗时。这些验证只读取审计事实，不接受模型说明替代。
 
 ## 结果与回放
 

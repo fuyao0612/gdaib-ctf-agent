@@ -378,6 +378,11 @@
 }
 
 .evaluation-list { display: grid; gap: 7px; }
+.evaluation-comparison { margin: 14px 0; padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.evaluation-comparison label { display: grid; gap: 6px; max-width: 360px; }
+.evaluation-comparison-table { display: grid; gap: 4px; margin-top: 10px; overflow-x: auto; }
+.evaluation-comparison-table [role="row"] { display: grid; grid-template-columns: repeat(5, minmax(72px, 1fr)); gap: 8px; min-width: 450px; padding: 8px; }
+.evaluation-comparison-table .comparison-header { font-weight: 700; background: var(--surface-alt); }
 .evaluation-row { min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
 .evaluation-row summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; cursor: pointer; }
 .evaluation-row summary small { grid-column: 1 / -1; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
