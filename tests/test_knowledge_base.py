@@ -9,7 +9,12 @@ from apps.api.main import create_app
 from apps.api.schemas import RunCreate
 from yuwang.agent import AgentStateModel, DefaultContextBuilder
 from yuwang.domain.models import Message, MessageRole, Run, Thread
-from yuwang.knowledge import KnowledgeBaseService, KnowledgeDocumentInput, chunk_text
+from yuwang.knowledge import (
+    KnowledgeBaseService,
+    KnowledgeDocumentInput,
+    KnowledgeDocumentUpdate,
+    chunk_text,
+)
 from yuwang.settings import AgentProfileInput, AgentProfileVersion
 from yuwang.storage import SQLiteRepository
 
@@ -85,6 +90,44 @@ def test_task_freezes_scenario_and_rag_hits_into_untrusted_context(tmp_path):
     assert payload["untrusted_user_input"]["scenario"] == "incident_response"
     assert payload["untrusted_retrieved_knowledge"][0]["content_sha256"]
     assert "时间线" in payload["untrusted_retrieved_knowledge"][0]["content"]
+
+
+def test_knowledge_ablation_keeps_prior_run_snapshot_when_provider_context_is_disabled(tmp_path):
+    settings = Settings(
+        database_path=tmp_path / "ablation.db",
+        artifact_root=tmp_path / "artifacts",
+        master_key=Fernet.generate_key().decode(),
+    )
+    context = ApiContext(settings)
+    document = context.knowledge_service.import_document(
+        KnowledgeDocumentInput(
+            title="离线 IOC 证据手册",
+            content="独特检索词：delta-incident-42。先核对来源 Artifact，再报告 IOC。",
+            source_uri="local://knowledge/delta-incident-42",
+            scenarios=["incident_response"],
+            allow_provider_context=True,
+        )
+    )
+    thread = context.repository.save_thread(Thread(title="RAG 消融", scenario="incident_response"))
+    profile = context.profile_service.resolve(None)
+    first_message = context.repository.save_message(
+        Message(thread_id=thread.id, role=MessageRole.USER, content="分析 delta-incident-42")
+    )
+    first_task = context.build_task(thread, RunCreate(), profile, origin_message=first_message)
+    first_hit = next(hit for hit in first_task.knowledge_matches if hit.document_id == document.id)
+
+    context.knowledge_service.update_document(
+        document.id, KnowledgeDocumentUpdate(allow_provider_context=False)
+    )
+    second_message = context.repository.save_message(
+        Message(thread_id=thread.id, role=MessageRole.USER, content="继续分析 delta-incident-42")
+    )
+    second_task = context.build_task(thread, RunCreate(), profile, origin_message=second_message)
+
+    assert first_hit.source_uri == "local://knowledge/delta-incident-42"
+    assert len(first_hit.content_sha256) == 64
+    assert any(hit.document_id == document.id for hit in first_task.knowledge_matches)
+    assert all(hit.document_id != document.id for hit in second_task.knowledge_matches)
 
 
 def test_admin_can_manage_and_preview_knowledge_documents(tmp_path):

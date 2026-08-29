@@ -379,3 +379,39 @@ def test_each_context_memory_switch_is_independent(tmp_path, policy_update, expe
         item["kind"]
         for item in json.loads(result.prompt)["untrusted_model_content"]["memory"]
     ] == expected_kinds
+
+
+def test_memory_ablation_exposes_prior_failed_path_only_when_enabled(tmp_path):
+    repository = SQLiteRepository(tmp_path / "memory-ablation.db")
+    thread = repository.save_thread(Thread(title="memory ablation"))
+    first_run = repository.save_run(Run(thread_id=thread.id))
+    repository.save_memory(
+        MemoryRecord(
+            thread_id=thread.id,
+            source_run_id=first_run.id,
+            kind="run_summary",
+            content="失败路径：首次 IOC 提取无结果；建议改用 Artifact 内容定位。",
+            metadata={"outcome": "failed", "source": "failure_analysis"},
+        )
+    )
+    first_run.transition("failed", "历史受控路径无进展")
+    repository.save_run(first_run)
+    second_run = repository.save_run(Run(thread_id=thread.id))
+    state = AgentStateModel(run_id=second_run.id, task=TaskSpec(body="继续分析授权日志"))
+    builder = DefaultContextBuilder(repository, tmp_path)
+    enabled = AgentProfileVersion(
+        **AgentProfileInput(name="memory on", memory_policy={"enabled": True}).model_dump(), version=1
+    )
+    disabled = AgentProfileVersion(
+        **AgentProfileInput(name="memory off", memory_policy={"enabled": False}).model_dump(), version=1
+    )
+
+    with_memory = json.loads(builder.build(state, enabled, "choose action").prompt)
+    without_memory = json.loads(builder.build(state, disabled, "choose action").prompt)
+
+    assert with_memory["untrusted_model_content"]["previous_failed_paths"] == [{
+        "source_run_id": str(first_run.id),
+        "summary": "失败路径：首次 IOC 提取无结果；建议改用 Artifact 内容定位。",
+        "recorded_at": with_memory["untrusted_model_content"]["previous_failed_paths"][0]["recorded_at"],
+    }]
+    assert without_memory["untrusted_model_content"]["previous_failed_paths"] == []

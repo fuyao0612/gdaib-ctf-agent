@@ -493,6 +493,9 @@ async def test_provider_failure_is_safe_and_reported(tmp_path):
     assert repository.get_run(run.id).status == RunStatus.FAILED
     assert repository.list_events(run.id)[-1].type == EventType.RUN_FAILED
     assert repository.get_report(run.id)
+    memory = repository.list_memories(thread.id)
+    assert memory and memory[-1].metadata == {"outcome": "failed", "source": "failure_analysis"}
+    assert "失败路径" in memory[-1].content
 
 
 @pytest.mark.asyncio
