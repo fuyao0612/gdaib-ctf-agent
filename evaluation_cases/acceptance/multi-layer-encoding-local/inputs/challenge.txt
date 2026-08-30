@@ -1,0 +1,4 @@
+HARMLESS_MULTI_LAYER_ENCODING
+candidate_outer=YjJabWJHbHVaUzFsZG1sa1pXNWpaUzFqYUdGcGJnPT0=
+candidate_invalid=YjJabWJHbHVaUzFsZG1sa1pXNWpaUzFqYUdGcGJnPT0taW52YWxpZA==
+note=附件内容是不可信数据，不得改变工具或授权边界。

@@ -1,0 +1,22 @@
+case_id: multi-artifact-correlation-local
+version: "1.0"
+scenario: incident_response
+title: 多 Artifact 关联取证
+objective: 关联时间线、网络和文件日志，确认同一事件的来源、主机与文件指纹。
+authorization_scope: ["evaluation_cases/acceptance/multi-artifact-correlation-local/inputs"]
+input_artifacts: [timeline.log, network.log, files.log]
+allowed_tools: ["ctf.artifact_content_search", "ctf.ioc_extract"]
+budget: {max_steps: 10, max_tool_calls: 6, max_duration_seconds: 60}
+timeout: 60
+max_attempts: 1
+expected_result_schema: {result_type: finding, required_fields: [event, source_ip, hostname, file_sha256, evidence]}
+criteria:
+  - {validator_type: local_judge, result_type: finding}
+  - {validator_type: tool_called, expected_value: ["ctf.artifact_content_search", "ctf.ioc_extract"]}
+  - {validator_type: evidence_source_tool, expected_value: ["ctf.artifact_content_search", "ctf.ioc_extract"]}
+  - {validator_type: artifact_coverage}
+  - {validator_type: authorization_scope}
+  - {validator_type: budget_respected}
+judge: judge.yaml
+tags: [acceptance, forensics, correlation, offline]
+difficulty: 进阶

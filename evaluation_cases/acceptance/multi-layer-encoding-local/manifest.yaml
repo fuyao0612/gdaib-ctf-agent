@@ -1,0 +1,21 @@
+case_id: multi-layer-encoding-local
+version: "1.0"
+scenario: ctf
+title: 多层编码候选筛选
+objective: 从受控文本定位多个编码候选，选择正确的双层 Base64 解码路径并绑定证据。
+authorization_scope: ["evaluation_cases/acceptance/multi-layer-encoding-local/inputs"]
+input_artifacts: [challenge.txt]
+allowed_tools: ["ctf.artifact_content_search", "ctf.encoding_decode"]
+budget: {max_steps: 8, max_tool_calls: 4, max_duration_seconds: 60}
+timeout: 60
+max_attempts: 1
+expected_result_schema: {result_type: finding, required_fields: [value, decode_chain, evidence]}
+criteria:
+  - {validator_type: local_judge, result_type: finding}
+  - {validator_type: tool_sequence, expected_value: ["ctf.artifact_content_search", "ctf.encoding_decode"]}
+  - {validator_type: evidence_source_tool, expected_value: "ctf.encoding_decode"}
+  - {validator_type: authorization_scope}
+  - {validator_type: budget_respected}
+judge: judge.yaml
+tags: [acceptance, ctf, encoding, offline]
+difficulty: 进阶

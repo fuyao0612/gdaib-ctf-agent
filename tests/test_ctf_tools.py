@@ -239,6 +239,34 @@ async def test_encoding_decode_accepts_bounded_inline_text_and_preserves_artifac
 
 
 @pytest.mark.asyncio
+async def test_encoding_decode_returns_nested_candidates_and_decode_chain(tmp_path: Path) -> None:
+    nested = "YjJabWJHbHVaUzFsZG1sa1pXNWpaUzFqYUdGcGJnPT0="
+    _, _, _, _, run, executor = setup_tool_context(tmp_path, b"placeholder")
+    result = await invoke(
+        executor,
+        run,
+        "encoding_decode",
+        {"text": nested, "encoding": "base64", "max_layers": 2},
+    )
+
+    assert result.success
+    assert result.output["candidates"][:2] == [
+        {
+            "value": "b2ZmbGluZS1ldmlkZW5jZS1jaGFpbg==",
+            "preview": "b2ZmbGluZS1ldmlkZW5jZS1jaGFpbg==",
+            "confidence": 0.96,
+            "decode_chain": ["base64"],
+        },
+        {
+            "value": "offline-evidence-chain",
+            "preview": "offline-evidence-chain",
+            "confidence": 0.92,
+            "decode_chain": ["base64", "base64"],
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_file_inspect_and_strings_extract_create_real_artifact(tmp_path: Path) -> None:
     content = b"\x7fELF\x00junk FLAG{ascii_value}\x00" + "UTF16_FLAG{value}".encode("utf-16le")
     repository, _, _, artifact, run, executor = setup_tool_context(tmp_path, content, "sample.elf")
@@ -295,7 +323,56 @@ async def test_artifact_analysis_tools_are_structured_bounded_and_thread_scoped(
     assert search.success and "do-not-return-this-value" not in search.output["matches"][0]["excerpt"]
     assert source_result.success
     assert source_result.output["findings"][0]["rule_id"] == "python-sql-format"
+    assert source_result.output["findings"][0]["manual_review"] is True
+    assert 0 < source_result.output["findings"][0]["confidence"] <= 1
     assert not bad_search.success and bad_search.error and bad_search.error.code == "invalid_input"
+
+
+@pytest.mark.asyncio
+async def test_ioc_extract_filters_invalid_values_and_keeps_types_lines_and_confidence(tmp_path: Path) -> None:
+    source = (
+        b"src=192.0.2.10 bad=999.999.1.1 v6=2001:db8::1 host=beacon.example.test\n"
+        b"url=https://beacon.example.test/path CVE-2026-12345 user@example.test "
+        b"sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
+        b"path=/var/tmp/update.bin\n"
+    )
+    _, _, _, artifact, run, executor = setup_tool_context(tmp_path, source, "mixed.log")
+
+    result = await invoke(executor, run, "ioc_extract", {"artifact_id": str(artifact.id)})
+
+    assert result.success
+    indicators = result.output["indicators"]
+    values = {item["value"] for item in indicators}
+    assert "999.999.1.1" not in values
+    assert {"192.0.2.10", "2001:db8::1", "beacon.example.test", "CVE-2026-12345"} <= values
+    assert "user@example.test" in values and "/var/tmp/update.bin" in values
+    assert "https://beacon.example.test/path" in values
+    assert all("token=" not in item["value"] for item in indicators)
+    assert all(item["line_numbers"] and item["confidence"] > 0 for item in indicators)
+
+
+@pytest.mark.asyncio
+async def test_reverse_text_contract_returns_line_located_algorithm_and_constant(tmp_path: Path) -> None:
+    content = b"HARMLESS_EVALUATION_SAMPLE\nalgorithm=AES-256-GCM\nconstant=0xC0FFEE\n"
+    _, _, _, artifact, run, executor = setup_tool_context(tmp_path, content, "sample.strings")
+
+    algorithm = await invoke(
+        executor,
+        run,
+        "artifact_content_search",
+        {"artifact_id": str(artifact.id), "query": "algorithm="},
+    )
+    constant = await invoke(
+        executor,
+        run,
+        "artifact_content_search",
+        {"artifact_id": str(artifact.id), "query": "constant="},
+    )
+
+    assert algorithm.success and constant.success
+    assert algorithm.output["match_count"] == 1
+    assert algorithm.output["matches"] == [{"line": 2, "excerpt": "algorithm=AES-256-GCM"}]
+    assert constant.output["matches"] == [{"line": 3, "excerpt": "constant=0xC0FFEE"}]
 
 
 @pytest.mark.asyncio
@@ -331,6 +408,9 @@ async def test_binary_static_metadata_is_read_only_and_parses_elf_header(tmp_pat
     assert result.output["architecture"] == "x86_64"
     assert result.output["entry_point_offset"] == 0x401000
     assert "safe-visible-string" in result.output["printable_strings"]
+    assert result.output["file_size"] == len(content)
+    assert result.output["string_offsets"]
+    assert result.output["strings_truncated"] is False
     assert not denied.success and denied.error and "不属于当前 Thread" in denied.error.message
 
 

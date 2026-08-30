@@ -245,6 +245,11 @@ async def test_complete_failure_replan_success_report(tmp_path):
     assert finished.status == RunStatus.COMPLETED
     events = repository.list_events(run.id)
     assert EventType.REPLANNED in [event.type for event in events]
+    replan = next(event for event in events if event.type == EventType.REPLANNED)
+    assert replan.payload["reason"] == "tool_failure"
+    assert "completed_steps" in replan.payload and "failed_steps" in replan.payload
+    assert replan.payload["failed_steps"]
+    assert replan.payload["new_plan_version"] == replan.payload["previous_plan_version"] + 1
     tool_events = [event for event in events if event.type == EventType.TOOL_FINISHED]
     assert [event.payload["success"] for event in tool_events] == [False, True]
     assert repository.get_report(run.id)[1]["tool_metrics"] == {"calls": 2, "failures": 1}

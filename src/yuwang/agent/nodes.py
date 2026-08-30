@@ -689,6 +689,15 @@ class WorkflowNodes:
                 "planning_strategy": "direct",
                 **replan_context,
             }
+            payload["completed_steps"] = [
+                item.goal for item in (state.plan.step_details if state.plan else []) if item.status == "succeeded"
+            ]
+            payload["failed_steps"] = [
+                item.goal for item in (state.plan.step_details if state.plan else []) if item.status == "failed"
+            ]
+            direct_revision = engine.repository.latest_plan_revision(state.run_id)
+            payload["previous_plan_version"] = direct_revision.version if direct_revision else None
+            payload["new_plan_version"] = payload["previous_plan_version"]
             if guidance_sequences:
                 payload["guidance_sequences"] = guidance_sequences
             engine.events.emit(
@@ -699,18 +708,18 @@ class WorkflowNodes:
             )
             return engine._result("replan", state)
         previous_plan = state.plan
+        previous_revision = engine.repository.latest_plan_revision(state.run_id)
         proposed_plan = await engine.planner.plan(
             state,
             cast(Any, engine._model_call),
         )
         state.plan = self._merge_replanned_plan(previous_plan, proposed_plan)
-        previous = engine.repository.latest_plan_revision(state.run_id)
         revision = PlanRevision(
             run_id=state.run_id,
-            version=1 if previous is None else previous.version + 1,
+            version=1 if previous_revision is None else previous_revision.version + 1,
             plan=state.plan,
             source=PlanSource.AGENT_REPLAN,
-            based_on_version=previous.version if previous else None,
+            based_on_version=previous_revision.version if previous_revision else None,
         )
         engine.repository.save_plan_revision(revision)
         engine._track_plan_progress(state)
@@ -718,6 +727,14 @@ class WorkflowNodes:
             "steps": state.plan.steps,
             "replan_count": state.replan_count,
             **replan_context,
+            "previous_plan_version": previous_revision.version if previous_revision else None,
+            "new_plan_version": revision.version,
+            "completed_steps": [
+                item.goal for item in state.plan.step_details if item.status == "succeeded"
+            ],
+            "failed_steps": [
+                item.goal for item in state.plan.step_details if item.status == "failed"
+            ],
         }
         if state.observations:
             # 仅记录可公开的工具观察摘要，不复制原始工具输出或模型推理。

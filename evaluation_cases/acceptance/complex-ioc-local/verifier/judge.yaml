@@ -1,0 +1,5 @@
+judge_type: structured_fields
+expected_fields:
+  valid_ipv4s: [192.0.2.10]
+  ioc_types: [cve, email, file_path, ipv4, ipv6, sha256, url]
+  redacted: true

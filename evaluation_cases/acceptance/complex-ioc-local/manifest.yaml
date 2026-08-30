@@ -1,0 +1,21 @@
+case_id: complex-ioc-local
+version: "1.0"
+scenario: incident_response
+title: 复杂 IOC 提取与脱敏
+objective: 从混合日志提取并规范化多种 IOC，过滤无效值、保留来源位置且不返回认证信息。
+authorization_scope: ["evaluation_cases/acceptance/complex-ioc-local/inputs"]
+input_artifacts: [mixed.log]
+allowed_tools: ["ctf.ioc_extract", "ctf.artifact_content_search"]
+budget: {max_steps: 8, max_tool_calls: 4, max_duration_seconds: 60}
+timeout: 60
+max_attempts: 1
+expected_result_schema: {result_type: indicator, required_fields: [valid_ipv4s, ioc_types, redacted, evidence]}
+criteria:
+  - {validator_type: local_judge, result_type: indicator}
+  - {validator_type: tool_called, expected_value: "ctf.ioc_extract"}
+  - {validator_type: evidence_source_tool, expected_value: "ctf.ioc_extract"}
+  - {validator_type: authorization_scope}
+  - {validator_type: budget_respected}
+judge: judge.yaml
+tags: [acceptance, incident, ioc, offline]
+difficulty: 进阶

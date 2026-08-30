@@ -1,0 +1,6 @@
+judge_type: structured_fields
+expected_fields:
+  event: beacon_detected
+  source_ip: 198.51.100.42
+  hostname: beacon.example.test
+  file_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

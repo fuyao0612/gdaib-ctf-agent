@@ -20,6 +20,10 @@ class EvaluationCase(BaseModel):
     category: str = Field(min_length=1, max_length=80)
     difficulty: str = Field(default="基础", min_length=1, max_length=40)
     input_materials: tuple[str, ...] = Field(default_factory=tuple, max_length=30)
+    # 任务包输入仅供评测运行器物化为受控 Artifact；绝不进入 Agent Prompt 或列表输出。
+    input_artifact_files: tuple[tuple[str, bytes], ...] = Field(
+        default_factory=tuple, max_length=30, exclude=True, repr=False
+    )
     environment: dict[str, str] = Field(default_factory=dict, max_length=30)
     objective: str = Field(default="", max_length=10_000)
     allowed_tools: tuple[str, ...] = Field(default_factory=tuple, max_length=100)

@@ -65,6 +65,22 @@ class LocalJudge:
                 "结构化字段匹配" if matched else "结构化字段不匹配",
                 {"field": field},
             )
+        if self.judge_type == "structured_fields":
+            expected_fields = private_config.get("expected_fields")
+            if not isinstance(expected_fields, dict) or not expected_fields:
+                return self._result("configuration_error", "structured_fields 缺少私有期望字段", {})
+            mismatches: dict[str, Any] = {}
+            for field, expected in expected_fields.items():
+                if not isinstance(field, str) or not field:
+                    return self._result("configuration_error", "structured_fields 字段名无效", {})
+                actual = self._field(candidate, field)
+                if actual != expected:
+                    mismatches[field] = {"expected": expected, "actual": actual}
+            return self._result(
+                "failed" if mismatches else "passed",
+                "结构化字段全部匹配" if not mismatches else "结构化字段不匹配",
+                {"fields": sorted(str(field) for field in expected_fields), "mismatches": mismatches},
+            )
         if self.judge_type == "file_hash":
             expected = private_config.get("expected_sha256")
             artifact_id = private_config.get("artifact_id")
