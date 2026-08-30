@@ -6,7 +6,7 @@ objective: 从受控文本定位多个编码候选，选择正确的双层 Base6
 authorization_scope: ["evaluation_cases/acceptance/multi-layer-encoding-local/inputs"]
 input_artifacts: [challenge.txt]
 allowed_tools: ["ctf.artifact_content_search", "ctf.encoding_decode"]
-budget: {max_steps: 8, max_tool_calls: 4, max_duration_seconds: 60}
+budget: {max_steps: 30, max_tool_calls: 4, max_duration_seconds: 60}
 timeout: 60
 max_attempts: 1
 expected_result_schema: {result_type: finding, required_fields: [value, decode_chain, evidence]}

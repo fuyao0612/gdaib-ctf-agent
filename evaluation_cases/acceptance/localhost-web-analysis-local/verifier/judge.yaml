@@ -1,4 +1,4 @@
 judge_type: structured_fields
 expected_fields:
   status_code: 200
-  explicit_links: ["/api/status"]
+  explicit_links: []

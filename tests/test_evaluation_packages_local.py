@@ -89,6 +89,8 @@ def test_localhost_web_package_is_scoped_to_single_loopback_target():
     assert "builtin.localhost_http_probe" in manifest.criteria[1]["expected_value"]
     judge = yaml.safe_load((root / "verifier" / "judge.yaml").read_text(encoding="utf-8"))
     assert judge["expected_fields"]["status_code"] == 200
+    assert judge["expected_fields"]["explicit_links"] == []
+    assert "/api/v1/health" in (root / "inputs" / "web-hints.txt").read_text(encoding="utf-8")
 
 
 def test_complex_ioc_package_requires_mixed_types_and_redaction_contract():

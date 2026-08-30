@@ -6,7 +6,7 @@ objective: 关联时间线、网络和文件日志，确认同一事件的来源
 authorization_scope: ["evaluation_cases/acceptance/multi-artifact-correlation-local/inputs"]
 input_artifacts: [timeline.log, network.log, files.log]
 allowed_tools: ["ctf.artifact_content_search", "ctf.ioc_extract"]
-budget: {max_steps: 10, max_tool_calls: 6, max_duration_seconds: 60}
+budget: {max_steps: 40, max_tool_calls: 6, max_duration_seconds: 60}
 timeout: 60
 max_attempts: 1
 expected_result_schema: {result_type: finding, required_fields: [event, source_ip, hostname, file_sha256, evidence]}

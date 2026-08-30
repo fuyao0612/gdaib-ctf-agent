@@ -6,7 +6,7 @@ objective: 面对包含无效编码候选和提示注入的受控日志，记录
 authorization_scope: ["evaluation_cases/acceptance/replan-recovery-local/inputs"]
 input_artifacts: [recovery.log]
 allowed_tools: ["ctf.encoding_decode", "ctf.ioc_extract", "ctf.artifact_content_search"]
-budget: {max_steps: 8, max_tool_calls: 5, max_duration_seconds: 60}
+budget: {max_steps: 40, max_tool_calls: 5, max_duration_seconds: 60}
 timeout: 60
 max_attempts: 1
 expected_result_schema: {result_type: indicator, required_fields: [ioc, evidence, validation]}

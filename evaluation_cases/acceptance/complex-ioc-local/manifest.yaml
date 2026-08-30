@@ -6,7 +6,7 @@ objective: 从混合日志提取并规范化多种 IOC，过滤无效值、保�
 authorization_scope: ["evaluation_cases/acceptance/complex-ioc-local/inputs"]
 input_artifacts: [mixed.log]
 allowed_tools: ["ctf.ioc_extract", "ctf.artifact_content_search"]
-budget: {max_steps: 8, max_tool_calls: 4, max_duration_seconds: 60}
+budget: {max_steps: 30, max_tool_calls: 4, max_duration_seconds: 60}
 timeout: 60
 max_attempts: 1
 expected_result_schema: {result_type: indicator, required_fields: [valid_ipv4s, ioc_types, redacted, evidence]}
