@@ -40,7 +40,15 @@ async function configure(page: Page) {
   await inputs.nth(1).fill("protocol-test-model");
   await inputs.nth(2).fill("e2e-protocol-key");
   await providerForm.getByRole("button", { name: "创建 Provider" }).click();
-  const providerRow = page.locator(".provider-row").first();
+  // 按本次创建的模型精确定位，避免 CI 中已有/延迟刷新的 Provider 影响 `.first()`。
+  await expect(page.locator(".settings-feedback .settings-notice")).toContainText(
+    "Provider 已创建",
+    { timeout: 15_000 },
+  );
+  const providerRow = page
+    .locator(".provider-row")
+    .filter({ hasText: "protocol-test-model" })
+    .first();
   await expect(providerRow).toContainText("自定义模型服务", { timeout: 15_000 });
   await providerRow.getByRole("button", { name: /测试/ }).click();
   await expect(page.locator(".settings-feedback .settings-notice")).toContainText(
