@@ -1,0 +1,4 @@
+judge_type: structured_fields
+expected_fields:
+  value: offline-evidence-chain
+  decode_chain: [base64, base64]

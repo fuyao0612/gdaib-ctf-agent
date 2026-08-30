@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -44,6 +45,7 @@ class CriterionResult(BaseModel):
     score: float = Field(ge=0)
     max_score: float = Field(gt=0)
     detail: str = Field(min_length=1, max_length=1000)
+    required: bool = True
 
 
 @dataclass(frozen=True)
@@ -217,6 +219,32 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
             ("passed", "Evidence 可回溯到指定成功工具调用")
             if matches
             else ("failed", "Evidence 未绑定指定成功工具调用")
+        )
+
+    def artifact_coverage(
+        ctx: ValidationContext, item: EvaluationCriterion
+    ) -> tuple[CriterionStatus, str]:
+        """确认成功工具调用实际读取了 TaskSpec 授权的全部 Artifact。"""
+
+        expected = set(ctx.task.artifact_ids)
+        if not expected:
+            return "configuration_error", "artifact_coverage 需要 TaskSpec artifact_ids"
+        covered: set[UUID] = set()
+        for call in ctx.repository.list_tool_calls(ctx.run.id):
+            if str(call.status) != "succeeded":
+                continue
+            raw_id = call.arguments.get("artifact_id")
+            try:
+                artifact_id = UUID(str(raw_id))
+            except (TypeError, ValueError):
+                continue
+            if artifact_id in expected:
+                covered.add(artifact_id)
+        missing = expected - covered
+        return (
+            ("passed", "已读取 TaskSpec 授权的全部 Artifact")
+            if not missing
+            else ("failed", f"未读取全部授权 Artifact，缺少 {len(missing)} 个")
         )
 
     def authorization_scope(
@@ -430,6 +458,21 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
         )
         if candidate is None:
             return "not_executed", "当前 Run 没有可供 Judge 检查的结果"
+        successful_calls = {
+            call.id
+            for call in ctx.repository.list_tool_calls(ctx.run.id)
+            if str(call.status) == "succeeded"
+        }
+        bound_calls = {
+            UUID(reference.source)
+            for reference in candidate.evidence
+            if reference.evidence_type == "tool_call"
+            and _is_uuid(reference.source)
+            and UUID(reference.source) in successful_calls
+        }
+        bound_calls.update(call_id for call_id in candidate.tool_call_ids if call_id in successful_calls)
+        if not bound_calls:
+            return "not_executed", "结果 Evidence 未绑定当前 Run 的成功工具调用"
         judge = LocalJudge(judge_type)
         result = judge.validate(
             candidate,
@@ -452,6 +495,7 @@ def _simple_validators() -> tuple[CriterionValidator, ...]:
             "tool_called": tool_called,
             "tool_sequence": tool_sequence,
             "evidence_source_tool": evidence_source_tool,
+            "artifact_coverage": artifact_coverage,
             "authorization_scope": authorization_scope,
             "budget_respected": budget_respected,
             "tool_candidate_hash": tool_candidate_hash,
@@ -476,6 +520,14 @@ def _artifact_for_judge(context: ValidationContext, raw: str) -> Artifact | None
         return None
 
 
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 def _record_judge_evidence(
     context: ValidationContext, candidate: TaskResult, result: JudgeResult
 ) -> None:
@@ -487,7 +539,9 @@ def _record_judge_evidence(
     context.repository.save_evidence(
         EvidenceRecord(
             run_id=context.run.id,
-            candidate=candidate.summary[:10_000],
+            candidate=json.dumps(
+                candidate.structured_data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )[:10_000],
             source_call_id=call_id,
             location="/task_result",
             verified=result.status == "passed",
@@ -541,6 +595,7 @@ class EvaluationScorer:
             score=criterion.weight if status == "passed" else 0,
             max_score=criterion.weight,
             detail=detail,
+            required=criterion.required,
         )
 
 
@@ -549,7 +604,7 @@ def summarize_score(results: tuple[CriterionResult, ...]) -> tuple[float, float,
 
     total = sum(item.score for item in results)
     maximum = sum(item.max_score for item in results)
-    required_ok = all(item.status == "passed" for item in results)
+    required_ok = all(item.status == "passed" for item in results if item.required)
     return total, maximum, required_ok
 
 

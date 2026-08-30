@@ -1,3 +1,4 @@
-judge_type: structured_value
-field: algorithm
-expected_value: AES-256-GCM
+judge_type: structured_fields
+expected_fields:
+  algorithm: AES-256-GCM
+  constant: "0xC0FFEE"

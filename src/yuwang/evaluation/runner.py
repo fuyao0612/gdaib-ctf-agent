@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import mimetypes
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 
 from yuwang.agent import AgentEngine
 from yuwang.domain.models import (
+    Artifact,
     EventType,
     Message,
     MessageRole,
@@ -100,9 +103,7 @@ class EvaluationRunner:
         *,
         attempts: int = 1,
         completed_attempts: Iterable[tuple[str, int]] = (),
-        on_attempt_completed: Callable[
-            [EvaluationCase, int, EvaluationResult], Awaitable[None]
-        ]
+        on_attempt_completed: Callable[[EvaluationCase, int, EvaluationResult], Awaitable[None]]
         | None = None,
     ) -> tuple[EvaluationResult, ...]:
         """顺序执行用例，避免共享 Provider 的限流掩盖单个用例结果。"""
@@ -144,20 +145,22 @@ class EvaluationRunner:
             )
             for content in case.user_messages
         ]
-        task = TaskSpec(
-            body=messages[-1].content,
-            origin_message_id=messages[-1].id,
-            scenario=f"evaluation:{case.case_id}",
-            authorized_targets=list(case.authorized_targets),
-            budget=case.budget,
-            tool_snapshots=[self._tool_snapshot(spec) for spec in selected_specs],
-        )
         run = self.repository.save_run(
             Run(
                 thread_id=thread.id,
                 provider=self.provider_config.name if self.provider_config else self.provider.name,
                 provider_config_id=self.provider_config.id if self.provider_config else None,
             )
+        )
+        artifact_ids = self._materialize_input_artifacts(case, thread.id, run.id)
+        task = TaskSpec(
+            body=messages[-1].content,
+            origin_message_id=messages[-1].id,
+            scenario=f"evaluation:{case.case_id}",
+            authorized_targets=list(case.authorized_targets),
+            artifact_ids=artifact_ids,
+            budget=case.budget,
+            tool_snapshots=[self._tool_snapshot(spec) for spec in selected_specs],
         )
         self.repository.save_run_task(run.id, task)
         self.repository.save_run_agent_profile(run.id, self.profile)
@@ -198,7 +201,13 @@ class EvaluationRunner:
             status: EvaluationStatus = "failed" if failed_required else "passed"
         else:
             # 旧评测文件兼容：历史断言结果本身仍保留原状态，但新内置用例不会走这里。
-            status = "failed" if "failed" in statuses else "skipped" if "skipped" in statuses else "passed"
+            status = (
+                "failed"
+                if "failed" in statuses
+                else "skipped"
+                if "skipped" in statuses
+                else "passed"
+            )
         score = sum(item.score for item in assertions)
         max_score = sum(item.max_score for item in assertions)
         result = EvaluationResult(
@@ -212,6 +221,58 @@ class EvaluationRunner:
             reason=None if status == "passed" else "存在未满足或尚未映射的声明式断言",
         )
         return self._persist_result(case, result, attempt, started_at=run.created_at, run=persisted)
+
+    def _materialize_input_artifacts(
+        self, case: EvaluationCase, thread_id: UUID, run_id: UUID
+    ) -> list[UUID]:
+        """将任务包附件写入受控根目录并绑定当前 Thread/Run。"""
+
+        max_bytes = 2 * 1024 * 1024
+        if not case.input_artifact_files:
+            return []
+        root = self.artifact_root.resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        artifact_ids: list[UUID] = []
+        for filename, content in case.input_artifact_files:
+            safe_name = Path(filename).name
+            if (
+                not safe_name
+                or safe_name in {".", ".."}
+                or safe_name != filename
+                or len(safe_name) > 255
+            ):
+                raise ValueError("评测输入 Artifact 文件名必须是安全的基名")
+            if not isinstance(content, bytes):
+                raise ValueError("评测输入 Artifact 内容必须是 bytes")
+            if len(content) > max_bytes:
+                raise ValueError(f"评测输入 Artifact 超过 {max_bytes} 字节限制")
+            artifact_id = uuid4()
+            storage_ref = f"{thread_id}/{artifact_id}.blob"
+            destination = (root / storage_ref).resolve()
+            if root not in destination.parents:
+                raise ValueError("评测输入 Artifact 存储路径不安全")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
+            preview = content[:12_000].decode("utf-8", errors="replace") or None
+            artifact = self.repository.save_artifact(
+                Artifact(
+                    id=artifact_id,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    filename=safe_name,
+                    kind="evaluation_input",
+                    sha256=hashlib.sha256(content).hexdigest(),
+                    size=len(content),
+                    mime_type=mimetypes.guess_type(safe_name)[0] or "application/octet-stream",
+                    storage_ref=storage_ref,
+                    source="evaluation_package",
+                    trust_level="untrusted",
+                    preview=preview,
+                    truncated=len(content) > 12_000,
+                )
+            )
+            artifact_ids.append(artifact.id)
+        return artifact_ids
 
     def _evaluate_criteria(
         self, case: EvaluationCase, run: Run, task: TaskSpec
@@ -334,11 +395,23 @@ class EvaluationRunner:
         )
         # Run 收尾时会固定真实成功调用的 Provider/模型；评测索引必须复用它，
         # 不能回填用户选择的配置快照，否则备用模型会在结果页被误报。
-        provider = run.provider if run else (
-            metrics[-1].provider if metrics else (self.provider_config.name if self.provider_config else None)
+        provider = (
+            run.provider
+            if run
+            else (
+                metrics[-1].provider
+                if metrics
+                else (self.provider_config.name if self.provider_config else None)
+            )
         )
-        model = run.model if run else (
-            metrics[-1].model if metrics else (self.provider_config.model if self.provider_config else None)
+        model = (
+            run.model
+            if run
+            else (
+                metrics[-1].model
+                if metrics
+                else (self.provider_config.model if self.provider_config else None)
+            )
         )
         record = EvaluationRecord(
             case_id=case.case_id,
@@ -387,7 +460,9 @@ class EvaluationRunner:
         assertions: Sequence[EvaluationAssertionResult],
     ) -> EvaluationStatus:
         statuses = {item.status for item in assertions}
-        return "failed" if "failed" in statuses else "skipped" if "skipped" in statuses else "passed"
+        return (
+            "failed" if "failed" in statuses else "skipped" if "skipped" in statuses else "passed"
+        )
 
     @staticmethod
     def _failure_category(
@@ -474,8 +549,12 @@ class EvaluationRunner:
     ) -> EvaluationAssertionResult:
         """只映射可由 Run、事件和快照客观证明的声明；其余明确标记为跳过。"""
 
-        passed = EvaluationAssertionResult(assertion=assertion, status="passed", detail="已由持久化记录验证")
-        failed = EvaluationAssertionResult(assertion=assertion, status="failed", detail="持久化记录不满足该断言")
+        passed = EvaluationAssertionResult(
+            assertion=assertion, status="passed", detail="已由持久化记录验证"
+        )
+        failed = EvaluationAssertionResult(
+            assertion=assertion, status="failed", detail="持久化记录不满足该断言"
+        )
         skipped = EvaluationAssertionResult(
             assertion=assertion,
             status="skipped",
@@ -521,11 +600,7 @@ class EvaluationRunner:
                 else failed
             )
         if "显示未验证或部分验证" in assertion:
-            return (
-                passed
-                if run.validation_status in {"unverified", "partial"}
-                else failed
-            )
+            return passed if run.validation_status in {"unverified", "partial"} else failed
         if case.expected_outcome == "rejected" and "拒绝" in assertion:
             return passed if run.status in {RunStatus.FAILED, RunStatus.STOPPED} else failed
         return skipped

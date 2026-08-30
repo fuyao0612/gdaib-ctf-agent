@@ -15,6 +15,7 @@ from apps.api.config import Settings
 from apps.api.context import ApiContext
 
 from .cases import EvaluationCase, builtin_evaluation_cases
+from .packages import load_task_package_case
 from .progress import EvaluationProgress, EvaluationProgressStore
 from .runner import EvaluationResult, EvaluationRunner
 
@@ -25,6 +26,13 @@ def parse_arguments() -> argparse.Namespace:
     subcommands.add_parser("list", help="列出内置评测用例，不调用模型")
     run = subcommands.add_parser("run", help="执行选定用例；必须显式指定已配置 Provider")
     run.add_argument("--case", dest="case_ids", action="append", help="用例 ID，可重复指定")
+    run.add_argument(
+        "--package",
+        dest="package_paths",
+        action="append",
+        type=Path,
+        help="任务包目录，可重复指定；仅加载 manifest/inputs/verifier",
+    )
     run.add_argument("--smoke", action="store_true", help="只执行带 smoke 标签的用例")
     run.add_argument("--attempts", type=int, default=1, help="每题尝试次数，默认 1")
     run.add_argument("--provider-id", type=UUID, required=True, help="已连接测试的 Provider 配置 ID")
@@ -40,7 +48,12 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def select_cases(arguments: argparse.Namespace) -> tuple[EvaluationCase, ...]:
-    cases = builtin_evaluation_cases()
+    package_cases = tuple(
+        load_task_package_case(path) for path in (arguments.package_paths or ())
+    )
+    cases = (*builtin_evaluation_cases(), *package_cases)
+    if len({case.case_id for case in cases}) != len(cases):
+        raise ValueError("内置用例与任务包的 case_id 不能重复")
     if arguments.case_ids:
         selected = tuple(case for case in cases if case.case_id in set(arguments.case_ids))
         missing = sorted(set(arguments.case_ids) - {case.case_id for case in selected})
@@ -49,6 +62,8 @@ def select_cases(arguments: argparse.Namespace) -> tuple[EvaluationCase, ...]:
         return selected
     if arguments.smoke:
         return tuple(case for case in cases if "smoke" in case.tags)
+    if package_cases:
+        return package_cases
     raise ValueError("为避免意外消耗，请使用 --case 或 --smoke 明确选择评测范围")
 
 

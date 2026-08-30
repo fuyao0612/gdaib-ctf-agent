@@ -10,8 +10,87 @@ from yuwang.domain.models import (
     Thread,
     ToolCall,
 )
-from yuwang.evaluation import EvaluationCriterion, EvaluationScorer
+from yuwang.evaluation import EvaluationCriterion, EvaluationScorer, summarize_score
 from yuwang.storage import SQLiteRepository
+
+
+def test_optional_criterion_failure_does_not_fail_required_summary(tmp_path):
+    repository = SQLiteRepository(tmp_path / "optional.db")
+    thread = repository.save_thread(Thread(title="可选条件"))
+    run = Run(thread_id=thread.id)
+    run.transition("running")
+    run.transition("completed")
+    repository.save_run(run)
+    task = TaskSpec(body="验证可选条件")
+    results = EvaluationScorer(repository).score(
+        run,
+        task,
+        (
+            EvaluationCriterion(
+                criterion_id="required",
+                description="必需状态",
+                validator_type="run_status",
+                expected_value="completed",
+            ),
+            EvaluationCriterion(
+                criterion_id="optional",
+                description="可选事件",
+                validator_type="event_present",
+                expected_value="replan",
+                required=False,
+            ),
+        ),
+    )
+
+    assert results[1].status == "failed"
+    assert results[1].required is False
+    assert summarize_score(results) == (1.0, 2.0, True)
+
+
+def test_artifact_coverage_requires_successful_reads_of_all_task_artifacts(tmp_path):
+    repository = SQLiteRepository(tmp_path / "artifact-coverage.db")
+    thread = repository.save_thread(Thread(title="多 Artifact 覆盖"))
+    run = Run(thread_id=thread.id)
+    run.transition("running")
+    run.transition("completed")
+    first, second = uuid4(), uuid4()
+    repository.save_tool_call(
+        ToolCall(
+            run_id=run.id,
+            tool_name="artifact_content_search",
+            tool_id="ctf.artifact_content_search",
+            arguments={"artifact_id": str(first)},
+            input_summary="读取时间线",
+            result_summary="匹配",
+            duration_ms=1,
+            status=CallStatus.SUCCEEDED,
+        )
+    )
+    repository.save_run(run)
+    task = TaskSpec(body="关联多个 Artifact", artifact_ids=[first, second])
+    criterion = EvaluationCriterion(
+        criterion_id="coverage",
+        description="覆盖全部输入",
+        validator_type="artifact_coverage",
+    )
+
+    failed = EvaluationScorer(repository).score(run, task, (criterion,))[0]
+    assert failed.status == "failed"
+
+    repository.save_tool_call(
+        ToolCall(
+            run_id=run.id,
+            tool_name="ioc_extract",
+            tool_id="ctf.ioc_extract",
+            arguments={"artifact_id": str(second)},
+            input_summary="读取网络线索",
+            result_summary="提取完成",
+            duration_ms=1,
+            status=CallStatus.SUCCEEDED,
+        )
+    )
+    passed = EvaluationScorer(repository).score(run, task, (criterion,))[0]
+    assert passed.status == "passed"
 
 
 def test_ctf_score_requires_deterministic_flag_evidence(tmp_path):

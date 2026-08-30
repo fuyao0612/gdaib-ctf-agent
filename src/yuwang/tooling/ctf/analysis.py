@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
-from collections import Counter
 from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -16,9 +17,13 @@ from .base import CtfArtifactTool, ctf_spec
 
 MAX_READ_BYTES = 2 * 1024 * 1024
 _IPV4 = re.compile(r"(?<![\w.])(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?![\w.])")
+_IPV6 = re.compile(r"(?<![\w:])[0-9A-Fa-f:]{2,45}(?![\w:])")
 _SHA256 = re.compile(r"(?<![A-Fa-f0-9])[A-Fa-f0-9]{64}(?![A-Fa-f0-9])")
 _DOMAIN = re.compile(r"(?<![\w.-])(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+(?:com|net|org|io|cn|dev|test|local)(?![\w.-])", re.IGNORECASE)
 _URL = re.compile(r"https?://[^\s\"'<>]{1,512}", re.IGNORECASE)
+_EMAIL = re.compile(r"(?<![\w.+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}(?![\w.-])")
+_CVE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
+_FILE_PATH = re.compile(r"(?<!\w)(?:[A-Za-z]:\\[^\s\"'<>|?*]+|/(?:[^\s\"'<>]+/?)+)")
 _STRING = re.compile(rb"[\x20-\x7e]{4,}")
 
 
@@ -35,9 +40,11 @@ class IOCExtractInput(_ArtifactInput):
 class IOCItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["ipv4", "domain", "url", "sha256"]
+    kind: Literal["ipv4", "ipv6", "domain", "url", "sha256", "email", "cve", "file_path"]
     value: str = Field(min_length=1, max_length=512)
     occurrences: int = Field(ge=1)
+    line_numbers: list[int] = Field(default_factory=list, min_length=1, max_length=100)
+    confidence: float = Field(ge=0, le=1)
 
 
 class IOCExtractOutput(BaseModel):
@@ -57,7 +64,7 @@ class IOCExtractTool(CtfArtifactTool[IOCExtractInput, IOCExtractOutput]):
         return ctf_spec(
             name="ioc_extract",
             display_name="IOC 提取与规范化",
-            description="从当前 Thread 已授权的文本 Artifact 提取并规范化 IP、域名、URL 与 SHA-256",
+            description="从当前 Thread 已授权的文本 Artifact 提取并规范化 IP、域名、URL、哈希、邮箱、CVE 与路径，并保留来源行",
             capabilities=["forensics", "ioc", "artifact_analysis"],
             scenarios=["forensics", "incident_response", "ctf"],
             permissions=["artifact:read"],
@@ -70,18 +77,7 @@ class IOCExtractTool(CtfArtifactTool[IOCExtractInput, IOCExtractOutput]):
     async def execute_with_request(self, value: IOCExtractInput, request: ToolCallRequest | None) -> IOCExtractOutput:
         artifact, content = self.artifacts.read(value.artifact_id, request, max_bytes=MAX_READ_BYTES)
         text = content.decode("utf-8", errors="replace")
-        findings: list[IOCItem] = []
-        for kind, pattern in (
-            ("ipv4", _IPV4),
-            ("domain", _DOMAIN),
-            ("url", _URL),
-            ("sha256", _SHA256),
-        ):
-            counts = Counter(_normalize_ioc(kind, match.group()) for match in pattern.finditer(text))
-            findings.extend(
-                IOCItem(kind=kind, value=item, occurrences=count)
-                for item, count in sorted(counts.items())
-            )
+        findings = _extract_iocs(text)
         findings.sort(key=lambda item: (item.kind, item.value))
         return IOCExtractOutput(
             artifact_id=artifact.id,
@@ -173,6 +169,8 @@ class SourceFinding(BaseModel):
     line: int = Field(ge=1)
     excerpt: str = Field(min_length=1, max_length=400)
     rationale: str = Field(min_length=1, max_length=200)
+    manual_review: bool = True
+    confidence: float = Field(default=0.82, ge=0, le=1)
 
 
 class SourcePatternOutput(BaseModel):
@@ -193,7 +191,7 @@ class SourcePatternAnalyzeTool(CtfArtifactTool[SourcePatternInput, SourcePattern
         return ctf_spec(
             name="source_dangerous_pattern_analyze",
             display_name="结构化源码危险模式分析",
-            description="对已授权源码 Artifact 检查受限的命令执行、动态求值和 SQL 拼接模式，仅输出定位与规则依据",
+            description="对已授权源码 Artifact 做受限危险模式初筛，不宣称完整 SAST；仅输出定位、规则依据和人工复核提示",
             capabilities=["source", "vulnerability_analysis", "static_analysis"],
             scenarios=["vulnerability_analysis", "forensics", "ctf"],
             permissions=["artifact:read"],
@@ -233,7 +231,10 @@ class BinaryStaticOutput(BaseModel):
     format: Literal["elf", "pe", "mach_o", "unknown"]
     architecture: str = Field(max_length=80)
     entry_point_offset: int | None = Field(default=None, ge=0)
+    file_size: int = Field(ge=0)
     printable_strings: list[str] = Field(default_factory=list, max_length=300)
+    string_offsets: list[int] = Field(default_factory=list, max_length=300)
+    strings_truncated: bool = False
     input_truncated: bool = False
 
 
@@ -259,8 +260,11 @@ class BinaryStaticAnalyzeTool(CtfArtifactTool[BinaryStaticInput, BinaryStaticOut
     async def execute_with_request(self, value: BinaryStaticInput, request: ToolCallRequest | None) -> BinaryStaticOutput:
         artifact, content = self.artifacts.read(value.artifact_id, request, max_bytes=MAX_READ_BYTES)
         binary_format, architecture, entry = _binary_metadata(content)
-        strings = [item.decode("ascii", errors="replace")[:200] for item in _STRING.findall(content)[: value.max_strings]]
-        return BinaryStaticOutput(artifact_id=artifact.id, sha256=hashlib.sha256(content).hexdigest(), format=binary_format, architecture=architecture, entry_point_offset=entry, printable_strings=strings, input_truncated=len(content) >= MAX_READ_BYTES)
+        all_strings = list(_STRING.finditer(content))
+        selected = all_strings[: value.max_strings]
+        strings = [item.group().decode("ascii", errors="replace")[:200] for item in selected]
+        offsets = [item.start() for item in selected]
+        return BinaryStaticOutput(artifact_id=artifact.id, sha256=hashlib.sha256(content).hexdigest(), format=binary_format, architecture=architecture, entry_point_offset=entry, file_size=artifact.size, printable_strings=strings, string_offsets=offsets, strings_truncated=len(all_strings) > value.max_strings, input_truncated=len(content) >= MAX_READ_BYTES)
 
 
 def _safe_excerpt(line: str, query: str, case_sensitive: bool) -> str:
@@ -275,10 +279,80 @@ def _normalize_ioc(kind: str, value: str) -> str:
     if kind == "domain":
         return value.casefold().rstrip(".")
     if kind == "url":
-        return value.rstrip(".,;:)]").casefold()
+        value = value.rstrip(".,;:)]").casefold()
+        try:
+            parsed = urlsplit(value)
+            # 查询参数和 URL 用户信息可能携带 Token/密码；证据只保留可复查的公开路径。
+            host = parsed.hostname or ""
+            if parsed.port:
+                host = f"{host}:{parsed.port}"
+            return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+        except ValueError:
+            return value.split("?", 1)[0].split("#", 1)[0]
     if kind == "sha256":
         return value.casefold()
+    if kind == "email":
+        return value.casefold()
+    if kind == "cve":
+        return value.upper()
+    if kind == "file_path":
+        return value.rstrip(".,;:)]")
     return value
+
+
+def _extract_iocs(text: str) -> list[IOCItem]:
+    """提取有行号的受限 IOC；URL 包含的域名不重复作为独立域名统计。"""
+
+    matches: dict[tuple[str, str], list[int]] = {}
+    url_spans: set[tuple[int, int]] = {match.span() for match in _URL.finditer(text)}
+    email_spans: set[tuple[int, int]] = {match.span() for match in _EMAIL.finditer(text)}
+    for kind, pattern in (
+        ("url", _URL),
+        ("ipv4", _IPV4),
+        ("ipv6", _IPV6),
+        ("domain", _DOMAIN),
+        ("sha256", _SHA256),
+        ("email", _EMAIL),
+        ("cve", _CVE),
+        ("file_path", _FILE_PATH),
+    ):
+        for found in pattern.finditer(text):
+            raw = found.group()
+            if kind == "url":
+                url_spans.add(found.span())
+            elif kind == "domain" and any(
+                start <= found.start() and found.end() <= end
+                for start, end in (*url_spans, *email_spans)
+            ):
+                continue
+            elif kind == "file_path" and any(
+                start <= found.start() and found.end() <= end for start, end in url_spans
+            ):
+                continue
+            if kind == "ipv6":
+                try:
+                    parsed = ipaddress.ip_address(raw)
+                except ValueError:
+                    continue
+                if parsed.version != 6:
+                    continue
+            value = _normalize_ioc(kind, raw)
+            line = text.count("\n", 0, found.start()) + 1
+            matches.setdefault((kind, value), []).append(line)
+    return [
+        IOCItem(
+            kind=kind,
+            value=value,
+            occurrences=len(lines),
+            line_numbers=list(dict.fromkeys(lines))[:100],
+            confidence=_ioc_confidence(kind),
+        )
+        for (kind, value), lines in sorted(matches.items())
+    ]
+
+
+def _ioc_confidence(kind: str) -> float:
+    return 0.99 if kind in {"sha256", "cve", "ipv4", "ipv6"} else 0.95
 
 
 def _redact_line(value: str) -> str:
