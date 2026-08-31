@@ -461,6 +461,9 @@ export default function App() {
   function selectThreadFromSidebar(id: string) {
     setError("");
     taskActions.reset();
+    // 新建任务只是一个未提交草稿视图；选择历史任务时应立即回到会话详情，
+    // 避免 createOpen 优先级遮住已加载的历史线程。
+    setCreateOpen(false);
     currentThreadIdRef.current = id;
     setMessage("");
     setPendingArtifacts([]);

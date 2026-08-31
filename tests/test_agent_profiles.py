@@ -73,9 +73,12 @@ def test_default_profile_upgrades_only_platform_legacy_token_budget(tmp_path):
 
     assert upgraded.profile_id == legacy.profile_id
     assert upgraded.version == legacy.version + 1
-    assert upgraded.budget.max_tokens == 72_000
-    assert upgraded.budget.max_model_calls == 12
-    assert upgraded.budget.max_steps == 40
+    assert upgraded.budget.max_tokens == 120_000
+    assert upgraded.budget.max_model_calls == 20
+    assert upgraded.budget.max_steps == 60
+    assert upgraded.budget.max_tool_calls == 20
+    assert upgraded.budget.max_duration_seconds == 600
+    assert upgraded.budget.step_timeout_seconds == 180
     assert upgraded.planning_strategy == "direct"
     assert upgraded.workflow.preset == "direct"
     assert upgraded.memory_policy.persist_important_facts is False
@@ -123,6 +126,42 @@ def test_ensure_default_repairs_duplicate_default_markers(tmp_path):
     assert [profile.profile_id for profile in profiles if profile.is_default] == [canonical.profile_id]
     assert service.require(duplicate.profile_id).version == 2
     assert service.require(duplicate.profile_id).is_default is False
+
+
+def test_ensure_default_removes_duplicate_platform_profiles_and_migrates_threads(tmp_path):
+    repository = SQLiteRepository(tmp_path / "duplicate-platform-defaults.db")
+    service = AgentProfileService(repository)
+    canonical = service.create(
+        AgentProfileInput(
+            name="默认安全 Agent",
+            description="由 v0.3 迁移创建的默认配置",
+            is_default=True,
+        )
+    )
+    duplicate = AgentProfileVersion(
+        **AgentProfileInput(
+            name="默认安全 Agent",
+            description="由 v0.3 迁移创建的默认配置",
+            is_default=False,
+        ).model_dump(),
+        version=1,
+        created_at="2099-01-01T00:00:00+00:00",
+    )
+    repository.save_agent_profile_version(duplicate)
+    thread = Thread(
+        title="旧线程",
+        agent_profile_id=duplicate.profile_id,
+        agent_profile_version=duplicate.version,
+    )
+    repository.save_thread(thread)
+
+    resolved = service.ensure_default()
+
+    assert resolved.profile_id == canonical.profile_id
+    assert [profile.profile_id for profile in repository.list_agent_profiles()] == [canonical.profile_id]
+    restored = repository.get_thread(thread.id)
+    assert restored and restored.agent_profile_id == canonical.profile_id
+    assert restored.agent_profile_version == resolved.version
 
 
 def test_profile_export_import_is_secretless_and_template_safe(tmp_path):

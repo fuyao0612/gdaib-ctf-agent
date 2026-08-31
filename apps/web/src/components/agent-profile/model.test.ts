@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentProfile } from "../../types";
 import {
+  applyProfilePreset,
   BUDGET_FIELDS,
   buildProfilePayload,
   changeCompletionMode,
@@ -17,6 +18,22 @@ describe("Agent 配置纯转换规则", () => {
     const second = createEmptyProfile();
     first.context_policy.recent_message_limit = 1;
     expect(second.context_policy.recent_message_limit).toBe(20);
+  });
+
+  it("标准预设提供足够的执行余量且不改授权字段", () => {
+    const form = createEmptyProfile();
+    form.default_provider_id = "provider-1";
+    form.tool_selection_mode = "selected";
+    form.tool_ids = ["tool-1"];
+    const result = applyProfilePreset(form, "standard");
+    expect(result.budget).toMatchObject({
+      max_tool_calls: 20,
+      max_duration_seconds: 600,
+      step_timeout_seconds: 180,
+    });
+    expect(result.completion_mode).toBe("evidence");
+    expect(result.default_provider_id).toBe("provider-1");
+    expect(result.tool_ids).toEqual(["tool-1"]);
   });
 
   it("预算字段与服务端边界保持一致", () => {

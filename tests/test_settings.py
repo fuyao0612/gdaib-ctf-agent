@@ -188,7 +188,7 @@ def test_legacy_context_migration_is_idempotent_and_preserves_missing_or_new_val
             "INSERT INTO app_settings(key,data) VALUES('agent_defaults',?)",
             ('{"budget":{},"provider_retry_budget":2}',),
         )
-    assert repository.get_agent_defaults().context_token_budget == 262_144
+    assert repository.get_agent_defaults().context_token_budget == 524_288
 
     repository.save_agent_defaults(AgentDefaults(context_token_budget=64_000))
     assert repository.get_agent_defaults().context_token_budget == 64_000

@@ -13,6 +13,18 @@ export const WIZARD_STEPS = [
   "预览保存",
 ] as const;
 
+export type ProfilePreset = "standard" | "fast" | "deep";
+
+export const PROFILE_PRESETS: ReadonlyArray<{
+  id: ProfilePreset;
+  label: string;
+  description: string;
+}> = [
+  { id: "standard", label: "标准自主（推荐）", description: "规划、工具执行、验证与失败后调整，适合比赛演示。" },
+  { id: "fast", label: "快速分析", description: "减少规划开销，适合简单问答和快速确认。" },
+  { id: "deep", label: "深度验证", description: "更大的预算和更完整的重规划，适合复杂取证。" },
+];
+
 export const BUDGET_FIELDS: ReadonlyArray<{
   key: keyof AgentProfileInput["budget"];
   label: string;
@@ -42,13 +54,13 @@ export function createEmptyProfile(): AgentProfileInput {
     user_prompt_template: "请处理以下任务：{task}",
     planning_strategy: "dynamic",
     budget: {
-      max_steps: 20,
-      max_model_calls: 8,
-      max_tool_calls: 8,
-      max_tokens: 8000,
-      max_model_cost: 10,
-      max_duration_seconds: 120,
-      step_timeout_seconds: 60,
+      max_steps: 60,
+      max_model_calls: 20,
+      max_tool_calls: 20,
+      max_tokens: 120000,
+      max_model_cost: 20,
+      max_duration_seconds: 600,
+      step_timeout_seconds: 180,
     },
     context_policy: {
       recent_message_limit: 20,
@@ -77,6 +89,45 @@ export function createEmptyProfile(): AgentProfileInput {
     report_template: "# {task}\n\n{observations}",
     enabled: true,
     is_default: false,
+  };
+}
+
+/** 预设只覆盖行为与预算，不改名称、Provider、工具授权和用户自定义模板。 */
+export function applyProfilePreset(
+  form: AgentProfileInput,
+  preset: ProfilePreset,
+): AgentProfileInput {
+  const common = {
+    memory_policy: { ...form.memory_policy, enabled: true, persist_important_facts: false },
+    intervention_policy: { ...form.intervention_policy, normal_mode: "wait" as const, competition_mode: "fail" as const, max_requests: 2 },
+  };
+  if (preset === "fast") {
+    return {
+      ...form,
+      ...common,
+      planning_strategy: "direct",
+      completion_mode: "advisory",
+      workflow: { preset: "direct" },
+      budget: { ...form.budget, max_steps: 20, max_model_calls: 8, max_tool_calls: 8, max_tokens: 32_000, max_model_cost: 10, max_duration_seconds: 180, step_timeout_seconds: 90 },
+    };
+  }
+  if (preset === "deep") {
+    return {
+      ...form,
+      ...common,
+      planning_strategy: "hybrid",
+      completion_mode: "evidence",
+      workflow: { preset: "verified" },
+      budget: { ...form.budget, max_steps: 80, max_model_calls: 30, max_tool_calls: 30, max_tokens: 200_000, max_model_cost: 40, max_duration_seconds: 900, step_timeout_seconds: 240 },
+    };
+  }
+  return {
+    ...form,
+    ...common,
+    planning_strategy: "dynamic",
+    completion_mode: "evidence",
+    workflow: { preset: "verified" },
+    budget: { ...form.budget, max_steps: 60, max_model_calls: 20, max_tool_calls: 20, max_tokens: 120_000, max_model_cost: 20, max_duration_seconds: 600, step_timeout_seconds: 180 },
   };
 }
 

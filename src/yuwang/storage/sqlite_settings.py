@@ -230,3 +230,26 @@ class SQLiteSettingsStore(SQLiteStore):
             )
             if cursor.rowcount == 0:
                 raise KeyError("Agent 配置不存在")
+
+    def replace_agent_profile_references(
+        self, source_id: UUID, target: AgentProfileVersion
+    ) -> int:
+        """将历史线程绑定迁移到保留的 Profile，避免去重后新 Run 无法解析配置。"""
+
+        source = str(source_id)
+        target_id = str(target.profile_id)
+        changed = 0
+        with self.connect() as db:
+            rows = db.execute("SELECT id, data FROM threads").fetchall()
+            for row in rows:
+                data = json.loads(row["data"])
+                if data.get("agent_profile_id") != source:
+                    continue
+                data["agent_profile_id"] = target_id
+                data["agent_profile_version"] = target.version
+                db.execute(
+                    "UPDATE threads SET data=? WHERE id=?",
+                    (json.dumps(data, ensure_ascii=False), row["id"]),
+                )
+                changed += 1
+        return changed

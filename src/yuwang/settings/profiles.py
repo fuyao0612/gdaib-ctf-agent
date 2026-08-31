@@ -15,7 +15,11 @@ from yuwang.verification_rules import validate_verification_rule
 
 PROFILE_SCHEMA_VERSION = "1.0"
 DEFAULT_PROFILE_NAME = "默认安全 Agent"
-DEFAULT_PROFILE_DESCRIPTION = "由 v0.3 迁移创建的默认配置"
+DEFAULT_PROFILE_DESCRIPTION = "适合通用安全分析与 CTF 的默认自主配置"
+LEGACY_DEFAULT_PROFILE_DESCRIPTIONS = frozenset({
+    "由 v0.3 迁移创建的默认配置",
+    DEFAULT_PROFILE_DESCRIPTION,
+})
 LEGACY_DEFAULT_MAX_MODEL_CALLS = 8
 LEGACY_DEFAULT_MAX_STEPS = 20
 LEGACY_DEFAULT_MAX_TOKENS = 8_000
@@ -239,6 +243,9 @@ class AgentProfileRepository(Protocol):
     def save_run_agent_profile(self, run_id: UUID, value: AgentProfileVersion) -> None: ...
     def get_run_agent_profile(self, run_id: UUID) -> AgentProfileVersion | None: ...
     def get_provider_config(self, provider_id: UUID) -> Any | None: ...
+    def replace_agent_profile_references(
+        self, source_id: UUID, target: AgentProfileVersion
+    ) -> int: ...
 
 
 class AgentProfileService:
@@ -249,11 +256,33 @@ class AgentProfileService:
 
     def ensure_default(self, budget: Budget | None = None) -> AgentProfileVersion:
         profiles = self.repository.list_agent_profiles()
+        platform_profiles = [value for value in profiles if self._is_platform_default(value)]
         defaults = sorted(
             (value for value in profiles if value.is_default),
             key=lambda value: value.created_at,
         )
-        default = defaults[0] if defaults else None
+        default = defaults[0] if defaults else (
+            min(platform_profiles, key=lambda value: value.created_at)
+            if platform_profiles else None
+        )
+        duplicate_ids: list[UUID] = []
+        # 历史迁移可能创建多个内容相同的默认配置。保留最早的一份，
+        # 删除重复 profile 后再把线程引用迁移到最终版本，避免设置页长期显示两个默认 Agent。
+        if platform_profiles and default:
+            for duplicate in platform_profiles:
+                if duplicate.profile_id == default.profile_id:
+                    continue
+                duplicate_ids.append(duplicate.profile_id)
+                self.repository.delete_agent_profile(duplicate.profile_id)
+            profiles = self.repository.list_agent_profiles()
+            default = next(
+                (value for value in profiles if value.profile_id == default.profile_id),
+                None,
+            )
+            defaults = sorted(
+                (value for value in profiles if value.is_default),
+                key=lambda value: value.created_at,
+            )
         if default:
             # Older data imports could contain more than one default profile. Keep the
             # earliest one so existing automatic selection remains stable, then make
@@ -264,29 +293,39 @@ class AgentProfileService:
                 )
                 data["is_default"] = False
                 self.update(duplicate.profile_id, AgentProfileInput.model_validate(data))
-            if self._needs_default_upgrade(default, budget or Budget()):
+            target_budget = self._recommended_default_budget(budget or Budget())
+            if self._needs_default_upgrade(default, target_budget):
                 data = default.model_dump(
                     exclude={"profile_id", "version", "schema_version", "created_at"}
                 )
-                data["budget"] = (budget or Budget()).model_dump()
+                data["budget"] = target_budget.model_dump()
+                data["description"] = DEFAULT_PROFILE_DESCRIPTION
                 data["planning_strategy"] = "direct"
                 data["workflow"] = {"preset": "direct"}
                 data["memory_policy"] = {
                     **data["memory_policy"],
                     "persist_important_facts": False,
                 }
-                return self.update(default.profile_id, AgentProfileInput.model_validate(data))
+                upgraded = self.update(default.profile_id, AgentProfileInput.model_validate(data))
+                for duplicate_id in duplicate_ids:
+                    self.repository.replace_agent_profile_references(duplicate_id, upgraded)
+                return upgraded
+            for duplicate_id in duplicate_ids:
+                self.repository.replace_agent_profile_references(duplicate_id, default)
             return default
-        return self.create(
+        created = self.create(
             AgentProfileInput(
                 name=DEFAULT_PROFILE_NAME,
                 description=DEFAULT_PROFILE_DESCRIPTION,
-                budget=budget or Budget(),
+                budget=self._recommended_default_budget(budget or Budget()),
                 planning_strategy="direct",
                 workflow={"preset": "direct"},
                 is_default=True,
             )
         )
+        for duplicate_id in duplicate_ids:
+            self.repository.replace_agent_profile_references(duplicate_id, created)
+        return created
 
     @staticmethod
     def _needs_default_upgrade(
@@ -296,15 +335,38 @@ class AgentProfileService:
 
         is_platform_default = (
             profile.name == DEFAULT_PROFILE_NAME
-            and profile.description == DEFAULT_PROFILE_DESCRIPTION
+            and profile.description in LEGACY_DEFAULT_PROFILE_DESCRIPTIONS
         )
         return is_platform_default and (
-            profile.planning_strategy != "direct"
+            profile.description != DEFAULT_PROFILE_DESCRIPTION
+            or profile.planning_strategy != "direct"
             or profile.workflow.preset != "direct"
-            or profile.budget.max_steps == LEGACY_DEFAULT_MAX_STEPS
-            or profile.budget.max_model_calls == LEGACY_DEFAULT_MAX_MODEL_CALLS
+            or profile.budget.max_steps < target.max_steps
+            or profile.budget.max_model_calls < target.max_model_calls
             or profile.budget.max_tokens < target.max_tokens
+            or profile.budget.max_tool_calls < target.max_tool_calls
+            or profile.budget.max_duration_seconds < target.max_duration_seconds
+            or profile.budget.step_timeout_seconds < target.step_timeout_seconds
             or profile.memory_policy.persist_important_facts
+        )
+
+    @staticmethod
+    def _is_platform_default(profile: AgentProfileVersion) -> bool:
+        return (
+            profile.name == DEFAULT_PROFILE_NAME
+            and profile.description in LEGACY_DEFAULT_PROFILE_DESCRIPTIONS
+        )
+
+    @staticmethod
+    def _recommended_default_budget(budget: Budget) -> Budget:
+        """给平台自动创建的默认 Agent 留出足够的模型和工具执行余量。"""
+
+        return budget.model_copy(
+            update={
+                "max_tool_calls": max(budget.max_tool_calls, 20),
+                "max_duration_seconds": max(budget.max_duration_seconds, 600),
+                "step_timeout_seconds": max(budget.step_timeout_seconds, 180),
+            }
         )
 
     def create(self, value: AgentProfileInput) -> AgentProfileVersion:

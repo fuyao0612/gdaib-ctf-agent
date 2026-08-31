@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
@@ -154,6 +154,36 @@ describe("App", () => {
     expect(screen.getAllByRole("button", { name: "创建并开始" })[0]).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /CTF 题目/ }));
     expect((screen.getByLabelText("任务说明") as HTMLTextAreaElement).value).toContain("Flag");
+  });
+
+  it("打开新建任务后仍可从侧栏切换到历史任务", async () => {
+    const history = thread("t-history", "历史任务");
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/setup/status"))
+        return Response.json({ configured: true, checks: {}, version: "0.5.0" });
+      if (url.endsWith("/admin/session"))
+        return Response.json({ authenticated: true, csrf_token: "csrf-test" });
+      if (url.endsWith("/threads") && !init?.method) return Response.json([history]);
+      if (url.endsWith("/threads/t-history/memories")) return Response.json([]);
+      if (url.endsWith("/threads/t-history")) return Response.json(detail("t-history", "历史任务"));
+      if (url.endsWith("/providers") || url.endsWith("/skills") || url.endsWith("/tools") || url.endsWith("/agent-profiles"))
+        return Response.json([]);
+      if (url.endsWith("/settings/chat")) return Response.json(preferences);
+      return Response.json({});
+    });
+
+    render(<App />);
+    const taskNav = await screen.findByRole("navigation", { name: "项目任务" });
+    const historyButton = within(taskNav).getByRole("button", { name: /^历史任务更新于/ });
+    fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
+    expect(screen.getByRole("heading", { name: "新建安全任务" })).toBeInTheDocument();
+
+    fireEvent.click(historyButton);
+    await waitFor(() =>
+      expect(screen.getByTestId("thread-heading")).toHaveTextContent("历史任务"),
+    );
+    expect(screen.queryByLabelText("任务说明")).not.toBeInTheDocument();
   });
 
   it("从启动页创建任务后使用选定模型立即发送任务说明", async () => {

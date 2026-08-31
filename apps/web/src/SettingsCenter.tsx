@@ -156,7 +156,7 @@ export default function SettingsCenter({ onClose, onChanged, initialSetup = fals
                   </section>}
                   {category === "providers" && <ProviderSettings csrf={session.csrf} providers={providers} onRefresh={() => load(session.csrf)} onChanged={onChanged} onNotice={setNotice} onError={setError} mode={showAdvanced ? "advanced" : "beginner"} />}
                   {category === "marketplace" && <CapabilityMarketplace csrf={session.csrf} skills={skills} onSkillsChanged={async () => { await load(session.csrf); await onChanged(); }} onConfigureMcp={(template) => { setMcpTemplate(template); setInstalledTab("tools"); setCategory("extensions"); setShowAdvanced(true); }} onNotice={setNotice} onError={setError} />}
-                  {category === "agents" && <AgentProfileCenter csrf={session.csrf} providers={providers} onChanged={syncPublicState} mode="advanced" />}
+                  {category === "agents" && <AgentProfileCenter csrf={session.csrf} providers={providers} onChanged={syncPublicState} mode={showAdvanced ? "advanced" : "beginner"} />}
                   {category === "extensions" && <section className="installed-capabilities">
                     <div className="installed-tabs" role="tablist" aria-label="已安装能力类型">
                       <button role="tab" aria-selected={installedTab === "knowledge"} className={installedTab === "knowledge" ? "active" : ""} onClick={() => setInstalledTab("knowledge")}>安全知识库</button>

@@ -187,6 +187,16 @@ export default function AgentProfileCenter({
   }
 
   const recommended = profiles.find((profile) => profile.is_default);
+  const workflowLabel = recommended?.workflow.preset === "direct"
+    ? "直接执行并验证"
+    : recommended?.workflow.preset === "planned"
+      ? "先规划后执行"
+      : "规划、验证并自动调整";
+  const completionLabel = recommended?.completion_mode === "evidence"
+    ? "证据验证"
+    : recommended?.completion_mode === "structured"
+      ? "结构化输出"
+      : "建议回答";
 
   if (mode === "beginner") {
     return (
@@ -207,11 +217,11 @@ export default function AgentProfileCenter({
             <dl>
               <div>
                 <dt>工作流</dt>
-                <dd>{recommended.workflow.preset}</dd>
+                <dd>{workflowLabel}</dd>
               </div>
               <div>
                 <dt>完成标准</dt>
-                <dd>{recommended.completion_mode}</dd>
+                <dd>{completionLabel}</dd>
               </div>
               <div>
                 <dt>模型来源</dt>
@@ -222,6 +232,10 @@ export default function AgentProfileCenter({
                       )?.name ?? "指定 Provider"
                     : "跟随默认 Provider"}
                 </dd>
+              </div>
+              <div>
+                <dt>运行余量</dt>
+                <dd>{recommended.budget.max_duration_seconds} 秒 · {recommended.budget.max_tool_calls} 次工具调用</dd>
               </div>
             </dl>
             <small>

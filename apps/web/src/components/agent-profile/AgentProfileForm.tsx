@@ -7,6 +7,7 @@ import ProviderBudgetFields from "./ProviderBudgetFields";
 import ToolSelectionFields from "./ToolSelectionFields";
 import WorkflowValidationFields from "./WorkflowValidationFields";
 import { WIZARD_STEPS } from "./model";
+import ProfilePresetFields from "./ProfilePresetFields";
 
 interface Props {
   form: AgentProfileInput;
@@ -46,6 +47,7 @@ export default function AgentProfileForm({
 
   return (
     <>
+      <ProfilePresetFields form={form} onChange={onChange} />
       <div className="wizard-progress">
         配置向导 {wizardStep}/5：{WIZARD_STEPS[wizardStep - 1]}
       </div>
