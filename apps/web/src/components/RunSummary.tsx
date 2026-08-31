@@ -1,9 +1,9 @@
 /** 默认对话区的五阶段进度与统一结果卡；技术细节继续留在运行审计。 */
 import { useEffect, useMemo, useState } from "react";
-import { Check, CircleEllipsis, TriangleAlert } from "lucide-react";
+import { Check, CircleEllipsis, ShieldCheck, TriangleAlert } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api } from "../api";
-import type { Event, ExecutionStep, FlagCandidate, Message, Report, Run, RunAudit } from "../types";
+import type { Event, ExecutionStep, FlagCandidate, Message, Report, Run, RunAudit, TaskBrief } from "../types";
 import {
   elapsedSeconds,
   presentPhases,
@@ -11,6 +11,7 @@ import {
   tokenUsageLabel,
   candidateSourceLabel,
   flagFormatStatusLabel,
+  presentActivities,
 } from "./run-presentation";
 
 interface Props {
@@ -19,6 +20,58 @@ interface Props {
   audit: RunAudit | null;
   report: Report | null;
   messages: Message[];
+}
+
+const SCENARIO_LABELS: Record<string, string> = {
+  general: "通用安全任务",
+  ctf: "CTF 分析",
+  incident_response: "应急响应",
+  vulnerability_analysis: "漏洞分析",
+  reverse_static: "静态逆向分析",
+};
+
+function TaskUnderstanding({ brief, scenario }: { brief: TaskBrief | null; scenario?: string }) {
+  if (!brief) return null;
+  const list = (values: string[] | undefined) => values?.filter(Boolean).slice(0, 4) ?? [];
+  const scope = list(brief.authorized_scope);
+  const inputs = list(brief.known_information);
+  const criteria = list(brief.success_criteria);
+  const constraints = list(brief.constraints);
+  const assumptions = list(brief.assumptions);
+  const risks = list(brief.risks);
+  const questions = list(brief.clarification_questions);
+  const hasBoundaryDetails = Boolean(brief.original_request || risks.length || questions.length);
+  return (
+    <section className="task-understanding" data-testid="task-understanding">
+      <header>
+        <div className="task-understanding-title"><ShieldCheck size={14} aria-hidden="true" /><strong>任务理解</strong></div>
+        <div className="task-understanding-meta">
+          <span className={`task-brief-status ${brief.needs_clarification ? "needs-clarification" : "ready"}`} data-testid="task-brief-status">
+            {brief.needs_clarification ? "待澄清" : "范围已确认"}
+          </span>
+          <small>Task Brief v{brief.version}</small>
+        </div>
+      </header>
+      <p className="task-understanding-goal">{brief.goal}</p>
+      <dl>
+        <div><dt>场景</dt><dd>{SCENARIO_LABELS[scenario ?? ""] ?? "受控安全分析"}</dd></div>
+        {brief.expected_output && <div><dt>输出形式</dt><dd>{brief.expected_output}</dd></div>}
+        {scope.length > 0 && <div><dt>授权范围</dt><dd>{scope.join("、")}</dd></div>}
+        {inputs.length > 0 && <div><dt>已知输入</dt><dd>{inputs.join("、")}</dd></div>}
+        {criteria.length > 0 && <div><dt>完成标准</dt><dd>{criteria.join("；")}</dd></div>}
+      </dl>
+      {constraints.length > 0 && <p className="task-understanding-note"><b>约束</b>{constraints.join("；")}</p>}
+      {assumptions.length > 0 && <p className="task-understanding-note"><b>当前假设</b>{assumptions.join("；")}</p>}
+      {hasBoundaryDetails && (
+        <details className="task-understanding-details">
+          <summary>查看原始请求与风险边界</summary>
+          {brief.original_request && <p><b>原始请求：</b>{brief.original_request}</p>}
+          {risks.length > 0 && <p><b>风险提示：</b>{risks.join("；")}</p>}
+          {questions.length > 0 && <p><b>待澄清问题：</b>{questions.join("；")}</p>}
+        </details>
+      )}
+    </section>
+  );
 }
 
 const STATUS_COPY = {
@@ -141,7 +194,7 @@ export function ExecutionTimeline({ steps }: { steps: ExecutionStep[] }) {
   );
 }
 
-export function RunProgress({ run, events, audit, report = null }: Omit<Props, "messages" | "report"> & { report?: Report | null }) {
+export function RunProgress({ run, events, audit, report = null, taskBrief = null, scenario }: Omit<Props, "messages" | "report"> & { report?: Report | null; taskBrief?: TaskBrief | null; scenario?: string }) {
   const [now, setNow] = useState(0);
   const active = [
     "queued",
@@ -168,6 +221,16 @@ export function RunProgress({ run, events, audit, report = null }: Omit<Props, "
   const latestKnownTime = Date.parse(
     events.at(-1)?.timestamp ?? run.started_at ?? run.created_at ?? "",
   );
+  const activities = useMemo(() => presentActivities(events).slice(-12), [events]);
+  const latestActivityId = events.at(-1)?.event_id;
+  const olderActivityCount = Math.max(0, events.length - activities.length);
+  const activityStateLabel = run.status === "running"
+    ? "实时更新"
+    : run.status === "queued"
+      ? "准备中"
+      : run.status.startsWith("waiting_")
+        ? "等待补充"
+        : run.status === "paused" ? "已暂停" : "已结算";
 
   return (
     <section className="run-progress" data-testid="run-progress">
@@ -188,6 +251,46 @@ export function RunProgress({ run, events, audit, report = null }: Omit<Props, "
         </time>
       </header>
       <p>{publicProgressSummary(events)}</p>
+      <TaskUnderstanding brief={taskBrief} scenario={scenario} />
+      <section className="activity-feed" data-testid="activity-feed" aria-label="实时活动流">
+        <header className="activity-feed-header">
+          <div><h3>实时活动</h3><small>{activities.length ? `最近 ${activities.length} 条公开记录` : "等待公开记录"}</small></div>
+          {activities.length > 0 && <span className="activity-feed-state">{activityStateLabel}</span>}
+        </header>
+        {olderActivityCount > 0 && <p className="activity-feed-note">已折叠更早的 {olderActivityCount} 条活动，完整记录保存在执行时间线中。</p>}
+        {activities.length === 0 ? (
+          <p className="muted">正在等待第一条公开活动。</p>
+        ) : (
+          <ol>
+            {activities.map((activity) => {
+              const isLatest = activity.event.event_id === latestActivityId;
+              const hasDetails = Object.keys(activity.publicDetails).length > 0;
+              return (
+              <li className={`activity-item activity-${activity.status}${isLatest ? " activity-latest" : ""}`} key={activity.event.event_id} aria-current={isLatest ? "step" : undefined}>
+                <div className="activity-marker" aria-hidden="true" />
+                <div className="activity-copy">
+                  <div className="activity-head">
+                    <strong>{activity.title}</strong>
+                    {isLatest && <span className="activity-latest-label">当前</span>}
+                    <time>{new Date(activity.event.timestamp).toLocaleTimeString()}</time>
+                  </div>
+                  <small>{activity.stage}{activity.tool ? ` · ${activity.tool}` : ""}</small>
+                  <p>{activity.detail}</p>
+                  {activity.evidenceCount > 0 && <span className="activity-evidence">证据 {activity.evidenceCount} 条</span>}
+                  {activity.event.type === "replanned" && <span className="activity-replan">已根据失败观察调整路径</span>}
+                  {hasDetails && (activity.event.type.startsWith("tool_") || activity.event.type === "replanned") && (
+                    <details className="activity-details">
+                      <summary>查看公开详情</summary>
+                      <pre>{JSON.stringify(activity.publicDetails, null, 2)}</pre>
+                    </details>
+                  )}
+                </div>
+              </li>
+              );
+            })}
+          </ol>
+        )}
+      </section>
       <details className="run-details">
         <summary>查看执行阶段与资源</summary>
         <ol>

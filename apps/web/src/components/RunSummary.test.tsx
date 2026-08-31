@@ -131,11 +131,31 @@ describe("Agent 五阶段进度", () => {
   });
 
   it("展示 Provider、模型、Agent、预算和厂商未提供的 Token", () => {
-    render(<RunProgress run={makeRun("running")} events={events} audit={audit} />);
+    render(<RunProgress run={makeRun("running")} events={events} audit={audit} scenario="incident_response" taskBrief={{
+      id: "brief-1", run_id: "run-running", version: 1, original_request: "分析日志并确认是否存在外连行为",
+      goal: "从日志中确认事件并提取 IOC", authorized_scope: ["当前任务 Artifact"],
+      constraints: ["不得访问公网"], success_criteria: ["绑定证据"], expected_output: "结构化发现",
+      known_information: ["network.log"], assumptions: [], risks: [], needs_clarification: false,
+      clarification_questions: [], source: "agent", created_at: started,
+    }} />);
     expect(screen.getAllByText("执行动作")).toHaveLength(2);
     expect(screen.getByText(/DeepSeek \/ deepseek-v4-flash/)).toBeInTheDocument();
     expect(screen.getByText(/默认安全 Agent · v2/)).toBeInTheDocument();
+    expect(screen.getByTestId("task-understanding")).toHaveTextContent("应急响应");
+    expect(screen.getByTestId("task-understanding")).toHaveTextContent("不得访问公网");
+    expect(screen.getByTestId("task-brief-status")).toHaveTextContent("范围已确认");
+    expect(screen.getByTestId("task-understanding")).toHaveTextContent("分析日志并确认是否存在外连行为");
     expect(tokenUsageLabel(audit)).toContain("厂商未提供");
+  });
+
+  it("在有公开详情时标出最新活动并提供安全字段", () => {
+    const activityEvents = events.map((item, index) => index === events.length - 1
+      ? { ...item, payload: { tool: "builtin.http", success: true, duration_ms: 24 } }
+      : item);
+    render(<RunProgress run={makeRun("running")} events={activityEvents} audit={audit} />);
+    expect(screen.getByText("当前")).toBeInTheDocument();
+    expect(screen.getByText("查看公开详情")).toBeInTheDocument();
+    expect(screen.getByTestId("activity-feed")).toHaveTextContent("builtin.http");
   });
 });
 

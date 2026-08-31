@@ -207,7 +207,7 @@ export function ConversationView({
           <span>{taskFailure.message}</span>
         </div>
       )}
-      {run && <RunProgress run={run} events={events} audit={audit} report={report} />}
+      {run && <RunProgress run={run} events={events} audit={audit} report={report} taskBrief={control?.task_briefs.at(-1) ?? null} scenario={detail.scenario} />}
       {run && control && (
         <details
           className="task-controls"

@@ -21,6 +21,71 @@ export interface PresentedPhase {
   state: PhaseState;
 }
 
+export interface ActivityItem {
+  event: Event;
+  stage: string;
+  title: string;
+  status: "active" | "success" | "failed" | "waiting" | "info";
+  detail: string;
+  tool?: string;
+  evidenceCount: number;
+  publicDetails: Record<string, unknown>;
+}
+
+const EVENT_PRESENTATION: Record<string, { stage: string; title: string; status: ActivityItem["status"] }> = {
+  run_started: { stage: "启动任务", title: "任务已开始", status: "success" },
+  task_brief_created: { stage: "理解任务", title: "已识别任务范围", status: "success" },
+  plan_created: { stage: "制定计划", title: "已制定执行计划", status: "success" },
+  plan_updated: { stage: "制定计划", title: "计划已更新", status: "success" },
+  policy_checked: { stage: "策略检查", title: "已完成策略检查", status: "info" },
+  tool_started: { stage: "工具调用", title: "正在调用工具", status: "active" },
+  tool_progress: { stage: "工具调用", title: "工具执行中", status: "active" },
+  tool_finished: { stage: "观察结果", title: "工具返回结果", status: "success" },
+  replanned: { stage: "重新规划", title: "已重新规划后续动作", status: "info" },
+  clarification_requested: { stage: "等待补充", title: "需要任务澄清", status: "waiting" },
+  run_waiting_input: { stage: "等待补充", title: "等待用户补充", status: "waiting" },
+  run_completed: { stage: "生成汇报", title: "任务已完成", status: "success" },
+  run_failed: { stage: "生成汇报", title: "任务未完成", status: "failed" },
+  run_stopped: { stage: "生成汇报", title: "任务已停止", status: "failed" },
+};
+
+export function presentActivities(events: Event[]): ActivityItem[] {
+  return events.map((event) => {
+    const config = EVENT_PRESENTATION[event.type] ?? {
+      stage: "执行过程", title: "活动更新", status: "info" as const,
+    };
+    const payload = event.payload ?? {};
+    const evidence = payload.evidence_ids;
+    const artifact = payload.artifact_ids;
+    const evidenceCount = typeof payload.evidence_count === "number"
+      ? payload.evidence_count
+      : Array.isArray(evidence) ? evidence.length : 0;
+    const detail = event.summary.trim() || "已记录公开活动。";
+    const publicDetails: Record<string, unknown> = {};
+    if (typeof payload.tool === "string") publicDetails.tool = payload.tool;
+    if (typeof payload.success === "boolean") publicDetails.success = payload.success;
+    if (typeof payload.duration_ms === "number") publicDetails.duration_ms = payload.duration_ms;
+    if (typeof payload.percent === "number") publicDetails.percent = payload.percent;
+    if (typeof payload.reason === "string") publicDetails.reason = payload.reason;
+    if (typeof payload.evidence_count === "number") publicDetails.evidence_count = payload.evidence_count;
+    if (Array.isArray(evidence)) publicDetails.evidence_ids = evidence;
+    if (Array.isArray(artifact)) publicDetails.artifact_ids = artifact;
+    if (payload.error && typeof payload.error === "object") {
+      const error = payload.error as Record<string, unknown>;
+      if (typeof error.category === "string") publicDetails.error_category = error.category;
+      if (typeof error.message === "string") publicDetails.error_message = error.message;
+    }
+    return {
+      event,
+      ...config,
+      detail,
+      tool: typeof payload.tool === "string" ? payload.tool : undefined,
+      evidenceCount: evidenceCount || (Array.isArray(artifact) ? artifact.length : 0),
+      publicDetails,
+    };
+  });
+}
+
 const ACTION_NODES = new Set([
   "select_action",
   "policy_check",

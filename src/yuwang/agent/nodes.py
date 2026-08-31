@@ -653,6 +653,7 @@ class WorkflowNodes:
                 "duration_ms": result.duration_ms,
                 "error": result.error.model_dump() if result.error else None,
                 "artifact_ids": [str(value) for value in artifact_ids],
+                "evidence_count": len(evidence_ids),
             },
         )
         return engine._result("execute_tool", state)
