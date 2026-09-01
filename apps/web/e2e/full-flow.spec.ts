@@ -39,12 +39,15 @@ async function configure(page: Page) {
   await inputs.nth(0).fill("http://127.0.0.1:8899/v1");
   await inputs.nth(1).fill("protocol-test-model");
   await inputs.nth(2).fill("e2e-protocol-key");
-  await providerForm.getByRole("button", { name: "创建 Provider" }).click();
-  // 按本次创建的模型精确定位，避免 CI 中已有/延迟刷新的 Provider 影响 `.first()`。
-  await expect(page.locator(".settings-feedback .settings-notice")).toContainText(
-    "Provider 已创建",
-    { timeout: 15_000 },
+  const createResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/api/v1/admin/settings/providers"),
   );
+  await providerForm.getByRole("button", { name: "创建 Provider" }).click();
+  expect((await createResponse).ok(), "Provider 创建接口应成功").toBe(true);
+  // 成功提示会在设置数据刷新期间短暂清空，慢速 CI 可能错过这个瞬时节点；
+  // 按本次创建的模型核对持久化列表，才能稳定验证真实创建结果。
   const providerRow = page
     .locator(".provider-row")
     .filter({ hasText: "protocol-test-model" })
