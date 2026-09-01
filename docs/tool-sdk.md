@@ -79,7 +79,7 @@ CTF 文件工具只接收 `artifact_id`，通过 `ArtifactAccess` 在当前 Run 
 
 长任务在循环边界主动检查取消；收到 `asyncio.CancelledError` 时直接重新抛出。工具可调用 `await self.report_progress(50, "正在解析")` 上报 0 至 100 的进度。Agent 会把它持久化为 `tool_progress` 事件；未提供观察者的直接测试调用会安全忽略进度。
 
-现有只读 Artifact 分析工具包括 IOC 提取与规范化、内容定位、结构化源码危险模式分析、二进制静态元数据分析、多层编码解码、文件签名/熵/字符串分析、哈希识别与完整性校验、应急响应时间线归纳。它们均只接收 `artifact_id`，经 `ArtifactAccess` 校验当前 Run 和 Thread；不接收文件路径、不加载或执行二进制，也不会输出认证头、Token、密码或其他敏感原文。
+现有只读 Artifact 分析工具包括 IOC 提取与规范化、内容定位、结构化源码危险模式分析、二进制静态元数据分析、多层编码解码、文件签名/熵/字符串分析、哈希识别与完整性校验、JWT/JWS 静态研判、PCAP/PCAPNG 离线流量摘要和应急响应时间线归纳。它们均只接收 `artifact_id`，经 `ArtifactAccess` 校验当前 Run 和 Thread；不接收文件路径、不加载或执行二进制，也不会输出认证头、Token、密码或其他敏感原文。JWT 工具不验签、不猜密钥、不修改令牌；流量工具不重放数据包、不连接网络，并对读取字节数、数据包数、流和证据条数设置硬上限。
 
 `ToolExecutor` 以 `timeout_seconds` 或 Run 的步骤超时包裹每次调用。超时会返回结构化 `timeout` 错误，普通异常会转换为 `execution_error`，均不能使 API 或 Agent 主循环崩溃。
 

@@ -6,6 +6,7 @@ import base64
 import hashlib
 import io
 import json
+import struct
 import zipfile
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -131,6 +132,60 @@ async def test_hash_and_timeline_tools_return_structured_auditable_results(tmp_p
     assert timeline.output["event_count"] == 1
     assert timeline.output["events"][0]["severity"] == "error"
     assert "secret" not in timeline.output["events"][0]["excerpt"]
+
+
+def _pcap_with_dns_query() -> bytes:
+    query = (
+        b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00"
+        b"\x07example\x03com\x00\x00\x01\x00\x01"
+    )
+    udp = struct.pack(">HHHH", 53000, 53, 8 + len(query), 0) + query
+    ip = bytearray(20)
+    ip[0] = 0x45
+    ip[2:4] = struct.pack(">H", 20 + len(udp))
+    ip[8] = 64
+    ip[9] = 17
+    ip[12:16] = bytes([192, 0, 2, 10])
+    ip[16:20] = bytes([192, 0, 2, 53])
+    ethernet = b"\x00" * 12 + struct.pack(">H", 0x0800)
+    packet = ethernet + bytes(ip) + udp
+    return struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65_535, 1) + struct.pack(
+        "<IIII", 1, 2, len(packet), len(packet)
+    ) + packet
+
+
+@pytest.mark.asyncio
+async def test_jwt_and_pcap_tools_produce_bounded_structured_evidence(tmp_path: Path) -> None:
+    header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=")
+    claims = base64.urlsafe_b64encode(b'{"sub":"analyst","token":"do-not-leak","role":"admin"}').rstrip(b"=")
+    jwt_content = b"Authorization: Bearer " + header + b"." + claims + b".\n"
+    repository, _, _, artifact, run, executor = setup_tool_context(tmp_path, jwt_content, "evidence.txt")
+    jwt = await invoke(executor, run, "jwt_analyze", {"artifact_id": str(artifact.id)})
+    assert jwt.success
+    assert jwt.output["candidate_count"] == 1
+    candidate = jwt.output["candidates"][0]
+    assert "alg=none" in candidate["warnings"][0]
+    assert {item["key"]: item["value"] for item in candidate["claims"]}["token"] == "[已脱敏]"
+
+    pcap = _pcap_with_dns_query()
+    pcap_artifact = repository.save_artifact(
+        Artifact(
+            thread_id=artifact.thread_id,
+            run_id=run.id,
+            filename="capture.pcap",
+            kind="upload",
+            sha256=hashlib.sha256(pcap).hexdigest(),
+            size=len(pcap),
+            mime_type="application/vnd.tcpdump.pcap",
+            storage_ref=f"{artifact.thread_id}/capture.blob",
+        )
+    )
+    (tmp_path / "artifacts" / pcap_artifact.storage_ref).write_bytes(pcap)
+    capture = await invoke(executor, run, "network_capture_analyze", {"artifact_id": str(pcap_artifact.id)})
+    assert capture.success
+    assert capture.output["format"] == "pcap"
+    assert capture.output["packet_count"] == 1
+    assert capture.output["dns_queries"][0]["name"] == "example.com"
 
 
 @contextmanager

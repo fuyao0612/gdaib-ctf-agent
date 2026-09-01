@@ -22,6 +22,8 @@ from .encoding import EncodingDecodeTool
 from .files import FileInspectTool, StringsExtractTool
 from .flag import FlagCandidateVerifyTool
 from .hashes import HashAnalyzeTool
+from .jwt import JwtAnalyzeTool
+from .pcap import PcapAnalyzeTool
 from .timeline import TimelineAnalyzeTool
 
 
@@ -49,6 +51,8 @@ def register_ctf_tools(
         InterfaceDocAnalyzeTool(artifacts),
         WebEvidenceAnalyzeTool(artifacts),
         HashAnalyzeTool(artifacts),
+        JwtAnalyzeTool(artifacts),
+        PcapAnalyzeTool(artifacts),
         TimelineAnalyzeTool(artifacts),
     ):
         registry.register(tool)
