@@ -67,18 +67,35 @@ def test_profile_versions_copy_rollback_default_and_immutable_snapshot(tmp_path)
 def test_default_profile_upgrades_only_platform_legacy_token_budget(tmp_path):
     repository = SQLiteRepository(tmp_path / "legacy-default.db")
     service = AgentProfileService(repository)
-    legacy = service.ensure_default(Budget(max_steps=20, max_model_calls=8, max_tokens=8_000))
+    legacy = service.create(
+        AgentProfileInput(
+            name="默认安全 Agent",
+            description="适合通用安全分析与 CTF 的默认自主配置",
+            budget=Budget(
+                max_steps=20,
+                max_model_calls=8,
+                max_tool_calls=8,
+                max_tokens=8_000,
+                max_model_cost=20,
+                max_duration_seconds=600,
+                step_timeout_seconds=180,
+            ),
+            planning_strategy="direct",
+            workflow={"preset": "direct"},
+            is_default=True,
+        )
+    )
 
     upgraded = service.ensure_default()
 
     assert upgraded.profile_id == legacy.profile_id
     assert upgraded.version == legacy.version + 1
     assert upgraded.budget.max_tokens == 1_000_000
-    assert upgraded.budget.max_model_calls == 20
-    assert upgraded.budget.max_steps == 60
-    assert upgraded.budget.max_tool_calls == 20
-    assert upgraded.budget.max_duration_seconds == 600
-    assert upgraded.budget.step_timeout_seconds == 180
+    assert upgraded.budget.max_model_calls == 50
+    assert upgraded.budget.max_steps == 100
+    assert upgraded.budget.max_tool_calls == 50
+    assert upgraded.budget.max_duration_seconds == 1800
+    assert upgraded.budget.step_timeout_seconds == 300
     assert upgraded.planning_strategy == "direct"
     assert upgraded.workflow.preset == "direct"
     assert upgraded.memory_policy.persist_important_facts is False

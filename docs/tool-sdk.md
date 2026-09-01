@@ -87,6 +87,11 @@ CTF 文件工具只接收 `artifact_id`，通过 `ArtifactAccess` 在当前 Run 
 
 当前只读 Artifact 分析还包括接口文档分析和 HTTP 响应证据分析：前者解析 OpenAPI/Swagger、Postman、JSON 或 curl 文本，后者只读取已有 HTTP evidence，不跟随链接、不执行脚本、不提交表单。
 
+本机 HTTP 取证工具 `builtin.localhost_http_probe` 仅允许任务授权的
+`localhost/127.0.0.1`，支持无请求体的 `GET`、`HEAD`、`OPTIONS` 三种只读方法；
+不跟随重定向，响应正文仍受大小限制，方法和 `Allow` 响应头会进入审计结果。
+它不能扩展为公网请求、任意请求方法、表单提交或携带通用认证头。
+
 内置工具在装配层显式 `registry.register(tool)`。第三方包使用如下入口点，并由管理员在设置中心显式启用：
 
 ```toml

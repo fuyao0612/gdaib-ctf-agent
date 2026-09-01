@@ -103,6 +103,15 @@ def local_ctf_server():
     """测试专用的公开线索链路，不在生产路径注册或暴露。"""
 
     class Handler(BaseHTTPRequestHandler):
+        def do_OPTIONS(self) -> None:  # noqa: N802
+            if self.path == "/api/door":
+                self.send_response(204)
+                self.send_header("Allow", "GET, OPTIONS")
+                self.end_headers()
+                return
+            self.send_response(404)
+            self.end_headers()
+
         def do_GET(self) -> None:  # noqa: N802
             path, _, query = self.path.partition("?")
             if path == "/":
@@ -163,6 +172,7 @@ async def invoke_http(
     base_url: str,
     path: str,
     *,
+    method: str = "GET",
     ctf_header: dict[str, str] | None = None,
 ):
     return await executor.execute_call(
@@ -173,6 +183,7 @@ async def invoke_http(
             target_scope=[base_url],
             arguments={
                 "url": f"{base_url}{path}",
+                "method": method,
                 **({"ctf_header": ctf_header} if ctf_header else {}),
             },
         )
@@ -572,6 +583,7 @@ async def test_local_ctf_http_evidence_chain_decodes_candidate_flag(tmp_path: Pa
             "/api/debug?unlock=1",
             ctf_header={"name": "X-CTF-Token", "value": "sunrise-7"},
         )
+        options = await invoke_http(executor, run, base_url, "/api/door", method="OPTIONS")
 
     assert homepage.success and "build-token" in homepage.output["body_excerpt"]
     assert not blocked_scope.success
@@ -581,6 +593,9 @@ async def test_local_ctf_http_evidence_chain_decodes_candidate_flag(tmp_path: Pa
     assert robots.success and robots.output["robots_paths"] == ["/dev-notes.txt"]
     assert notes.success and "X-CTF-Token" in notes.output["body_excerpt"]
     assert debug.success and debug.output["artifact_ids"]
+    assert options.success
+    assert options.output["method"] == "OPTIONS"
+    assert any(header["name"] == "allow" for header in options.output["response_headers"])
 
     evidence_id = debug.output["artifact_ids"][0]
     decoded = await invoke(

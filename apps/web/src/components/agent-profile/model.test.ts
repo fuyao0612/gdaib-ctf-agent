@@ -28,9 +28,9 @@ describe("Agent 配置纯转换规则", () => {
     const result = applyProfilePreset(form, "standard");
     expect(result.budget).toMatchObject({
       max_tokens: 1_000_000,
-      max_tool_calls: 20,
-      max_duration_seconds: 600,
-      step_timeout_seconds: 180,
+      max_tool_calls: 50,
+      max_duration_seconds: 1800,
+      step_timeout_seconds: 300,
     });
     expect(result.completion_mode).toBe("evidence");
     expect(result.default_provider_id).toBe("provider-1");

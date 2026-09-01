@@ -8,7 +8,7 @@ import mimetypes
 import os
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from urllib.parse import ParseResult, urljoin, urlparse
 from uuid import UUID
 
@@ -96,11 +96,12 @@ class ExplicitCtfHeader(BaseModel):
 
 
 class ProbeInput(BaseModel):
-    """本机 CTF 取证输入；请求头必须由页面或公开说明显式给出。"""
+    """本机 CTF 取证输入；仅允许无副作用的 HTTP 方法。"""
 
     model_config = ConfigDict(extra="forbid")
 
     url: str = Field(min_length=1, max_length=2_048)
+    method: Literal["GET", "HEAD", "OPTIONS"] = "GET"
     ctf_header: ExplicitCtfHeader | None = None
 
 
@@ -115,10 +116,11 @@ class ProbeOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status_code: int
+    method: Literal["GET", "HEAD", "OPTIONS"] = "GET"
     content_type: str = Field(max_length=200)
     body_excerpt: str = Field(default="", max_length=MAX_PROBE_EXCERPT_CHARS)
     body_truncated: bool = False
-    response_headers: list[ProbeHeader] = Field(default_factory=list, max_length=3)
+    response_headers: list[ProbeHeader] = Field(default_factory=list, max_length=4)
     explicit_links: list[str] = Field(default_factory=list, max_length=20)
     robots_paths: list[str] = Field(default_factory=list, max_length=20)
     artifact_ids: list[UUID] = Field(default_factory=list, max_length=1)
@@ -161,10 +163,11 @@ class LocalhostHTTPProbeTool(ToolPlugin[ProbeInput, ProbeOutput]):
     def spec(self) -> ToolSpec:
         return ToolSpec(
             name="localhost_http_probe",
+            # 保持 1.1.0，兼容已持久化的 Run 工具快照；新增 method 为向后兼容字段。
             version="1.1.0",
             description=(
-                "仅对任务明确授权的 localhost/127.0.0.1 执行只读 GET，"
-                "返回受限正文摘要和页面已声明的 CTF 线索"
+                "仅对任务明确授权的 localhost/127.0.0.1 执行只读 GET、HEAD 或 OPTIONS，"
+                "返回受限正文摘要、响应头和页面已声明的 CTF 线索；不发送请求体、不跟随重定向"
             ),
             capabilities=["http", "metadata", "ctf_evidence"],
             scenarios=["general", "ctf", "web"],
@@ -201,17 +204,18 @@ class LocalhostHTTPProbeTool(ToolPlugin[ProbeInput, ProbeOutput]):
         async with httpx.AsyncClient(
             follow_redirects=False, timeout=timeout, trust_env=False
         ) as client:
-            async with client.stream("GET", request_url, headers=headers) as response:
+            async with client.stream(value.method, request_url, headers=headers) as response:
                 content_type = response.headers.get("content-type", "")[:200]
                 body, body_truncated = await self._read_limited_body(response)
                 response_headers = [
                     ProbeHeader(name=name, value=response.headers[name][:512])
-                    for name in ("content-type", "content-length", "location")
+                    for name in ("content-type", "content-length", "location", "allow")
                     if name in response.headers
                 ]
         if not self._is_textual(content_type):
             return ProbeOutput(
                 status_code=response.status_code,
+                method=value.method,
                 content_type=content_type,
                 body_excerpt="响应不是文本或 JSON，未读取为可执行内容。",
                 body_truncated=body_truncated,
@@ -224,6 +228,7 @@ class LocalhostHTTPProbeTool(ToolPlugin[ProbeInput, ProbeOutput]):
         )
         return ProbeOutput(
             status_code=response.status_code,
+            method=value.method,
             content_type=content_type,
             body_excerpt=excerpt,
             body_truncated=body_truncated or len(text) > MAX_PROBE_EXCERPT_CHARS,

@@ -54,13 +54,13 @@ export function createEmptyProfile(): AgentProfileInput {
     user_prompt_template: "请处理以下任务：{task}",
     planning_strategy: "dynamic",
     budget: {
-      max_steps: 60,
-      max_model_calls: 20,
-      max_tool_calls: 20,
+      max_steps: 100,
+      max_model_calls: 50,
+      max_tool_calls: 50,
       max_tokens: 1000000,
-      max_model_cost: 20,
-      max_duration_seconds: 600,
-      step_timeout_seconds: 180,
+      max_model_cost: 100,
+      max_duration_seconds: 1800,
+      step_timeout_seconds: 300,
     },
     context_policy: {
       recent_message_limit: 20,
@@ -118,7 +118,7 @@ export function applyProfilePreset(
       planning_strategy: "hybrid",
       completion_mode: "evidence",
       workflow: { preset: "verified" },
-      budget: { ...form.budget, max_steps: 80, max_model_calls: 30, max_tool_calls: 30, max_tokens: 200_000, max_model_cost: 40, max_duration_seconds: 900, step_timeout_seconds: 240 },
+      budget: { ...form.budget, max_steps: 100, max_model_calls: 50, max_tool_calls: 50, max_tokens: 1_000_000, max_model_cost: 100, max_duration_seconds: 1800, step_timeout_seconds: 300 },
     };
   }
   return {
@@ -127,7 +127,7 @@ export function applyProfilePreset(
     planning_strategy: "dynamic",
     completion_mode: "evidence",
     workflow: { preset: "verified" },
-    budget: { ...form.budget, max_steps: 60, max_model_calls: 20, max_tool_calls: 20, max_tokens: 1_000_000, max_model_cost: 20, max_duration_seconds: 600, step_timeout_seconds: 180 },
+    budget: { ...form.budget, max_steps: 100, max_model_calls: 50, max_tool_calls: 50, max_tokens: 1_000_000, max_model_cost: 100, max_duration_seconds: 1800, step_timeout_seconds: 300 },
   };
 }
 

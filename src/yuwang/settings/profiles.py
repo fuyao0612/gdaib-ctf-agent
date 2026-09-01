@@ -345,6 +345,7 @@ class AgentProfileService:
             or profile.budget.max_model_calls < target.max_model_calls
             or profile.budget.max_tokens < target.max_tokens
             or profile.budget.max_tool_calls < target.max_tool_calls
+            or profile.budget.max_model_cost < target.max_model_cost
             or profile.budget.max_duration_seconds < target.max_duration_seconds
             or profile.budget.step_timeout_seconds < target.step_timeout_seconds
             or profile.memory_policy.persist_important_facts
@@ -363,9 +364,13 @@ class AgentProfileService:
 
         return budget.model_copy(
             update={
-                "max_tool_calls": max(budget.max_tool_calls, 20),
-                "max_duration_seconds": max(budget.max_duration_seconds, 600),
-                "step_timeout_seconds": max(budget.step_timeout_seconds, 180),
+                "max_steps": max(budget.max_steps, 100),
+                "max_model_calls": max(budget.max_model_calls, 50),
+                "max_tool_calls": max(budget.max_tool_calls, 50),
+                "max_tokens": max(budget.max_tokens, 1_000_000),
+                "max_model_cost": max(budget.max_model_cost, 100.0),
+                "max_duration_seconds": max(budget.max_duration_seconds, 1_800),
+                "step_timeout_seconds": max(budget.step_timeout_seconds, 300),
             }
         )
 

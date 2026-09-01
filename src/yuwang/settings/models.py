@@ -101,8 +101,8 @@ class ProviderConfigInput(BaseModel):
     enabled: bool = True
     is_default: bool = False
     fallback_order: int | None = Field(default=None, ge=0, le=100)
-    timeout_seconds: float = Field(default=60, ge=1, le=600)
-    max_retries: int = Field(default=2, ge=0, le=8)
+    timeout_seconds: float = Field(default=120, ge=1, le=600)
+    max_retries: int = Field(default=4, ge=0, le=8)
     # 厂商或部署明确给出的模型上下文窗口。空值表示使用平台上限，不能据此
     # 把用户设置抬高到未知模型能力之外。
     context_window_tokens: int | None = Field(default=None, ge=32_768, le=2_000_000)
@@ -214,6 +214,6 @@ class ProviderConfigView(BaseModel):
 class AgentDefaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
     budget: Budget = Field(default_factory=Budget)
-    provider_retry_budget: int = Field(default=3, ge=0, le=10)
+    provider_retry_budget: int = Field(default=6, ge=0, le=10)
     context_token_budget: int = Field(default=272_000, ge=32_768, le=2_000_000)
-    observation_char_budget: int = Field(default=40_000, ge=1000, le=1_000_000)
+    observation_char_budget: int = Field(default=80_000, ge=1000, le=1_000_000)
