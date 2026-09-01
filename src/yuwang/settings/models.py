@@ -215,5 +215,5 @@ class AgentDefaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
     budget: Budget = Field(default_factory=Budget)
     provider_retry_budget: int = Field(default=3, ge=0, le=10)
-    context_token_budget: int = Field(default=524_288, ge=32_768, le=2_000_000)
+    context_token_budget: int = Field(default=272_000, ge=32_768, le=2_000_000)
     observation_char_budget: int = Field(default=40_000, ge=1000, le=1_000_000)

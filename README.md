@@ -177,6 +177,8 @@ Web 始终调用统一消息入口。没有活动任务时，每条输入都会�
 
 ## 可扩展工具平台
 
+当前低风险 Artifact 工具还支持接口文档静态分析和 HTTP 响应证据分析；源码与二进制规则仅作静态初筛，不宣称完整 SAST 或确认真实漏洞。
+
 - 所有内置工具、安装包发现的 Python 插件和 MCP 工具都使用同一份 `ToolSpec`、`ToolRegistry`、
   `ToolExecutor` 与 `ToolCallRequest/ToolCallResult` 契约。模型只能看到当前 Agent Profile 和 Thread
   已启用的工具，Run 开始后会冻结工具、Provider 和 Agent Profile 快照。

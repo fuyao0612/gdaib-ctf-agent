@@ -166,6 +166,39 @@ def profile_for(**overrides):
 
 
 @pytest.mark.asyncio
+async def test_second_identical_action_is_blocked_before_execution(tmp_path):
+    repository, engine = build_engine(tmp_path)
+    thread = repository.save_thread(Thread(title="duplicate action"))
+    run = repository.save_run(Run(thread_id=thread.id))
+    action = AgentAction(
+        kind="call_tool",
+        summary="读取同一入口",
+        action_reason="验证入口响应",
+        tool_name="builtin.test_echo",
+        tool_input={"text": "same"},
+    )
+    state = AgentStateModel(
+        run_id=run.id,
+        task=TaskSpec(body="避免重复调用"),
+        action_fingerprints=[engine._fingerprint(action)],
+    )
+
+    async def choose_duplicate(_state):
+        return action
+
+    engine.select_action = choose_duplicate
+    updated = AgentStateModel.model_validate(
+        await engine.nodes.select_action(state.model_dump(mode="python"))
+    )
+
+    assert updated.action and updated.action.kind == "replan"
+    assert updated.no_progress_count == 1
+    assert repository.list_tool_calls(run.id) == []
+    warning = next(event for event in repository.list_events(run.id) if event.type == EventType.WARNING)
+    assert warning.payload == {"repeat_count": 2, "blocked_before_execution": True}
+
+
+@pytest.mark.asyncio
 async def test_native_tool_selection_uses_the_same_call_request_execution_path(tmp_path):
     repository = SQLiteRepository(tmp_path / "native.db")
     registry = ToolRegistry()

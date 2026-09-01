@@ -69,6 +69,11 @@ class ToolSpec(BaseModel):
     error_codes: list[str] = Field(default_factory=list, max_length=50)
     idempotent: bool
     artifact_types: list[str] = Field(default_factory=list, max_length=30)
+    consumes: list[str] = Field(default_factory=list, max_length=30)
+    produces: list[str] = Field(default_factory=list, max_length=30)
+    prerequisites: list[str] = Field(default_factory=list, max_length=30)
+    enables: list[str] = Field(default_factory=list, max_length=50)
+    fallback_capabilities: list[str] = Field(default_factory=list, max_length=30)
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
     config_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object"})

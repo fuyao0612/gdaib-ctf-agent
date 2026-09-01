@@ -273,6 +273,9 @@ export default function ToolExtensionsCenter({
                       <dl>
                         <div><dt>能力</dt><dd>{tool.capabilities.join("、") || "未声明"}</dd></div>
                         <div><dt>场景</dt><dd>{tool.scenarios.join("、") || "未声明"}</dd></div>
+                        <div><dt>读取 Artifact</dt><dd>{tool.consumes?.join("、") || "未声明"}</dd></div>
+                        <div><dt>产生 Artifact</dt><dd>{tool.produces?.join("、") || "未声明"}</dd></div>
+                        <div><dt>失败替代能力</dt><dd>{tool.fallback_capabilities?.join("、") || "无"}</dd></div>
                         <div><dt>权限</dt><dd>{tool.permissions.join("、") || "无额外权限"}</dd></div>
                         <div><dt>网络</dt><dd>{tool.requires_network ? "需要" : "不需要"}</dd></div>
                         <div><dt>超时</dt><dd>{tool.timeout_seconds} 秒</dd></div>

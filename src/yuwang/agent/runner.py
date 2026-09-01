@@ -388,6 +388,15 @@ class AgentRunCoordinator:
                     ][:4]
                 }
             )
+        if state.tokens >= task.budget.max_tokens:
+            return fallback.model_copy(
+                update={
+                    "next_steps": [
+                        *fallback.next_steps,
+                        "Token 预算已耗尽，未额外请求失败复盘。",
+                    ][:4]
+                }
+            )
         recent_events = self.engine.repository.list_events(run.id)[-6:]
         event_summary = "；".join(event.summary[:180] for event in recent_events) or "尚无已持久化事件"
         purpose = (

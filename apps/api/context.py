@@ -250,13 +250,24 @@ class ApiContext:
                 raise ValueError("Thread 只能选择 Agent Profile 已允许的工具")
         return selected
 
-    def selected_tool_specs(self, thread: Thread, profile: AgentProfileVersion) -> list[ToolSpec]:
+    def selected_tool_specs(
+        self,
+        thread: Thread,
+        profile: AgentProfileVersion,
+        *,
+        scenario: str | None = None,
+        input_artifact_types: list[str] | None = None,
+        capabilities: list[str] | None = None,
+    ) -> list[ToolSpec]:
         return select_tool_specs(
             self.registry.specs(),
             profile_mode=profile.tool_selection_mode,
             profile_tool_ids=profile.tool_ids,
             thread_mode=thread.tool_selection_mode,
             thread_tool_ids=thread.tool_ids,
+            scenario=scenario,
+            input_artifact_types=input_artifact_types or [],
+            capabilities=capabilities or [],
         )
 
     def require_thread(self, thread_id: UUID) -> Thread:
@@ -352,6 +363,11 @@ class ApiContext:
         # 旧兼容入口可传入更严格的临时规则；日常统一消息使用已版本化的
         # Profile 默认规则。两者都在 HTTP 模型层拒绝了万能正则。
         verification_rules = create.verification_rules or profile.validation_policy.evidence_rules
+        input_artifact_types = [
+            artifact.kind
+            for artifact_id in origin_message.artifact_ids
+            if (artifact := self.repository.get_artifact(artifact_id)) is not None
+        ]
         tool_snapshots = [
             ToolSnapshot(
                 tool_id=spec.id,
@@ -372,13 +388,23 @@ class ApiContext:
                 error_codes=spec.error_codes,
                 idempotent=spec.idempotent,
                 artifact_types=spec.artifact_types,
+                consumes=spec.consumes,
+                produces=spec.produces,
+                prerequisites=spec.prerequisites,
+                enables=spec.enables,
+                fallback_capabilities=spec.fallback_capabilities,
                 input_schema=spec.input_schema,
                 output_schema=spec.output_schema,
                 config_schema=spec.config_schema,
                 supports_cancellation=spec.supports_cancellation,
                 supports_progress=spec.supports_progress,
             )
-            for spec in self.selected_tool_specs(thread, profile)
+            for spec in self.selected_tool_specs(
+                thread,
+                profile,
+                scenario=thread.scenario,
+                input_artifact_types=input_artifact_types,
+            )
         ]
         return TaskSpec(
             body=origin_message.content,

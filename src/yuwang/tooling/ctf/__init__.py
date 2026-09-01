@@ -10,8 +10,10 @@ from yuwang.tooling.runtime import SandboxRuntime
 from .analysis import (
     ArtifactSearchTool,
     BinaryStaticAnalyzeTool,
+    InterfaceDocAnalyzeTool,
     IOCExtractTool,
     SourcePatternAnalyzeTool,
+    WebEvidenceAnalyzeTool,
 )
 from .archive import ArchiveExtractTool
 from .artifacts import ArtifactAccess, ArtifactRepository
@@ -42,6 +44,8 @@ def register_ctf_tools(
         ArtifactSearchTool(artifacts),
         SourcePatternAnalyzeTool(artifacts),
         BinaryStaticAnalyzeTool(artifacts),
+        InterfaceDocAnalyzeTool(artifacts),
+        WebEvidenceAnalyzeTool(artifacts),
     ):
         registry.register(tool)
 

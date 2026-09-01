@@ -304,17 +304,20 @@ class WorkflowNodes:
         fingerprint = engine._fingerprint(state.action)
         repeats = state.action_fingerprints.count(fingerprint)
         state.action_fingerprints.append(fingerprint)
-        if repeats >= 2:
+        # 第二次出现完全相同的动作就停止执行。第三次才拦截会让同一组
+        # 工具参数白白消耗一次工具调用和一轮模型 Token，尤其容易拖垮长任务。
+        if repeats >= 1:
             state.no_progress_count += 1
             state.action = AgentAction(
                 kind="replan",
-                summary="检测到重复动作，强制重新规划",
-                action_reason="当前动作与已执行动作重复，改为重新规划以避免重复调用。",
+                summary="检测到重复动作，已阻止再次执行并重新规划",
+                action_reason="当前动作与已执行动作完全相同，继续执行不会提供新证据，先重新规划以避免重复调用。",
             )
             engine.events.emit(
                 state.run_id,
                 EventType.WARNING,
-                "检测到重复动作，已阻止再次执行",
+                "检测到重复动作，已在第二次执行前阻止",
+                {"repeat_count": repeats + 1, "blocked_before_execution": True},
             )
         if state.no_progress_count >= 3:
             raise AgentDeclaredFailure("连续无进展，已安全终止")

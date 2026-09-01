@@ -35,7 +35,7 @@ export const BUDGET_FIELDS: ReadonlyArray<{
   { key: "max_steps", label: "最大步骤", min: 1, max: 100 },
   { key: "max_model_calls", label: "模型调用", min: 1, max: 50 },
   { key: "max_tool_calls", label: "工具调用", min: 1, max: 50 },
-  { key: "max_tokens", label: "最大 Token", min: 1, max: 200000 },
+  { key: "max_tokens", label: "最大 Token", min: 1, max: 1000000 },
   { key: "max_model_cost", label: "最大模型费用", min: 0, max: 100000, step: 0.01 },
   { key: "max_duration_seconds", label: "总时长（秒）", min: 0.1, max: 3600, step: 0.1 },
   { key: "step_timeout_seconds", label: "单步超时（秒）", min: 0.1, max: 300, step: 0.1 },
@@ -57,7 +57,7 @@ export function createEmptyProfile(): AgentProfileInput {
       max_steps: 60,
       max_model_calls: 20,
       max_tool_calls: 20,
-      max_tokens: 120000,
+      max_tokens: 1000000,
       max_model_cost: 20,
       max_duration_seconds: 600,
       step_timeout_seconds: 180,
@@ -127,7 +127,7 @@ export function applyProfilePreset(
     planning_strategy: "dynamic",
     completion_mode: "evidence",
     workflow: { preset: "verified" },
-    budget: { ...form.budget, max_steps: 60, max_model_calls: 20, max_tool_calls: 20, max_tokens: 120_000, max_model_cost: 20, max_duration_seconds: 600, step_timeout_seconds: 180 },
+    budget: { ...form.budget, max_steps: 60, max_model_calls: 20, max_tool_calls: 20, max_tokens: 1_000_000, max_model_cost: 20, max_duration_seconds: 600, step_timeout_seconds: 180 },
   };
 }
 

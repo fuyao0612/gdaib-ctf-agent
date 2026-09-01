@@ -129,7 +129,7 @@ class Budget(BaseModel):
     max_steps: int = Field(60, ge=1, le=100)
     max_model_calls: int = Field(20, ge=1, le=50)
     max_tool_calls: int = Field(20, ge=1, le=50)
-    max_tokens: int = Field(120_000, ge=1, le=200_000)
+    max_tokens: int = Field(1_000_000, ge=1, le=1_000_000)
     max_model_cost: float = Field(20.0, ge=0, le=100_000)
     max_duration_seconds: float = Field(600, gt=0, le=3600)
     step_timeout_seconds: float = Field(180, gt=0, le=300)
@@ -371,6 +371,11 @@ class ToolSnapshot(BaseModel):
     error_codes: list[str] = Field(default_factory=list)
     idempotent: bool
     artifact_types: list[str] = Field(default_factory=list)
+    consumes: list[str] = Field(default_factory=list, max_length=30)
+    produces: list[str] = Field(default_factory=list, max_length=30)
+    prerequisites: list[str] = Field(default_factory=list, max_length=30)
+    enables: list[str] = Field(default_factory=list, max_length=50)
+    fallback_capabilities: list[str] = Field(default_factory=list, max_length=30)
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
     config_schema: dict[str, Any] = Field(default_factory=dict)

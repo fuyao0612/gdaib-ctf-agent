@@ -73,7 +73,7 @@ def test_default_profile_upgrades_only_platform_legacy_token_budget(tmp_path):
 
     assert upgraded.profile_id == legacy.profile_id
     assert upgraded.version == legacy.version + 1
-    assert upgraded.budget.max_tokens == 120_000
+    assert upgraded.budget.max_tokens == 1_000_000
     assert upgraded.budget.max_model_calls == 20
     assert upgraded.budget.max_steps == 60
     assert upgraded.budget.max_tool_calls == 20

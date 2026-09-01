@@ -35,6 +35,11 @@ export interface ToolSpec {
   error_codes: string[];
   idempotent: boolean;
   artifact_types: string[];
+  consumes?: string[];
+  produces?: string[];
+  prerequisites?: string[];
+  enables?: string[];
+  fallback_capabilities?: string[];
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
   config_schema: Record<string, unknown>;

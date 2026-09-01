@@ -46,3 +46,23 @@ def test_tool_selection_uses_profile_as_upper_bound_and_thread_as_intersection()
         validate_tool_ids([first.id, first.id], {first.id, second.id})
     with pytest.raises(ValueError, match="不可用"):
         validate_tool_ids(["test.missing"], {first.id, second.id})
+
+
+def test_metadata_filters_narrow_candidates_without_changing_authorization() -> None:
+    api = spec("api")
+    api.scenarios = ["vulnerability_analysis"]
+    api.capabilities = ["interface_analysis"]
+    api.consumes = ["api_document"]
+    other = spec("other")
+    other.scenarios = ["ctf"]
+    selected = select_tool_specs(
+        [api, other],
+        profile_mode="all",
+        profile_tool_ids=[],
+        thread_mode="inherit",
+        thread_tool_ids=[],
+        scenario="vulnerability_analysis",
+        capabilities=["interface_analysis"],
+        input_artifact_types=["api_document"],
+    )
+    assert [item.id for item in selected] == [api.id]

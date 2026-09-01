@@ -43,6 +43,11 @@ def ctf_spec(
     output_schema: dict[str, object],
     artifact_types: list[str] | None = None,
     allowed_target_types: list[str] | None = None,
+    consumes: list[str] | None = None,
+    produces: list[str] | None = None,
+    prerequisites: list[str] | None = None,
+    enables: list[str] | None = None,
+    fallback_capabilities: list[str] | None = None,
 ) -> ToolSpec:
     return ToolSpec(
         namespace="ctf",
@@ -63,6 +68,11 @@ def ctf_spec(
         error_codes=error_codes,
         idempotent=True,
         artifact_types=artifact_types or [],
+        consumes=consumes or [],
+        produces=produces or artifact_types or [],
+        prerequisites=prerequisites or [],
+        enables=enables or [],
+        fallback_capabilities=fallback_capabilities or [],
         input_schema=input_schema,
         output_schema=output_schema,
         supports_cancellation=True,

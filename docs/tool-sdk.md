@@ -65,6 +65,8 @@ class CharacterCountTool(ToolPlugin[CountInput, CountOutput]):
 
 ## 风险、网络与沙箱
 
+工具还可声明 `consumes`、`produces`、`prerequisites`、`enables` 与 `fallback_capabilities`，用于按场景、能力和已有 Artifact 生成候选清单；这些元数据不替代 Agent 的最终决策，字段均向后兼容。
+
 - `low`：只读、受限文本或当前 Thread 的 Artifact 处理，可使用受控进程内运行时。
 - `medium`：有明确授权目标的网络或外部二进制工具，必须经过用户确认；外部二进制只允许 `SandboxRuntime`。
 - `high`：策略默认拒绝。不要把高风险能力包装成低风险工具。
@@ -82,6 +84,8 @@ CTF 文件工具只接收 `artifact_id`，通过 `ArtifactAccess` 在当前 Run 
 `ToolExecutor` 以 `timeout_seconds` 或 Run 的步骤超时包裹每次调用。超时会返回结构化 `timeout` 错误，普通异常会转换为 `execution_error`，均不能使 API 或 Agent 主循环崩溃。
 
 ## 注册、MCP 与测试
+
+当前只读 Artifact 分析还包括接口文档分析和 HTTP 响应证据分析：前者解析 OpenAPI/Swagger、Postman、JSON 或 curl 文本，后者只读取已有 HTTP evidence，不跟随链接、不执行脚本、不提交表单。
 
 内置工具在装配层显式 `registry.register(tool)`。第三方包使用如下入口点，并由管理员在设置中心显式启用：
 

@@ -27,6 +27,7 @@ describe("Agent 配置纯转换规则", () => {
     form.tool_ids = ["tool-1"];
     const result = applyProfilePreset(form, "standard");
     expect(result.budget).toMatchObject({
+      max_tokens: 1_000_000,
       max_tool_calls: 20,
       max_duration_seconds: 600,
       step_timeout_seconds: 180,

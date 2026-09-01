@@ -80,6 +80,24 @@ async def invoke(executor: ToolExecutor, run: Run, tool: str, arguments: dict[st
     )
 
 
+@pytest.mark.asyncio
+async def test_interface_doc_and_web_evidence_analysis_are_local_artifact_only(tmp_path: Path) -> None:
+    document = b'{"openapi":"3.0.0","paths":{"/users":{"get":{"parameters":[{"name":"id"}],"responses":{"200":{"description":"ok"}}}}}}'
+    repository, root, _, artifact, run, executor = setup_tool_context(tmp_path, document, "openapi.json")
+    result = await invoke(executor, run, "interface_doc_analyze", {"artifact_id": str(artifact.id)})
+    assert result.success and result.structured_output["endpoint_count"] == 1
+    assert result.structured_output["endpoints"][0]["path"] == "/users"
+
+    html = b"<html><title>Demo</title><form><input name='q'></form><a href='/next'>next</a><script src='/app.js'></script></html>"
+    web_artifact = repository.save_artifact(
+        Artifact(thread_id=artifact.thread_id, run_id=run.id, filename="response.html", kind="http_evidence", sha256=hashlib.sha256(html).hexdigest(), size=len(html), mime_type="text/html", storage_ref=f"{artifact.thread_id}/response.blob")
+    )
+    (root / web_artifact.storage_ref).write_bytes(html)
+    web = await invoke(executor, run, "web_evidence_analyze", {"artifact_id": str(web_artifact.id)})
+    assert web.success and web.structured_output["title"] == "Demo"
+    assert "q" in web.structured_output["parameter_names"]
+
+
 @contextmanager
 def local_ctf_server():
     """测试专用的公开线索链路，不在生产路径注册或暴露。"""

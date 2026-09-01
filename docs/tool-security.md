@@ -1,5 +1,7 @@
 # 工具安全边界
 
+接口文档与 HTTP 证据分析工具仅读取当前 Run 已授权 Artifact；不访问网络、不执行文档内容，并对 Cookie、Authorization、Token、密码等敏感信息脱敏。
+
 ## 必须遵守
 
 - 所有工具显式注册；禁止目录扫描、任意 import、Shell 或 Web 代码上传。
