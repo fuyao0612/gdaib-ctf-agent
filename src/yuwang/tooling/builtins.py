@@ -126,6 +126,54 @@ class ProbeOutput(BaseModel):
     artifact_ids: list[UUID] = Field(default_factory=list, max_length=1)
 
 
+class PathDiscoveryInput(BaseModel):
+    """本机侦察输入；路径由模型显式给出且数量有界，不执行目录爆破。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=2_048)
+    paths: list[str] = Field(min_length=1, max_length=32)
+    method: Literal["GET", "HEAD"] = "HEAD"
+
+    @field_validator("paths")
+    @classmethod
+    def validate_paths(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for path in value:
+            if (
+                not path.startswith("/")
+                or "?" in path
+                or "#" in path
+                or any(part in {".", ".."} for part in path.split("/"))
+                or len(path) > 512
+            ):
+                raise ValueError("侦察路径必须是无查询参数且不含路径穿越的绝对路径")
+            if path not in normalized:
+                normalized.append(path)
+        return normalized
+
+
+class PathProbeResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    status_code: int | None = None
+    content_type: str = ""
+    content_length: int | None = None
+    location: str | None = None
+    allow: str | None = None
+    error: str | None = Field(default=None, max_length=200)
+
+
+class PathDiscoveryOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    method: Literal["GET", "HEAD"]
+    results: list[PathProbeResult] = Field(default_factory=list, max_length=32)
+    reachable_count: int = Field(ge=0)
+
+
 class _ExplicitLinkParser(HTMLParser):
     """只采集页面已经写出的链接，调用方不会自动跟随它们。"""
 
@@ -237,6 +285,7 @@ class LocalhostHTTPProbeTool(ToolPlugin[ProbeInput, ProbeOutput]):
             robots_paths=self._robots_paths(text, parsed.path),
             artifact_ids=artifact_ids,
         )
+
 
     async def _save_response_artifact(
         self,
@@ -400,10 +449,85 @@ class LocalhostHTTPProbeTool(ToolPlugin[ProbeInput, ProbeOutput]):
         return paths[:20]
 
 
+class LocalhostPathDiscoveryTool(ToolPlugin[PathDiscoveryInput, PathDiscoveryOutput]):
+    input_model = PathDiscoveryInput
+    output_model = PathDiscoveryOutput
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(
+            name="localhost_path_discovery",
+            version="1.0.0",
+            description=(
+                "对任务明确授权的 localhost/127.0.0.1 执行有界路径侦察；仅检查模型显式提供的路径，"
+                "默认使用 HEAD，不跟随重定向、不读取大正文、不执行目录爆破"
+            ),
+            capabilities=["http", "recon", "metadata", "ctf_evidence"],
+            scenarios=["general", "ctf", "web", "vulnerability_analysis"],
+            risk="low",
+            permissions=["network:localhost"],
+            requires_network=True,
+            allowed_target_types=["localhost"],
+            timeout_seconds=15,
+            error_codes=["request_failed", "target_denied", "invalid_path"],
+            idempotent=True,
+            artifact_types=[],
+            input_schema=self.input_model.model_json_schema(),
+            output_schema=self.output_model.model_json_schema(),
+        )
+
+    async def execute(self, value: PathDiscoveryInput) -> PathDiscoveryOutput:
+        return await self._discover(value)
+
+    async def execute_with_request(
+        self, value: PathDiscoveryInput, request: ToolCallRequest | None
+    ) -> PathDiscoveryOutput:
+        LocalhostHTTPProbeTool._validate_target_scope(
+            value.url, request.target_scope if request else []
+        )
+        return await self._discover(value)
+
+    async def _discover(self, value: PathDiscoveryInput) -> PathDiscoveryOutput:
+        parsed = LocalhostHTTPProbeTool._validate_local_url(value.url)
+        results: list[PathProbeResult] = []
+        async with httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=httpx.Timeout(8, connect=2),
+            trust_env=False,
+        ) as client:
+            for path in value.paths:
+                target = parsed._replace(path=path, query="", fragment="").geturl()
+                target_parsed = urlparse(target)
+                target_url = LocalhostHTTPProbeTool._loopback_request_url(target, target_parsed)
+                try:
+                    async with client.stream(value.method, target_url) as response:
+                        raw_length = response.headers.get("content-length")
+                        content_length = int(raw_length) if raw_length and raw_length.isdigit() else None
+                        results.append(
+                            PathProbeResult(
+                                path=path,
+                                status_code=response.status_code,
+                                content_type=response.headers.get("content-type", "")[:200],
+                                content_length=content_length,
+                                location=response.headers.get("location", "")[:512] or None,
+                                allow=response.headers.get("allow", "")[:512] or None,
+                            )
+                        )
+                except httpx.HTTPError as exc:
+                    results.append(PathProbeResult(path=path, error=str(exc)[:200]))
+        return PathDiscoveryOutput(
+            url=value.url,
+            method=value.method,
+            results=results,
+            reachable_count=sum(item.status_code is not None for item in results),
+        )
+
+
 def create_reference_registry(
     artifact_root: Path, repository: _HttpEvidenceRepository | None = None
 ) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(FileMetadataTool(artifact_root))
     registry.register(LocalhostHTTPProbeTool(artifact_root, repository))
+    registry.register(LocalhostPathDiscoveryTool())
     return registry

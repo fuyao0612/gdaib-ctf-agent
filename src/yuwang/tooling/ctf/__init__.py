@@ -1,4 +1,4 @@
-"""第一批低风险、仅面向已上传 CTF Artifact 的内置工具。"""
+"""低风险、仅面向已授权 Artifact 或 localhost 目标的内置安全工具。"""
 
 from __future__ import annotations
 
@@ -21,6 +21,8 @@ from .ciphers import ClassicalCipherAnalyzeTool
 from .encoding import EncodingDecodeTool
 from .files import FileInspectTool, StringsExtractTool
 from .flag import FlagCandidateVerifyTool
+from .hashes import HashAnalyzeTool
+from .timeline import TimelineAnalyzeTool
 
 
 def register_ctf_tools(
@@ -46,6 +48,8 @@ def register_ctf_tools(
         BinaryStaticAnalyzeTool(artifacts),
         InterfaceDocAnalyzeTool(artifacts),
         WebEvidenceAnalyzeTool(artifacts),
+        HashAnalyzeTool(artifacts),
+        TimelineAnalyzeTool(artifacts),
     ):
         registry.register(tool)
 

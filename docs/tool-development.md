@@ -34,7 +34,7 @@ class CharacterCountTool(ToolPlugin[CountInput, CountOutput]):
 
 参考实现位于 `src/yuwang/tooling/sdk.py`：`file_metadata` 和 `localhost_http_probe`。测试专用工具仅放在 `tests/`，不会注册到生产运行时或复制进生产镜像。
 
-`localhost_http_probe` 可用于用户明确授权的本机 CTF 服务。它只能执行一次只读 `GET`，仅接受
+`localhost_http_probe` 可用于用户明确授权的本机 CTF 服务。它只能执行无请求体的只读 `GET`、`HEAD` 或 `OPTIONS`，仅接受
 `http://localhost` 或 `http://127.0.0.1` 且必须匹配当前 Run 的授权目标；禁用代理和重定向，并限制
 响应大小与超时。它只返回文本/JSON 摘要、白名单响应头、HTML 中已声明的同源链接及 `robots.txt` 的
 声明路径，不会枚举路径、猜测认证或提交表单。若公开说明明确给出 CTF 请求头，调用者可传入一个

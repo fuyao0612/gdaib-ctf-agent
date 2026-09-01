@@ -19,7 +19,7 @@ import pytest
 from yuwang.domain.models import Artifact, Run, Thread
 from yuwang.storage import SQLiteRepository
 from yuwang.tooling import ToolCallRequest, ToolExecutor, ToolRegistry, create_reference_registry
-from yuwang.tooling.builtins import LocalhostHTTPProbeTool
+from yuwang.tooling.builtins import LocalhostHTTPProbeTool, PathDiscoveryInput
 from yuwang.tooling.ctf import register_ctf_tools
 from yuwang.tooling.runtime import SandboxRequest, SandboxUnavailable
 
@@ -69,6 +69,13 @@ def test_localhost_probe_uses_only_the_fixed_docker_host_gateway(monkeypatch) ->
         LocalhostHTTPProbeTool._loopback_request_url(raw_url, parsed)
 
 
+def test_localhost_path_discovery_rejects_query_and_traversal() -> None:
+    with pytest.raises(ValueError, match="路径"):
+        PathDiscoveryInput(url="http://127.0.0.1:8088", paths=["/api?x=1"])
+    with pytest.raises(ValueError, match="路径"):
+        PathDiscoveryInput(url="http://127.0.0.1:8088", paths=["/../secret"])
+
+
 async def invoke(executor: ToolExecutor, run: Run, tool: str, arguments: dict[str, object]):
     return await executor.execute_call(
         ToolCallRequest(
@@ -96,6 +103,34 @@ async def test_interface_doc_and_web_evidence_analysis_are_local_artifact_only(t
     web = await invoke(executor, run, "web_evidence_analyze", {"artifact_id": str(web_artifact.id)})
     assert web.success and web.structured_output["title"] == "Demo"
     assert "q" in web.structured_output["parameter_names"]
+
+
+@pytest.mark.asyncio
+async def test_hash_and_timeline_tools_return_structured_auditable_results(tmp_path: Path) -> None:
+    content = (
+        b"2026-09-01T12:00:00Z ERROR login failed token=secret\nsha256=\""
+        + hashlib.sha256(b"payload").hexdigest().encode()
+        + b"\"\n"
+    )
+    repository, _, _, artifact, run, executor = setup_tool_context(
+        tmp_path, content, "incident.log"
+    )
+    hashed = await invoke(
+        executor,
+        run,
+        "hash_analyze",
+        {"artifact_id": str(artifact.id), "expected_digest": hashlib.sha256(content).hexdigest()},
+    )
+    timeline = await invoke(
+        executor, run, "incident_timeline_analyze", {"artifact_id": str(artifact.id)}
+    )
+    assert hashed.success
+    assert "sha256" in hashed.output["file_digests"]
+    assert hashed.output["expected_matches"] == ["sha256"]
+    assert timeline.success
+    assert timeline.output["event_count"] == 1
+    assert timeline.output["events"][0]["severity"] == "error"
+    assert "secret" not in timeline.output["events"][0]["excerpt"]
 
 
 @contextmanager
