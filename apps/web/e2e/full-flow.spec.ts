@@ -143,7 +143,8 @@ test("first setup exposes a focused security workspace", async ({ page }) => {
   await expect(page.getByLabel("默认回复方式")).toHaveCount(0);
   await expect(page.getByText("任务详情与控制")).toBeVisible();
   await expect(page.getByRole("button", { name: "运行审计" })).toBeVisible();
-  await sendTask(page, "请简短介绍你的能力", 1);
+  // 创建任务时的默认目标已产生第一条回复；等待本次追问的第二条回复后再刷新。
+  await sendTask(page, "请简短介绍你的能力", 2);
   await page.reload();
   await expect(
     page.locator(".message.user").filter({ hasText: "请简短介绍你的能力" }),
