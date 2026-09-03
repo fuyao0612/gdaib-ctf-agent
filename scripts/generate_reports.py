@@ -13,7 +13,7 @@ from docx.shared import Inches, Pt, RGBColor
 from win32com.client import DispatchEx
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "output" / "submission"
+OUTPUT = ROOT / "docs" / "submission" / "deliverables" / "documents"
 
 
 BLUE = RGBColor(47, 93, 153)
@@ -180,40 +180,40 @@ def main() -> None:
             "御网智元技术报告",
             "具备自主决策能力的通用网络安全智能体",
             [
-                "docs/submission/01-项目摘要.md",
-                "docs/submission/02-技术方案.md",
-                "docs/submission/03-系统架构与模块说明.md",
-                "docs/submission/04-自主决策与可解释性设计.md",
-                "docs/submission/05-工具协同与扩展机制.md",
-                "docs/submission/06-安全设计与威胁模型.md",
-                "docs/submission/11-创新点与同类方案对比.md",
-                "docs/submission/17-方案设计文档.md",
-                "docs/submission/10-开发文档.md",
+                "docs/submission/source/01-项目摘要.md",
+                "docs/submission/source/02-技术方案.md",
+                "docs/submission/source/03-系统架构与模块说明.md",
+                "docs/submission/source/04-自主决策与可解释性设计.md",
+                "docs/submission/source/05-工具协同与扩展机制.md",
+                "docs/submission/source/06-安全设计与威胁模型.md",
+                "docs/submission/source/11-创新点与同类方案对比.md",
+                "docs/submission/source/16-方案设计文档.md",
+                "docs/submission/source/10-开发文档.md",
             ],
             "御网智元-技术报告",
         ),
         build_report(
             "御网智元测试与评测报告",
             "质量门禁、通用评测与可复现证据",
-            ["docs/submission/07-测试与评测报告.md"],
+            ["docs/submission/source/07-测试与评测报告.md"],
             "御网智元-测试与评测报告",
         ),
         build_report(
             "御网智元方案设计文档",
             "自主决策安全智能体的场景、流程与验证设计",
-            ["docs/submission/17-方案设计文档.md"],
+            ["docs/submission/source/16-方案设计文档.md"],
             "御网智元-方案设计文档",
         ),
         build_report(
             "御网智元开发文档",
             "代码组织、扩展流程与本地开发规范",
-            ["docs/submission/10-开发文档.md"],
+            ["docs/submission/source/10-开发文档.md"],
             "御网智元-开发文档",
         ),
         build_report(
             "御网智元用户手册",
             "部署后的任务创建、运行控制与结果审计",
-            ["docs/submission/09-用户手册.md"],
+            ["docs/submission/source/09-用户手册.md"],
             "御网智元-用户手册",
         ),
     ]

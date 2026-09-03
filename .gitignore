@@ -17,7 +17,7 @@ apps/web/test-results/
 apps/web/playwright-report/
 .playwright-cli/
 .tmp-doc-qa/
-output/playwright/
+output/
 *.tsbuildinfo
 uv.lock
 .DS_Store

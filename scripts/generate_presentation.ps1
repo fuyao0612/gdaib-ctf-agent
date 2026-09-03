@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param([string]$OutputRoot)
 $ErrorActionPreference = 'Stop'
-if ([string]::IsNullOrWhiteSpace($OutputRoot)) { $OutputRoot = Join-Path $PSScriptRoot '..\output\submission' }
+if ([string]::IsNullOrWhiteSpace($OutputRoot)) { $OutputRoot = Join-Path $PSScriptRoot '..\docs\submission\deliverables\presentation' }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 
 function Add-Text($slide, [string]$text, [int]$left, [int]$top, [int]$width, [int]$height, [int]$size, [bool]$bold=$false, [int]$rgb=0) {
