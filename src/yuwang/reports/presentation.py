@@ -24,6 +24,10 @@ def _values(value: Any, limit: int = 3) -> list[str]:
     return [redact(str(item)) for item in value[:limit] if str(item).strip()]
 
 
+def _count(value: Any) -> int:
+    return len(value) if isinstance(value, list) else 0
+
+
 def present_tool_observation(
     tool_id: str,
     *,
@@ -118,6 +122,93 @@ def present_tool_observation(
         if digest:
             facts.append(f"SHA-256 摘要：{digest}")
         return ToolObservationPresentation("；".join(facts), facts, {"size": size, "mime_type": mime_type})
+
+    if tool_id == "ctf.artifact_content_search":
+        query_label = redact(str(safe_output.get("query", "")))
+        count = safe_output.get("match_count", 0)
+        matches = safe_output.get("matches")
+        lines = [
+            str(item.get("line"))
+            for item in matches[:3]
+            if isinstance(matches, list) and isinstance(item, dict) and item.get("line")
+        ] if isinstance(matches, list) else []
+        facts = [f"关键词 {query_label or '未命名查询'} 命中 {count} 处"]
+        if lines:
+            facts.append(f"代表行：{', '.join(lines)}")
+        return ToolObservationPresentation("；".join(facts), facts, {"match_count": count, "artifact_count": artifact_count})
+
+    if tool_id == "ctf.web_evidence_analyze":
+        title = redact(str(safe_output.get("title") or "未发现标题"))
+        links = _values(safe_output.get("same_origin_links"))
+        scripts = _values(safe_output.get("script_references"))
+        fields = _values(safe_output.get("form_fields"))
+        facts = [f"页面标题：{title}", f"同源链接 {_count(safe_output.get('same_origin_links'))} 个"]
+        if links:
+            facts.append(f"代表链接：{', '.join(links)}")
+        if scripts:
+            facts.append(f"脚本引用：{', '.join(scripts)}")
+        if fields:
+            facts.append(f"表单字段：{', '.join(fields)}")
+        return ToolObservationPresentation("；".join(facts), facts, {"link_count": _count(safe_output.get("same_origin_links")), "artifact_count": artifact_count})
+
+    if tool_id == "ctf.ioc_extract":
+        indicators = safe_output.get("indicators")
+        values = indicators if isinstance(indicators, list) else []
+        kinds = sorted({str(item.get("kind")) for item in values if isinstance(item, dict) and item.get("kind")})
+        facts = [f"提取到 {len(values)} 个 IOC"]
+        if kinds:
+            facts.append(f"类型：{', '.join(kinds[:8])}")
+        return ToolObservationPresentation("；".join(facts), facts, {"indicator_count": len(values), "artifact_count": artifact_count})
+
+    if tool_id == "ctf.incident_timeline_analyze":
+        count = safe_output.get("event_count", _count(safe_output.get("events")))
+        raw_categories = safe_output.get("category_counts")
+        categories = [
+            f"{name}={count}"
+            for name, count in raw_categories.items()
+            if isinstance(raw_categories, dict) and isinstance(count, int) and count > 0
+        ][:5] if isinstance(raw_categories, dict) else []
+        facts = [f"归纳出 {count} 条时间线事件"]
+        if categories:
+            facts.append(f"事件类别：{', '.join(categories)}")
+        return ToolObservationPresentation("；".join(facts), facts, {"event_count": count, "artifact_count": artifact_count})
+
+    if tool_id == "ctf.hash_analyze":
+        matches = _values(safe_output.get("expected_matches"), 5)
+        candidates = safe_output.get("embedded_hashes")
+        facts = [f"计算并识别哈希候选 {_count(candidates)} 个"]
+        if matches:
+            facts.append(f"期望摘要匹配：{', '.join(matches)}")
+        return ToolObservationPresentation("；".join(facts), facts, {"candidate_count": _count(candidates), "artifact_count": artifact_count})
+
+    if tool_id == "ctf.jwt_analyze":
+        candidates = safe_output.get("candidates")
+        count = safe_output.get("candidate_count", _count(candidates))
+        warnings = sum(
+            _count(item.get("warnings"))
+            for item in candidates
+            if isinstance(candidates, list) and isinstance(item, dict)
+        ) if isinstance(candidates, list) else 0
+        facts = [f"识别到 {count} 个 JWT/JWS 候选", f"安全提示 {warnings} 条"]
+        return ToolObservationPresentation("；".join(facts), facts, {"candidate_count": count, "warning_count": warnings, "artifact_count": artifact_count})
+
+    if tool_id == "ctf.network_capture_analyze":
+        packet_count = safe_output.get("packet_count", 0)
+        analyzed = safe_output.get("analyzed_packets", 0)
+        protocols = safe_output.get("protocols")
+        names = [
+            str(item.get("protocol"))
+            for item in protocols[:5]
+            if isinstance(protocols, list) and isinstance(item, dict) and item.get("protocol")
+        ] if isinstance(protocols, list) else []
+        facts = [f"流量包 {packet_count} 个，已分析 {analyzed} 个"]
+        if names:
+            facts.append(f"协议：{', '.join(names)}")
+        dns_count = _count(safe_output.get("dns_queries"))
+        http_count = _count(safe_output.get("http_requests"))
+        if dns_count or http_count:
+            facts.append(f"DNS 查询 {dns_count} 条，HTTP 请求 {http_count} 条")
+        return ToolObservationPresentation("；".join(facts), facts, {"packet_count": packet_count, "analyzed_packets": analyzed, "artifact_count": artifact_count})
 
     raw_summary = str(safe_output.get("summary") or safe_output.get("message") or "已获得结构化工具结果")
     return ToolObservationPresentation(

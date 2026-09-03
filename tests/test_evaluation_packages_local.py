@@ -104,6 +104,21 @@ def test_complex_ioc_package_requires_mixed_types_and_redaction_contract():
     assert "999.999.1.1" in (root / "inputs" / "mixed.log").read_text(encoding="utf-8")
 
 
+def test_jwt_package_requires_static_analysis_and_bound_evidence():
+    root = Path("evaluation_cases/acceptance/jwt-static-analysis-local")
+    manifest = load_task_package(root)
+    assert manifest.scenario == "vulnerability_analysis"
+    assert manifest.allowed_tools == ["ctf.jwt_analyze"]
+    assert any(item["validator_type"] == "evidence_source_tool" for item in manifest.criteria)
+    judge = yaml.safe_load((root / "verifier" / "judge.yaml").read_text(encoding="utf-8"))
+    assert judge["expected_fields"] == {
+        "candidate_count": 1,
+        "algorithm": "none",
+        "subject": "alice",
+        "risks": ["empty_signature", "missing_exp"],
+    }
+
+
 def test_task_package_input_size_is_bounded(tmp_path):
     path = tmp_path / "large.bin"
     path.write_bytes(b"x" * (MAX_TASK_PACKAGE_ARTIFACT_BYTES + 1))

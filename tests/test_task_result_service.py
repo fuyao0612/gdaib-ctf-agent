@@ -172,3 +172,34 @@ def test_authorized_inspection_evidence_binds_an_assessment_only_when_tool_succe
 
     assert result.evidence[0].source == str(tool_call.id)
     assert result.evidence[0].tool_verified is False
+
+
+def test_successful_tool_call_is_reliable_source_but_not_independent_validation(tmp_path) -> None:
+    repository = SQLiteRepository(tmp_path / "tool-source.db")
+    run = _completed_run(repository)
+    tool_call = ToolCall(
+        run_id=run.id,
+        tool_name="IOC 提取",
+        tool_id="ctf.ioc_extract",
+        input_summary="分析授权日志",
+        result_summary="提取到 2 个 IOC",
+        duration_ms=1,
+        status=CallStatus.SUCCEEDED,
+    )
+    repository.save_tool_call(tool_call)
+
+    result = TaskResultService(repository).persist(
+        run,
+        TaskSpec(body="分析授权日志", scenario="incident_response"),
+        {
+            "result_type": "indicator",
+            "title": "IOC 研判",
+            "summary": "发现可疑网络指标",
+            "evidence_candidates": [str(tool_call.id)],
+        },
+    )[0]
+
+    assert result.evidence[0].reliable is True
+    assert result.evidence[0].tool_verified is False
+    assert result.validation_status == "partial"
+    assert "仍需独立验证" in result.validation_explanation

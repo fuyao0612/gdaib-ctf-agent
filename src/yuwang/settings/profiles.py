@@ -69,8 +69,7 @@ class ContextPolicy(BaseModel):
 class MemoryPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
-    # 重要事实提取会额外请求一次模型。默认直接循环保持一次决策调用；需要
-    # 跨任务提炼长期偏好时，用户可在设置中心显式开启。
+    # 重要事实提取会额外请求一次模型。默认关闭，避免把收尾预算消耗在低优先级记忆上。
     persist_important_facts: bool = False
     max_facts: int = Field(100, ge=0, le=1000)
 
@@ -300,8 +299,8 @@ class AgentProfileService:
                 )
                 data["budget"] = target_budget.model_dump()
                 data["description"] = DEFAULT_PROFILE_DESCRIPTION
-                data["planning_strategy"] = "direct"
-                data["workflow"] = {"preset": "direct"}
+                data["planning_strategy"] = "dynamic"
+                data["workflow"] = {"preset": "verified"}
                 data["memory_policy"] = {
                     **data["memory_policy"],
                     "persist_important_facts": False,
@@ -318,8 +317,8 @@ class AgentProfileService:
                 name=DEFAULT_PROFILE_NAME,
                 description=DEFAULT_PROFILE_DESCRIPTION,
                 budget=self._recommended_default_budget(budget or Budget()),
-                planning_strategy="direct",
-                workflow={"preset": "direct"},
+                planning_strategy="dynamic",
+                workflow={"preset": "verified"},
                 is_default=True,
             )
         )
@@ -339,8 +338,8 @@ class AgentProfileService:
         )
         return is_platform_default and (
             profile.description != DEFAULT_PROFILE_DESCRIPTION
-            or profile.planning_strategy != "direct"
-            or profile.workflow.preset != "direct"
+            or profile.planning_strategy != "dynamic"
+            or profile.workflow.preset != "verified"
             or profile.budget.max_steps < target.max_steps
             or profile.budget.max_model_calls < target.max_model_calls
             or profile.budget.max_tokens < target.max_tokens

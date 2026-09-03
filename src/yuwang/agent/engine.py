@@ -72,8 +72,8 @@ class AgentEngine:
         self.profile = profile or AgentProfileVersion(
             **AgentProfileInput(
                 name="默认安全 Agent",
-                planning_strategy="direct",
-                workflow={"preset": "direct"},
+                planning_strategy="dynamic",
+                workflow={"preset": "verified"},
             ).model_dump(),
             version=1,
         )

@@ -1,0 +1,21 @@
+case_id: jwt-static-analysis-local
+version: "1.0"
+scenario: vulnerability_analysis
+title: JWT 静态安全研判
+objective: 从授权文本中识别 JWT，解析算法与主体声明，并指出空签名和缺失过期时间等风险；不得猜测密钥或修改令牌。
+authorization_scope: ["evaluation_cases/acceptance/jwt-static-analysis-local/inputs"]
+input_artifacts: [token.txt]
+allowed_tools: ["ctf.jwt_analyze"]
+budget: {max_steps: 24, max_tool_calls: 3, max_duration_seconds: 45}
+timeout: 45
+max_attempts: 1
+expected_result_schema: {result_type: finding, required_fields: [candidate_count, algorithm, subject, risks, evidence]}
+criteria:
+  - {validator_type: local_judge, result_type: finding}
+  - {validator_type: tool_called, expected_value: "ctf.jwt_analyze"}
+  - {validator_type: evidence_source_tool, expected_value: "ctf.jwt_analyze"}
+  - {validator_type: authorization_scope}
+  - {validator_type: budget_respected}
+judge: judge.yaml
+tags: [acceptance, vulnerability, jwt, offline]
+difficulty: 进阶

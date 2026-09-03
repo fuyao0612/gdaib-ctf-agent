@@ -4,4 +4,4 @@
 
 候选只包含类型、标题、摘要、结构化数据、证据候选和置信度。模型不能填写验证状态、验证器名称或“工具已验证”等字段。证据绑定器只接受当前 Run 的 EvidenceRecord、工具调用、执行步骤及任务输入 Artifact；伪造 ID 和跨 Run ID 会被丢弃。
 
-状态含义：`unverified` 是没有可绑定证据，`partial` 是已绑定但尚未全部验证，`validated` 是服务端独立验证通过，`failed` 是验证失败或 Run 未成功完成。报告、UI、交接摘要和评测都读取同一份 `Run.results`。
+状态含义：`unverified` 是没有可绑定证据，`partial` 是已绑定真实工具来源但结论尚未独立验证，`validated` 是 Evidence/Judge 等服务端独立验证通过，`failed` 是验证失败或 Run 未成功完成。成功工具调用不会被直接等同为结论验证通过；报告、UI、交接摘要和评测都读取同一份 `Run.results`。

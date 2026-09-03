@@ -1,0 +1,6 @@
+judge_type: structured_fields
+expected_fields:
+  candidate_count: 1
+  algorithm: none
+  subject: alice
+  risks: [empty_signature, missing_exp]

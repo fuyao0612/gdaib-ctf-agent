@@ -16,8 +16,58 @@ from yuwang.domain.models import (
 )
 from yuwang.reports.facts import public_arguments
 from yuwang.reports.generator import ReportGenerator
+from yuwang.reports.presentation import present_tool_observation
 from yuwang.reports.trace import RunTraceService
 from yuwang.storage import SQLiteRepository
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "output", "expected"),
+    [
+        (
+            "ctf.artifact_content_search",
+            {"query": "OPTIONS", "match_count": 2, "matches": [{"line": 3}, {"line": 8}]},
+            "关键词 OPTIONS 命中 2 处；代表行：3, 8",
+        ),
+        (
+            "ctf.web_evidence_analyze",
+            {"title": "Method Gate", "same_origin_links": ["/api/door"], "script_references": ["/app.js"], "form_fields": []},
+            "页面标题：Method Gate；同源链接 1 个；代表链接：/api/door；脚本引用：/app.js",
+        ),
+        (
+            "ctf.ioc_extract",
+            {"indicators": [{"kind": "ipv4"}, {"kind": "domain"}]},
+            "提取到 2 个 IOC；类型：domain, ipv4",
+        ),
+        (
+            "ctf.incident_timeline_analyze",
+            {"event_count": 3, "category_counts": {"network": 2, "process": 1, "other": 0}},
+            "归纳出 3 条时间线事件；事件类别：network=2, process=1",
+        ),
+        (
+            "ctf.hash_analyze",
+            {"embedded_hashes": [{"algorithm": "sha256"}], "expected_matches": ["sha256"]},
+            "计算并识别哈希候选 1 个；期望摘要匹配：sha256",
+        ),
+        (
+            "ctf.jwt_analyze",
+            {"candidate_count": 1, "candidates": [{"warnings": ["alg=none", "缺少 exp"]}]},
+            "识别到 1 个 JWT/JWS 候选；安全提示 2 条",
+        ),
+        (
+            "ctf.network_capture_analyze",
+            {"packet_count": 4, "analyzed_packets": 4, "protocols": [{"protocol": "tcp"}, {"protocol": "udp"}], "dns_queries": [{}], "http_requests": [{}, {}]},
+            "流量包 4 个，已分析 4 个；协议：tcp, udp；DNS 查询 1 条，HTTP 请求 2 条",
+        ),
+    ],
+)
+def test_tool_observation_presentations_expose_useful_public_facts(
+    tool_id: str, output: dict[str, object], expected: str
+) -> None:
+    presentation = present_tool_observation(tool_id, success=True, output=output)
+
+    assert presentation.summary == expected
+    assert presentation.facts
 
 
 def test_ctf_report_renders_persisted_timeline_without_duplicate_h1() -> None:

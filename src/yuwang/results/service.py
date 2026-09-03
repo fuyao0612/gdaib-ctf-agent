@@ -108,13 +108,15 @@ class EvidenceBinder:
             )
         if identifier in tools:
             tool_item = tools[identifier]
+            succeeded = str(tool_item.status) == "succeeded"
             return EvidenceReference(
                 evidence_type=kind if kind != "evidence" else "tool_call",
                 source=str(tool_item.id),
                 content_summary=tool_item.result_summary,
                 raw_ref=f"tool_call:{tool_item.id}",
-                reliable=str(tool_item.status) == "succeeded",
-                tool_verified=str(tool_item.status) == "succeeded",
+                reliable=succeeded,
+                # 成功调用只证明来源真实可追溯；结论是否成立仍需 Evidence/Judge 独立验证。
+                tool_verified=False,
             )
         if identifier in artifacts:
             artifact_item = artifacts[identifier]
@@ -188,9 +190,9 @@ class TaskResultBuilder:
             if any(item.tool_verified and item.reliable for item in references):
                 return "validated", "evidence-registry", "1.0", "结果已绑定并通过独立证据校验"
             return "partial", "evidence-registry", "1.0", "结果已绑定证据，但尚无确定性验证通过记录"
-        if all(item.reliable for item in references):
+        if all(item.reliable and item.tool_verified for item in references):
             return "validated", "evidence-registry", "1.0", "结果引用的证据均来自已验证事实"
-        return "partial", "evidence-registry", "1.0", "结果已绑定部分证据，仍需进一步验证"
+        return "partial", "evidence-registry", "1.0", "结果已绑定真实来源，结论仍需独立验证"
 
 
 class TaskResultService:

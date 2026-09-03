@@ -180,6 +180,10 @@ class DefaultActionSelector:
                 "必须提供 reason：用一至三句公开、简短的文字说明当前计划或最近观察为何支持此动作；"
                 "若 previous_failed_paths 已记录失败工具或参数，不得在没有新证据时重复同一路径；"
                 "应 replan、调整受限参数或选择其他已授权工具。"
+                "当 kind=finish 且需要提交研判结论时，structured_output 应尽量包含 result_type、title、summary、"
+                "structured_data、evidence_candidates 和 confidence；evidence_candidates 只能填写当前上下文中"
+                "真实成功工具观察的 call_id（不要编造 UUID，也不要引用失败调用）。若没有可绑定的真实证据，"
+                "应保留空列表并在 summary 中明确说明结果尚未外部验证。"
                 "不得输出隐藏思维过程、敏感数据或工具指令。"
             ),
         )

@@ -56,6 +56,11 @@ class AcceptanceProvider(FakeModelProvider):
                 return action({"kind": "call_tool", "summary": "读取授权健康接口", "tool_name": "builtin.localhost_http_probe", "tool_input": {"url": "http://127.0.0.1:8080/api/v1/health"}})
             latest = observations[-1]
             return action({"kind": "finish", "summary": "提交健康状态", "structured_output": {"result_type": "finding", "title": "localhost 健康状态", "summary": "已读取授权接口。", "structured_data": {"status_code": latest["output"]["status_code"], "explicit_links": latest["output"].get("explicit_links", [])}, "evidence_candidates": [latest["call_id"]], "confidence": 0.99}})
+        if "token.txt" in names:
+            if not observations:
+                return action({"kind": "call_tool", "summary": "静态解析 JWT", "tool_name": "ctf.jwt_analyze", "tool_input": {"artifact_id": files["token.txt"]}})
+            latest = observations[-1]
+            return action({"kind": "finish", "summary": "提交 JWT 研判", "structured_output": {"result_type": "finding", "title": "JWT 静态风险", "summary": "识别到空签名且缺少过期时间的 JWT。", "structured_data": {"candidate_count": 1, "algorithm": "none", "subject": "alice", "risks": ["empty_signature", "missing_exp"]}, "evidence_candidates": [latest["call_id"]], "confidence": 0.99}})
         if "recovery.log" in names:
             artifact_id = files["recovery.log"]
             if not observations:
@@ -85,7 +90,7 @@ def _runner(tmp_path: Path, case_name: str) -> tuple[EvaluationRunner, object]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case_name", ["complex-ioc-local", "multi-artifact-correlation-local", "multi-layer-encoding-local", "replan-recovery-local"])
+@pytest.mark.parametrize("case_name", ["complex-ioc-local", "jwt-static-analysis-local", "multi-artifact-correlation-local", "multi-layer-encoding-local", "replan-recovery-local"])
 async def test_acceptance_packages_execute_through_formal_pipeline(tmp_path: Path, case_name: str) -> None:
     runner, case = _runner(tmp_path, case_name)
     register_ctf_tools(runner.registry, runner.repository, runner.artifact_root)

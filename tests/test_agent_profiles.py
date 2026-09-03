@@ -20,8 +20,8 @@ def test_profile_versions_copy_rollback_default_and_immutable_snapshot(tmp_path)
     service = AgentProfileService(repository)
     default = service.ensure_default(Budget(max_steps=12))
     assert default.version == 1 and default.is_default
-    assert default.planning_strategy == "direct"
-    assert default.workflow.preset == "direct"
+    assert default.planning_strategy == "dynamic"
+    assert default.workflow.preset == "verified"
     assert default.memory_policy.persist_important_facts is False
 
     created = service.create(
@@ -96,8 +96,8 @@ def test_default_profile_upgrades_only_platform_legacy_token_budget(tmp_path):
     assert upgraded.budget.max_tool_calls == 50
     assert upgraded.budget.max_duration_seconds == 1800
     assert upgraded.budget.step_timeout_seconds == 300
-    assert upgraded.planning_strategy == "direct"
-    assert upgraded.workflow.preset == "direct"
+    assert upgraded.planning_strategy == "dynamic"
+    assert upgraded.workflow.preset == "verified"
     assert upgraded.memory_policy.persist_important_facts is False
     assert service.ensure_default().version == upgraded.version
 
