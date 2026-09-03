@@ -13,7 +13,7 @@
 多租户 SaaS。模型输出也不会被直接当作已验证事实。
 
 > 从 v0.4.2 升级：v0.5.0 会在保留历史对话、Run 和审计记录的前提下执行增量 SQLite
-> 迁移；升级前先备份 `data/` 与 `.env`，详细步骤见[升级指南](docs/upgrade.md)。
+> 迁移；升级前先备份 `data/` 与 `.env`，详细步骤见[升级指南](docs/使用指南/升级指南.md)。
 
 ## 三步启动（Windows）
 
@@ -49,8 +49,8 @@
 > 统一脚本内部会调用 `npm.cmd`，避免同一执行策略拦截 `npm.ps1`；手动运行前端命令时也可以
 > 将 `npm` 写为 `npm.cmd`。
 
-> 第一次使用建议继续阅读 [5 分钟快速入门](docs/quickstart.md)。Linux/macOS
-> 可使用 `./scripts/first-setup.sh --start`，详见[部署文档](docs/deployment.md)。
+> 第一次使用建议继续阅读 [5 分钟快速入门](docs/使用指南/快速入门.md)。Linux/macOS
+> 可使用 `./scripts/first-setup.sh --start`，详见[部署文档](docs/使用指南/部署与备份.md)。
 
 ## 第一次配置
 
@@ -68,8 +68,8 @@ Skills 是仅含说明、提示词、步骤和检查清单的声明式任务模�
 设置不会改变历史运行。
 
 连接失败时，页面会区分 API Key 错误、地址或模型错误、请求超时、额度/限流和
-结构化输出不兼容。更多处理方法见 [Provider 文档](docs/model-provider.md) 和
-[故障排查](docs/troubleshooting.md)。
+结构化输出不兼容。更多处理方法见 [模型服务接入](docs/技术设计/模型服务接入.md) 和
+[故障排查](docs/使用指南/故障排查.md)。
 
 ## 完成第一次任务
 
@@ -102,7 +102,7 @@ Provider 没有返回 Token 用量时，界面明确显示“厂商未提供”�
 - **Event（公开事件）**：记录计划、状态、工具、验证和结果，用于进度展示与审计，不包含模型隐藏思维链。
 - **Evidence（证据）**：由受控工具产生、可回查的结果。模型自己声称“已完成”不等于验证成功。
 - **Report（报告）**：运行结束后生成的 Markdown 和 JSON 摘要，可用于复盘或程序处理。
-- **执行轨迹（Trajectory）**：把真实工具行动、观察和下一步公开决策持久化，可下载并在浏览器本地只读回放；详见[执行轨迹与报告](docs/trajectory.md)。
+- **执行轨迹（Trajectory）**：把真实工具行动、观察和下一步公开决策持久化，可下载并在浏览器本地只读回放；详见[执行轨迹与报告](docs/技术设计/执行轨迹与报告.md)。
 
 Web 始终调用统一消息入口。没有活动任务时，每条输入都会创建受控 Agent Run；无工具任务也通过
 同一循环完成并标记为未经外部验证。`interaction_mode` 字段仅为历史数据兼容保留，已弃用且不再由
@@ -191,8 +191,8 @@ Web 始终调用统一消息入口。没有活动任务时，每条输入都会�
   它们只处理当前 Thread 已授权的 Artifact 或本地受控目标。编码解码还可处理当前消息中不超过
   12,000 字符的受限文本，不接受文件路径；候选 Flag 不会被表述为赛题平台提交成功。
 
-开发和贡献入口见 [工具 SDK](docs/tool-sdk.md)、[MCP 接入](docs/mcp-integration.md)、
-[工具安全边界](docs/tool-security.md) 和 [扩展开发](docs/extensions.md)。
+工具扩展说明见 [工具 SDK](docs/工具扩展/工具SDK.md)、[MCP 接入](docs/工具扩展/MCP接入.md)、
+[工具安全边界](docs/工具扩展/工具安全边界.md) 和 [扩展机制](docs/工具扩展/扩展机制.md)。
 
 ## Docker 与开发模式
 
@@ -201,7 +201,7 @@ Web 始终调用统一消息入口。没有活动任务时，每条输入都会�
 启动时间和项目根目录，之后 `stop -Development` 只停止通过校验的这些进程。
 
 两种模式不要同时运行。默认端口被占用时，先运行 `status` 判断是否为本项目服务，
-再按[故障排查](docs/troubleshooting.md)处理；不要按进程名批量结束 Python 或 Node.js。
+再按[故障排查](docs/使用指南/故障排查.md)处理；不要按进程名批量结束 Python 或 Node.js。
 
 ## 常用命令
 
@@ -241,7 +241,7 @@ flowchart LR
 - Event（事件）先持久化再通过 SSE 推送。刷新或重启后以数据库为准恢复。
 - evidence 模式必须有工具证据并通过确定性规则；模型不能自行宣布成功。
 
-完整链路和每阶段代码位置见 [Agent 循环](docs/agent-loop.md)。
+完整链路和每阶段代码位置见 [智能体运行循环](docs/技术设计/智能体运行循环.md)。
 
 ## 代码地图
 
@@ -287,7 +287,7 @@ src/yuwang/
 - 25～30 分钟：按 `agent/nodes.py → runner.py → engine.py → finalization.py`
   阅读五阶段，再用测试验证理解。
 
-更完整的代码导读见 [学习指南](docs/learning-guide.md)。
+更完整的系统说明见 [系统架构](docs/技术设计/系统架构.md)。
 
 ## 本地开发
 
@@ -343,7 +343,7 @@ python examples/local_api.py
 .\scripts\check.ps1
 ```
 
-测试分层、四类真实 Provider 兼容性矩阵和单独命令见 [测试文档](docs/testing.md)。没有配置
+测试分层、四类真实 Provider 兼容性矩阵和单独命令见 [测试文档](docs/技术设计/测试与质量门禁.md)。没有配置
 隔离测试密钥时，真实验收会明确显示“跳过”，不能将其当作厂商兼容性通过。生产源码和镜像不得
 包含 `tests/` 中的协议服务或测试替身。
 
@@ -356,35 +356,14 @@ python examples/local_api.py
 - `doctor` 是只读诊断；不会创建探针文件、修改配置或停止进程。
 - 默认定位是单机自托管。公网部署必须增加 HTTPS、外层身份控制、限流和备份。
 
-- 部署、备份、恢复：[docs/deployment.md](docs/deployment.md)
-- 安全边界：[docs/security.md](docs/security.md)
-- 升级兼容：[docs/upgrade.md](docs/upgrade.md)
+- 部署、备份、恢复：[docs/使用指南/部署与备份.md](docs/使用指南/部署与备份.md)
+- 安全边界：[docs/技术设计/安全边界.md](docs/技术设计/安全边界.md)
+- 升级兼容：[docs/使用指南/升级指南.md](docs/使用指南/升级指南.md)
 
 ## 文档导航
 
 - [初审提交材料](docs/submission/README.md)：源稿、成品文档、演示和证据的统一索引。
 
-- [快速入门](docs/quickstart.md)：第一次启动到完成对话。
-- [Agent 循环](docs/agent-loop.md)：五阶段与真实代码文件。
-- [架构](docs/architecture.md)：依赖方向、状态机和事件协议。
-- [模型 Provider](docs/model-provider.md)：预设、错误与结构化输出。
-- [Agent 配置](docs/agent-profiles.md)：版本、提示词、规划和验证。
-- [上下文与记忆](docs/context-memory.md)：裁剪、完成可信等级和人工补充。
-- [设置参考](docs/settings.md)：全部高级字段。
-- [测试](docs/testing.md)：质量门禁与浏览器验收。
-- [执行轨迹与报告](docs/trajectory.md)：行动观察时间线、指标口径、下载与只读回放。
-- [本地评测](docs/evaluation.md)：评测用例、显式执行、结果查询与回放。
-- [本地安全知识库](docs/knowledge-base.md)：RAG 导入、检索、出站许可与 Run 快照审计。
-- [通用安全 Agent 设计](docs/general-security-agent-design.md)：任务结果、证据、场景适配、评测与历史兼容契约。
-- [故障排查](docs/troubleshooting.md)：启动、鉴权、模型和恢复问题。
-- [扩展开发](docs/extensions.md)：Provider、组件与工具的扩展边界。
-
-## 参与协作
-
-1. 从 `main` 创建 `codex/`、`feat/` 或 `fix/` 分支，不直接提交到 `main`。
-2. 保持 API、数据库和历史快照兼容；不要  降低覆盖率或删除安全检查。
-3. 提交前运行 `.\yuwang.ps1 check`，确认 `git status` 不含密钥和运行产物。
-4. 提交信息说明用户可见结果，例如“优化：简化首次配置”。
-
-如果你的修改需要任意 Shell、公网扫描、多智能体、插件市场或多租户，请先作为新
-阶段讨论，不要借普通功能提交扩大当前安全边界。
+- [使用与部署](docs/使用指南/)：快速入门、部署、故障排查、升级和设置。
+- [技术设计](docs/技术设计/)：架构、智能体循环、上下文、模型、评测、安全和报告。
+- [工具扩展](docs/工具扩展/)：工具 SDK、MCP、扩展机制与安全边界。

@@ -99,7 +99,7 @@ CTF 文件工具只接收 `artifact_id`，通过 `ArtifactAccess` 在当前 Run 
 character_count = "my_package.tool:create_tool"
 ```
 
-MCP 不通过 Python entry point 注册。请阅读 [MCP 集成](mcp-integration.md)，由管理员以受控 Stdio 或 Streamable HTTP 配置添加，MCP 返回的 Schema 和输出同样是不可信数据。
+MCP 不通过 Python entry point 注册。请阅读 [MCP 接入](MCP接入.md)，由管理员以受控 Stdio 或 Streamable HTTP 配置添加，MCP 返回的 Schema 和输出同样是不可信数据。
 
 每个工具 PR 至少包含：输入拒绝额外字段、正常输出、异常隔离、超时、权限/风险、Artifact 范围和回归测试。可复用：
 
